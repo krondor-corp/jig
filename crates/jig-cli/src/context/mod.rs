@@ -204,12 +204,13 @@ impl Context {
     pub fn from_cwd() -> Result<Self, ContextError> {
         let config = Config::load().unwrap_or_default();
         let repo = RepoConfig::from_cwd()?;
-        // Load persisted registry so global commands (-g flags, daemon) see this repo.
-        // register() already calls touch() for existing entries, so one call covers both cases.
+        // Side-effect: persist this repo in the global registry so daemon/-g commands see it.
         // last-writer-wins under concurrent jig processes — acceptable for a path list.
-        let mut registry = RepoRegistry::load().unwrap_or_default();
+        let mut global = RepoRegistry::load().unwrap_or_default();
+        global.register(repo.repo_root.clone());
+        let _ = global.save(); // best-effort; don't fail unrelated commands on FS issues
+        let mut registry = RepoRegistry::default();
         registry.register(repo.repo_root.clone());
-        let _ = registry.save(); // best-effort; don't fail unrelated commands on FS issues
         Ok(Self {
             config,
             registry,
