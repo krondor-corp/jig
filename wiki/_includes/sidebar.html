@@ -1,0 +1,33 @@
+<nav class="sidebar" aria-label="Documentation navigation">
+  {% for group in site.data.nav %}
+  <div class="sidebar-group">
+    <h3 class="sidebar-heading">{{ group.title }}</h3>
+    <ul class="sidebar-list">
+      {% for item in group.items %}
+        {% if item.group %}
+          <li class="sidebar-subgroup">
+            <span class="sidebar-subheading">{{ item.group.title }}</span>
+            <ul class="sidebar-list sidebar-nested">
+              {% for sub_slug in item.group.items %}
+                {% assign doc = site.docs | where: "slug", sub_slug | first %}
+                {% if doc %}
+                <li class="sidebar-item{% if page.url == doc.url %} active{% endif %}">
+                  <a href="{{ doc.url | relative_url }}">{{ doc.title }}</a>
+                </li>
+                {% endif %}
+              {% endfor %}
+            </ul>
+          </li>
+        {% else %}
+          {% assign doc = site.docs | where: "slug", item | first %}
+          {% if doc %}
+          <li class="sidebar-item{% if page.url == doc.url %} active{% endif %}">
+            <a href="{{ doc.url | relative_url }}">{{ doc.title }}</a>
+          </li>
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+</nav>

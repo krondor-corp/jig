@@ -1,0 +1,5 @@
+[package]
+name = "jig"
+version = "0.1.0"
+description = "Git worktree manager for parallel Claude Code sessions"
+repository = "https://github.com/krondor-corp/jig"

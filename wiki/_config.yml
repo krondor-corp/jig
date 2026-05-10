@@ -1,0 +1,38 @@
+title: jig
+tagline: Multiply yourself across parallel agent sessions
+description: Git worktree manager for orchestrating agentic coding assistants in parallel.
+baseurl: ""
+url: https://jig.krondor.org
+
+markdown: kramdown
+highlighter: rouge
+
+collections:
+  docs:
+    output: true
+    permalink: /docs/:slug/
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+  - scope:
+      path: ""
+      type: docs
+    values:
+      layout: doc
+  - scope:
+      path: "index.md"
+    values:
+      layout: home
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - Makefile
+
+brand:
+  primary_color: "#fabd2f"
+  accent_color: "#fe8019"
+  tagline: "Multiply yourself."

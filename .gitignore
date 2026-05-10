@@ -1,0 +1,14 @@
+# Symlink created by test.sh
+_wt
+
+# jig spawn files
+.claude-task
+.claude-spawn-prompt
+
+# jig state
+.jig/
+jig.local.toml
+
+# Added by cargo
+
+/target

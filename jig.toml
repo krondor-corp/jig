@@ -1,0 +1,5 @@
+# Worktree configuration
+[worktree]
+base = "origin/main"
+# on_create = "cargo build"  # Command to run after worktree creation
+# copy = [".env"]            # Gitignored files to copy to new worktrees

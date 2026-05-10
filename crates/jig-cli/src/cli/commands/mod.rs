@@ -1,0 +1,54 @@
+//! CLI command implementations
+
+pub mod attach;
+pub mod commit;
+pub mod config;
+pub mod create;
+pub mod exit;
+pub mod health;
+pub mod home;
+pub mod hooks;
+pub mod init;
+pub mod issues;
+pub mod kill;
+pub mod list;
+pub mod notify;
+pub mod nuke;
+pub mod open;
+pub mod pr;
+pub mod ps;
+pub mod remove;
+pub mod resume;
+pub mod shell_init;
+pub mod shell_setup;
+pub mod spawn;
+pub mod update;
+pub mod version;
+pub mod which;
+
+// Re-export command structs
+pub use attach::Attach;
+pub use commit::Commit;
+pub use config::Config;
+pub use create::Create;
+pub use exit::Exit;
+pub use health::Health;
+pub use home::Home;
+pub use hooks::Hooks;
+pub use init::Init;
+pub use issues::Issues;
+pub use kill::Kill;
+pub use list::List;
+pub use notify::Notify;
+pub use nuke::Nuke;
+pub use open::Open;
+pub use pr::Pr;
+pub use ps::Ps;
+pub use remove::Remove;
+pub use resume::Resume;
+pub use shell_init::ShellInit;
+pub use shell_setup::ShellSetup;
+pub use spawn::Spawn;
+pub use update::Update;
+pub use version::Version;
+pub use which::Which;
