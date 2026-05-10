@@ -9,8 +9,8 @@ use jig_core::mux::TmuxMux;
 use jig_core::Worktree;
 
 use crate::cli::op::{NoOutput, Op};
-use crate::context::RepoConfig;
 use crate::cli::ui;
+use crate::context::RepoConfig;
 
 /// Resume a dead worker by relaunching its agent session
 #[derive(Args, Debug, Clone)]
@@ -41,7 +41,9 @@ impl Op for Resume {
 
     fn run(&self) -> Result<Self::Output, Self::Error> {
         let cfg = RepoConfig::from_cwd()?;
-        let repo_name = cfg.repo_root.file_name()
+        let repo_name = cfg
+            .repo_root
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
         let mux = TmuxMux::for_repo(&repo_name);
@@ -49,7 +51,10 @@ impl Op for Resume {
         // Open existing worktree
         let wt_path = cfg.worktrees_path.join(&self.branch);
         if !wt_path.exists() {
-            return Err(ResumeError::Usage(format!("worktree '{}' not found", self.branch)));
+            return Err(ResumeError::Usage(format!(
+                "worktree '{}' not found",
+                self.branch
+            )));
         }
         let wt = Worktree::open(&wt_path)?;
 
@@ -83,10 +88,7 @@ impl Op for Resume {
         let prompt = crate::prompts::resume_task(&effective_context);
         Worker::resume(&wt, &agent, prompt, &mux)?;
 
-        ui::success(&format!(
-            "Resumed worker '{}'",
-            ui::highlight(&self.branch)
-        ));
+        ui::success(&format!("Resumed worker '{}'", ui::highlight(&self.branch)));
 
         eprintln!();
         eprintln!(

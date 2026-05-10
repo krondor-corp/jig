@@ -4,8 +4,6 @@ pub mod linear;
 
 use std::fmt;
 
-
-
 use super::issue::{Issue, IssueFilter, IssueRef, IssueStatus};
 use linear::client::LinearError;
 

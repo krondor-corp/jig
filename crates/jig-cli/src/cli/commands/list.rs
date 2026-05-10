@@ -82,7 +82,8 @@ impl Op for List {
         }
 
         let base_branch = repo.base_branch(&cfg.config);
-        let table = build_worktree_table(&names, &repo.worktrees_path, &base_branch, &repo.repo_root);
+        let table =
+            build_worktree_table(&names, &repo.worktrees_path, &base_branch, &repo.repo_root);
         eprintln!("{table}");
         Ok(ListOutput(String::new()))
     }
@@ -102,7 +103,11 @@ impl List {
         Ok(ListOutput(String::new()))
     }
 
-    fn run_global_plain(&self, repos: &[RepoConfig], _global: &Config) -> Result<ListOutput, ListError> {
+    fn run_global_plain(
+        &self,
+        repos: &[RepoConfig],
+        _global: &Config,
+    ) -> Result<ListOutput, ListError> {
         let mut out = String::new();
         let mut first = true;
         for cfg in repos {
@@ -128,7 +133,11 @@ impl List {
         Ok(ListOutput(out))
     }
 
-    fn run_global_table(&self, repos: &[RepoConfig], global: &Config) -> Result<ListOutput, ListError> {
+    fn run_global_table(
+        &self,
+        repos: &[RepoConfig],
+        global: &Config,
+    ) -> Result<ListOutput, ListError> {
         let mut first = true;
         for cfg in repos {
             let git_repo = Repo::open(&cfg.repo_root)?;

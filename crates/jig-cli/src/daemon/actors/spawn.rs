@@ -190,7 +190,14 @@ impl Actor for SpawnActor {
                 spawning.push(worker_name.clone());
 
                 let mux = jig_core::mux::TmuxMux::for_repo(&repo_name);
-                match spawn_worker_for_issue(&repo_root, &issue, &worker_name, &cfg, &provider, &mux) {
+                match spawn_worker_for_issue(
+                    &repo_root,
+                    &issue,
+                    &worker_name,
+                    &cfg,
+                    &provider,
+                    &mux,
+                ) {
                     Ok(_worker) => {
                         tracing::info!(worker = %worker_name, "auto-spawned worker");
                     }
@@ -242,8 +249,13 @@ fn spawn_worker_for_issue(
 
     let prompt = crate::prompts::spawn_task(issue, provider);
 
-    let copy_files: Vec<std::path::PathBuf> =
-        cfg.repo.worktree.copy.iter().map(std::path::PathBuf::from).collect();
+    let copy_files: Vec<std::path::PathBuf> = cfg
+        .repo
+        .worktree
+        .copy
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect();
     let on_create = cfg.repo.worktree.on_create.as_ref().map(|cmd| {
         let mut c = std::process::Command::new("sh");
         c.args(["-c", cmd]);

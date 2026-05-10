@@ -56,7 +56,11 @@ fn read_body(body: Option<&str>) -> Result<Option<String>, IssuesError> {
     }
 }
 
-fn run(repo: &RepoConfig, global: &crate::context::Config, cmd: &Create) -> Result<IssuesOutput, IssuesError> {
+fn run(
+    repo: &RepoConfig,
+    global: &crate::context::Config,
+    cmd: &Create,
+) -> Result<IssuesOutput, IssuesError> {
     let pri: Option<IssuePriority> = cmd.priority.as_deref().and_then(|s| s.parse().ok());
     let initial_status: IssueStatus = cmd
         .status

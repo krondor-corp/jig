@@ -6,8 +6,8 @@ use crate::context::JigToml;
 use crate::terminal::check_dep;
 
 use crate::cli::op::{NoOutput, Op};
-use crate::context::Context;
 use crate::cli::ui;
+use crate::context::Context;
 
 /// Show terminal and dependency status
 #[derive(Args, Debug, Clone)]
@@ -130,10 +130,7 @@ impl Op for Health {
                         if repo.repo_root.join(project_file).is_file() {
                             check_ok(&project_file.display().to_string(), None);
                         } else {
-                            check_fail(
-                                &project_file.display().to_string(),
-                                Some("(not found)"),
-                            );
+                            check_fail(&project_file.display().to_string(), Some("(not found)"));
                             all_passed = false;
                         }
 
@@ -141,10 +138,7 @@ impl Op for Health {
                             if repo.repo_root.join(settings).is_file() {
                                 check_ok(&settings.display().to_string(), None);
                             } else {
-                                check_fail(
-                                    &settings.display().to_string(),
-                                    Some("(not found)"),
-                                );
+                                check_fail(&settings.display().to_string(), Some("(not found)"));
                                 all_passed = false;
                             }
                         }
@@ -157,12 +151,8 @@ impl Op for Health {
                                 let mut skill_names: Vec<String> = entries
                                     .filter_map(|e| e.ok())
                                     .filter(|e| e.path().is_dir())
-                                    .filter(|e| {
-                                        e.path().join(agent.skill_file()).is_file()
-                                    })
-                                    .map(|e| {
-                                        e.file_name().to_string_lossy().to_string()
-                                    })
+                                    .filter(|e| e.path().join(agent.skill_file()).is_file())
+                                    .map(|e| e.file_name().to_string_lossy().to_string())
                                     .collect();
                                 skill_names.sort();
                                 for name in &skill_names {

@@ -10,8 +10,8 @@ use colored::Colorize;
 use comfy_table::{presets, Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
 use crossterm::terminal;
 
-use crate::daemon::TriageEntry;
 use crate::daemon::checks::PrHealth;
+use crate::daemon::TriageEntry;
 use crate::worker::events::WorkerState;
 use crate::worker::MuxStatus;
 use crate::worker::WorkerStatus;
@@ -314,12 +314,11 @@ fn worker_row(w: &WorkerState) -> Vec<Cell> {
         MuxStatus::NotFound => Color::DarkGrey,
     };
 
-    let (state_text, state_color) =
-        if w.status == WorkerStatus::WaitingReview && w.is_draft {
-            ("draft", Color::Blue)
-        } else {
-            (worker_state_str(&w.status), worker_state_color(&w.status))
-        };
+    let (state_text, state_color) = if w.status == WorkerStatus::WaitingReview && w.is_draft {
+        ("draft", Color::Blue)
+    } else {
+        (worker_state_str(&w.status), worker_state_color(&w.status))
+    };
 
     let nudge_count = w.nudge_count();
     let (nudge_text, nudge_color) = if nudge_count == 0 {

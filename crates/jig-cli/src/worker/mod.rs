@@ -21,7 +21,6 @@ use jig_core::issues::issue::IssueRef;
 use jig_core::mux::Mux;
 use jig_core::prompt::Prompt;
 
-
 #[derive(Debug, thiserror::Error)]
 pub enum WorkerError {
     #[error("worker '{0}' not found")]
@@ -70,7 +69,6 @@ impl From<&Worktree> for Worker {
             branch: wt.branch_name(),
             path: wt.as_ref(),
             issue_ref: None,
-
         }
     }
 }
@@ -83,7 +81,6 @@ impl Worker {
             branch,
             path: WorktreeRef::new(worktree_path),
             issue_ref: None,
-
         }
     }
 
@@ -166,7 +163,11 @@ impl Worker {
     pub fn repo_name(&self) -> String {
         let path: &Path = &self.path;
         for ancestor in path.ancestors() {
-            if ancestor.file_name().map(|n| n == crate::context::JIG_DIR).unwrap_or(false) {
+            if ancestor
+                .file_name()
+                .map(|n| n == crate::context::JIG_DIR)
+                .unwrap_or(false)
+            {
                 if let Some(root) = ancestor.parent() {
                     return root
                         .file_name()
@@ -261,7 +262,12 @@ impl Worker {
         Ok(worker)
     }
 
-    pub fn resume(wt: &Worktree, agent: &Agent, prompt: Prompt, mux: &dyn Mux) -> Result<Self, WorkerError> {
+    pub fn resume(
+        wt: &Worktree,
+        agent: &Agent,
+        prompt: Prompt,
+        mux: &dyn Mux,
+    ) -> Result<Self, WorkerError> {
         let worker = Self {
             id: Uuid::new_v4(),
             branch: wt.branch_name(),
@@ -307,9 +313,7 @@ impl Worker {
                 if let Some(status) = self.status() {
                     match status {
                         WorkerStatus::Initializing => {
-                            return Err(WorkerError::Initializing(
-                                self.branch.to_string(),
-                            ));
+                            return Err(WorkerError::Initializing(self.branch.to_string()));
                         }
                         WorkerStatus::Failed => {
                             let reason = self.fail_reason().unwrap_or_else(|| "unknown".into());
@@ -322,9 +326,7 @@ impl Worker {
                     }
                 }
             }
-            return Err(WorkerError::NotFound(
-                self.branch.to_string(),
-            ));
+            return Err(WorkerError::NotFound(self.branch.to_string()));
         }
         mux.attach_window(&self.branch)?;
         Ok(())

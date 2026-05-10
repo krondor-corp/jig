@@ -182,7 +182,13 @@ impl RepoConfig {
             .clone()
             .or_else(|| profile.assignee.clone());
 
-        Ok(LinearProvider::new(&profile.api_key, team, projects, assignee, labels)?)
+        Ok(LinearProvider::new(
+            &profile.api_key,
+            team,
+            projects,
+            assignee,
+            labels,
+        )?)
     }
 }
 
@@ -226,9 +232,7 @@ impl Context {
 
     /// Single repo convenience — errors if no repos.
     pub fn repo(&self) -> Result<&RepoConfig, ContextError> {
-        self.repos
-            .first()
-            .ok_or(ContextError::NotInGitRepo)
+        self.repos.first().ok_or(ContextError::NotInGitRepo)
     }
 }
 

@@ -5,8 +5,8 @@ use clap::{Args, Subcommand};
 use crate::context::JigToml;
 
 use crate::cli::op::{NoOutput, Op};
-use crate::context::RepoConfig;
 use crate::cli::ui;
+use crate::context::RepoConfig;
 
 /// Manage hook integrations
 #[derive(Args, Debug, Clone)]
@@ -119,8 +119,11 @@ impl Op for Hooks {
 
                 // Install agent-specific hooks based on config
                 let jig_toml = JigToml::load(repo_path)?.unwrap_or_default();
-                if let Some(agent) = jig_core::agents::Agent::from_config(&jig_toml.agent.agent_type, Some(&jig_toml.agent.model), &jig_toml.agent.disallowed_tools)
-                {
+                if let Some(agent) = jig_core::agents::Agent::from_config(
+                    &jig_toml.agent.agent_type,
+                    Some(&jig_toml.agent.model),
+                    &jig_toml.agent.disallowed_tools,
+                ) {
                     eprintln!();
                     ui::progress(&format!("Installing {} agent hooks...", agent.name()));
                     match agent.install() {

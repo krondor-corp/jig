@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 use crate::context::{self, Config, JigToml, RepoConfig, RepoEntry};
-use crate::notify::{NotificationEvent, NotificationQueue, Notifier};
 use crate::daemon::checks::{self, PrHealth, PrStatus};
+use crate::notify::{NotificationEvent, NotificationQueue, Notifier};
 use crate::worker::events::{self, Event, EventKind, TerminalKind, WorkerState};
 use crate::worker::{MuxStatus, WorkerStatus};
 use jig_core::git::Branch;
@@ -103,14 +103,7 @@ impl Actor for MonitorActor {
             let repo_name = worker.repo_name();
             let mux = TmuxMux::for_repo_with_prefix(&req.ctx.session_prefix, &repo_name);
 
-            match self.process_worker(
-                &mux,
-                entry,
-                worker,
-                &key,
-                global_config,
-                &notifier,
-            ) {
+            match self.process_worker(&mux, entry, worker, &key, global_config, &notifier) {
                 Ok((state, targets)) => {
                     display_results.push(state.clone());
                     prune_targets.extend(targets);
@@ -123,10 +116,8 @@ impl Actor for MonitorActor {
         }
 
         // Filter terminal/dead workers from display
-        display_results.retain(|w| {
-            !w.status.is_terminal()
-                && !matches!(w.mux_status, MuxStatus::NotFound)
-        });
+        display_results
+            .retain(|w| !w.status.is_terminal() && !matches!(w.mux_status, MuxStatus::NotFound));
         display_results.sort_by(|a, b| a.name.cmp(&b.name));
 
         *self.workers.lock().unwrap() = display_results;
@@ -187,8 +178,9 @@ impl MonitorActor {
         } else {
             None
         };
-        let gh: Option<&dyn jig_core::github::GitHub> =
-            gh_client.as_ref().map(|c| c as &dyn jig_core::github::GitHub);
+        let gh: Option<&dyn jig_core::github::GitHub> = gh_client
+            .as_ref()
+            .map(|c| c as &dyn jig_core::github::GitHub);
 
         if gh.is_some() {
             self.mark_github_polled(key);
@@ -305,11 +297,7 @@ impl MonitorActor {
         }
 
         // Execute actions
-        let branch: Branch = state
-            .branch
-            .as_deref()
-            .unwrap_or(&worker_name)
-            .into();
+        let branch: Branch = state.branch.as_deref().unwrap_or(&worker_name).into();
         let event_log = events::event_log_for_worker(&repo_name, &worker_name)?;
         let prune_targets = self.execute_actions(
             &actions,
@@ -415,11 +403,7 @@ impl MonitorActor {
                         continue;
                     }
                 }
-                let prompt = crate::prompts::nudge::for_check(
-                    check_name,
-                    count + 1,
-                    &base,
-                );
+                let prompt = crate::prompts::nudge::for_check(check_name, count + 1, &base);
 
                 if let Some(prompt) = prompt {
                     if let Ok(message) = prompt.render() {
@@ -497,13 +481,11 @@ impl MonitorActor {
                         worker_name: worker_name.to_string(),
                     });
                 }
-                DispatchAction::Restart => {
-                    match try_resume_worker(repo_path, worker_name, mux) {
-                        Ok(true) => tracing::info!(worker = key, "worker resumed via restart"),
-                        Ok(false) => {}
-                        Err(e) => tracing::warn!(worker = key, "restart failed: {}", e),
-                    }
-                }
+                DispatchAction::Restart => match try_resume_worker(repo_path, worker_name, mux) {
+                    Ok(true) => tracing::info!(worker = key, "worker resumed via restart"),
+                    Ok(false) => {}
+                    Err(e) => tracing::warn!(worker = key, "restart failed: {}", e),
+                },
                 DispatchAction::UpdateIssueStatus { issue_id } => {
                     if let Ok(ctx) = RepoConfig::from_path(repo_path) {
                         if let Ok(provider) = ctx.issue_provider(global_config) {
@@ -656,9 +638,7 @@ fn try_resume_worker(
         &jig_config.agent.disallowed_tools,
     )
     .unwrap_or_else(|| jig_core::agents::Agent::from_config("claude", None, &[]).unwrap());
-    let prompt = crate::prompts::resume_task(
-        "You were interrupted. Resume your previous task.",
-    );
+    let prompt = crate::prompts::resume_task("You were interrupted. Resume your previous task.");
     Worker::resume(&wt, &agent, prompt, mux)?;
     Ok(true)
 }

@@ -6,8 +6,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::ContextError;
 use super::paths::global_config_path;
+use super::ContextError;
 
 /// Notification configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -114,7 +114,8 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(self).map_err(|e| ContextError::Config(e.to_string()))?;
+        let content =
+            toml::to_string_pretty(self).map_err(|e| ContextError::Config(e.to_string()))?;
         fs::write(path, content)?;
         Ok(())
     }

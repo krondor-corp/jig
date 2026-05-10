@@ -3,9 +3,9 @@
 use clap::Args;
 use std::path::PathBuf;
 
+use crate::cli::op::Op;
 use crate::context::RepoConfig;
 use crate::context::RepoRegistry;
-use crate::cli::op::Op;
 
 /// Open/cd into a worktree
 #[derive(Args, Debug, Clone)]
@@ -41,7 +41,10 @@ impl Op for Open {
     type Output = OpenOutput;
 
     fn run(&self) -> Result<Self::Output, Self::Error> {
-        let name = self.branch.as_deref().ok_or(OpenError::Usage("branch is required".into()))?;
+        let name = self
+            .branch
+            .as_deref()
+            .ok_or(OpenError::Usage("branch is required".into()))?;
 
         let cfg = match RepoConfig::from_cwd() {
             Ok(cfg) => cfg,

@@ -9,7 +9,10 @@ pub fn global_config_dir() -> Result<PathBuf, std::io::Error> {
     } else {
         dirs::home_dir()
             .ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotFound, "could not find home directory")
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "could not find home directory",
+                )
             })?
             .join(".config")
             .join("jig")

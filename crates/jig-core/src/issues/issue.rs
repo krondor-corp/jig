@@ -5,7 +5,6 @@ use strum::{Display, EnumString};
 
 use crate::git::Branch;
 
-
 /// A reference to an issue in an external tracker (e.g. "ENG-123").
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct IssueRef(String);

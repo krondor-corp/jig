@@ -402,10 +402,7 @@ fn init_global(force: bool) -> Result<NoOutput, InitError> {
         Some(path) => ui::success(&format!("Created {}", path.display())),
         None => {
             let path = Config::default_path()?;
-            ui::success(&format!(
-                "Global config already exists: {}",
-                path.display()
-            ));
+            ui::success(&format!("Global config already exists: {}", path.display()));
             eprintln!(
                 "  Use {} to overwrite",
                 ui::highlight("jig -g init --force")

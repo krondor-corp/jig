@@ -49,11 +49,7 @@ impl Op for Create {
         git_repo.push_branch(&branch)?;
 
         let gh = GitHubClient::from_remote()?;
-        let url = gh.create_pr(
-            base_for_gh,
-            self.title.as_deref(),
-            self.body.as_deref(),
-        )?;
+        let url = gh.create_pr(base_for_gh, self.title.as_deref(), self.body.as_deref())?;
 
         ui::success(&format!("Draft PR created: {}", ui::highlight(&url)));
 

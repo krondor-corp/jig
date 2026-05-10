@@ -81,7 +81,6 @@ impl WorkerStatus {
     pub fn is_waiting_review(&self) -> bool {
         matches!(self, Self::WaitingReview)
     }
-
 }
 
 #[cfg(test)]
@@ -143,5 +142,4 @@ mod tests {
             assert_eq!(&parsed, status);
         }
     }
-
 }

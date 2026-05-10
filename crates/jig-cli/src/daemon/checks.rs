@@ -228,8 +228,7 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str, worker_key: &str) -> PrReport {
             }
             match check_reviews(gh, pr_number) {
                 Ok(r) => {
-                    review_feedback_count =
-                        r.review_comment_count + r.changes_requested_count;
+                    review_feedback_count = r.review_comment_count + r.changes_requested_count;
                     checks.reviews = Some(r.has_problem);
                 }
                 Err(e) => tracing::debug!(error = %e, "reviews check failed"),
@@ -261,4 +260,3 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str, worker_key: &str) -> PrReport {
         review_feedback_count,
     }
 }
-

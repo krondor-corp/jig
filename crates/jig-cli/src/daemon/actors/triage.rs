@@ -224,8 +224,12 @@ pub(crate) fn run_triage_subprocess(
     let jig_toml = context::JigToml::load(repo_root)
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
-    let agent = agents::Agent::from_config(&jig_toml.agent.agent_type, Some(&jig_toml.triage.model), &[])
-        .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
+    let agent = agents::Agent::from_config(
+        &jig_toml.agent.agent_type,
+        Some(&jig_toml.triage.model),
+        &[],
+    )
+    .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
 
     let argv = agent
         .once(prompt, crate::prompts::triage::ALLOWED_TOOLS)

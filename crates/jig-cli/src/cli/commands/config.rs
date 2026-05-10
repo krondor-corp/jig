@@ -4,8 +4,10 @@ use std::path::Path;
 
 use clap::{Args, Subcommand};
 
-use crate::context::{self, Config as GlobalConfig, JigToml, LinearIssuesConfig, RepoConfig, DEFAULT_BASE_BRANCH};
 use crate::context::ContextError;
+use crate::context::{
+    self, Config as GlobalConfig, JigToml, LinearIssuesConfig, RepoConfig, DEFAULT_BASE_BRANCH,
+};
 
 use crate::cli::op::Op;
 use crate::cli::ui;
@@ -80,12 +82,10 @@ impl Op for Config {
         }
 
         match &self.subcommand {
-            None | Some(ConfigCommands::Show) => {
-                match RepoConfig::from_cwd() {
-                    Ok(repo) => show_config(&repo),
-                    Err(_) => show_global_config(),
-                }
-            }
+            None | Some(ConfigCommands::Show) => match RepoConfig::from_cwd() {
+                Ok(repo) => show_config(&repo),
+                Err(_) => show_global_config(),
+            },
             Some(ConfigCommands::Base {
                 branch,
                 global,
@@ -408,16 +408,15 @@ fn handle_base(
             } else {
                 let cfg = crate::context::Context::from_cwd()?;
                 let repo = cfg.repo()?;
-                Ok(ConfigOutput(Some(repo.base_branch(&cfg.config).to_string())))
+                Ok(ConfigOutput(Some(
+                    repo.base_branch(&cfg.config).to_string(),
+                )))
             }
         }
     }
 }
 
-fn handle_on_create(
-    command: Option<&str>,
-    unset: bool,
-) -> Result<ConfigOutput, ConfigError> {
+fn handle_on_create(command: Option<&str>, unset: bool) -> Result<ConfigOutput, ConfigError> {
     let repo = RepoConfig::from_cwd()?;
 
     if unset {
@@ -501,5 +500,3 @@ impl ConfigDisplay {
         })
     }
 }
-
-

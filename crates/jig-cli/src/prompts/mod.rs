@@ -62,6 +62,5 @@ pub fn resume_task(task_context: &str) -> Prompt {
 
 fn wrap_preamble(task: Prompt) -> Prompt {
     let task_context = task.render().unwrap_or_default();
-    Prompt::new(SPAWN_PREAMBLE)
-        .var("task_context", &task_context)
+    Prompt::new(SPAWN_PREAMBLE).var("task_context", &task_context)
 }

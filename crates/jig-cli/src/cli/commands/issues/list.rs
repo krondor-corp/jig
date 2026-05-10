@@ -207,7 +207,10 @@ impl Op for List {
     }
 }
 
-pub fn render_table(issues: &[CoreIssue], auto_spawn_labels: Option<&[String]>) -> comfy_table::Table {
+pub fn render_table(
+    issues: &[CoreIssue],
+    auto_spawn_labels: Option<&[String]>,
+) -> comfy_table::Table {
     let mut table = ui::new_table(&["STATUS", "AUTO", "PRI", "ISSUE"]);
 
     for issue in issues {

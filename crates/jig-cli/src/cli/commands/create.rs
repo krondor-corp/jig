@@ -8,8 +8,8 @@ use jig_core::git::Branch;
 use jig_core::Worktree;
 
 use crate::cli::op::Op;
-use crate::context::Context;
 use crate::cli::ui;
+use crate::context::Context;
 
 /// Create a new worktree
 #[derive(Args, Debug, Clone)]
@@ -73,8 +73,13 @@ impl Op for Create {
 
         let git_repo = jig_core::Repo::open(&repo.repo_root)?;
         let branch = Branch::new(&self.branch);
-        let copy_files: Vec<std::path::PathBuf> =
-            repo.repo.worktree.copy.iter().map(std::path::PathBuf::from).collect();
+        let copy_files: Vec<std::path::PathBuf> = repo
+            .repo
+            .worktree
+            .copy
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
         let on_create = repo.repo.worktree.on_create.as_ref().map(|cmd| {
             let mut c = std::process::Command::new("sh");
             c.args(["-c", cmd]);

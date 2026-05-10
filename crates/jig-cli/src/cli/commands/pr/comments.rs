@@ -33,9 +33,7 @@ impl Op for Comments {
             None => {
                 let git_repo = Repo::discover()?;
                 let branch = git_repo.current_branch().map_err(|_| PrError::NoBranch)?;
-                let pr_info = gh
-                    .get_pr_for_branch(&branch)?
-                    .ok_or(PrError::NoPr)?;
+                let pr_info = gh.get_pr_for_branch(&branch)?.ok_or(PrError::NoPr)?;
                 pr_info.number
             }
         };

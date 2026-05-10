@@ -7,8 +7,8 @@ use clap::{Args, Subcommand};
 use jig_core::git::conventional::ValidationConfig;
 
 use crate::cli::op::{NoOutput, Op};
-use crate::context::RepoConfig;
 use crate::cli::ui;
+use crate::context::RepoConfig;
 
 /// Validate and work with conventional commits
 #[derive(Args, Debug, Clone)]
@@ -69,11 +69,7 @@ impl Op for Commit {
     }
 }
 
-fn run_validate(
-    rev: &str,
-    stdin: bool,
-    file: Option<&str>,
-) -> Result<NoOutput, CommitError> {
+fn run_validate(rev: &str, stdin: bool, file: Option<&str>) -> Result<NoOutput, CommitError> {
     let message = if stdin {
         let mut buf = String::new();
         io::stdin().read_to_string(&mut buf)?;

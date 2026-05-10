@@ -43,7 +43,9 @@ impl FromStr for Model {
             "sonnet" => Ok(Self::Sonnet),
             "opus" => Ok(Self::Opus),
             "haiku" => Ok(Self::Haiku),
-            _ => Err(format!("unknown claude model: {s} (expected sonnet, opus, or haiku)")),
+            _ => Err(format!(
+                "unknown claude model: {s} (expected sonnet, opus, or haiku)"
+            )),
         }
     }
 }
@@ -59,14 +61,30 @@ impl ClaudeCode {
 }
 
 impl AgentBackend for ClaudeCode {
-    fn kind(&self) -> AgentKind { AgentKind::Claude }
-    fn command(&self) -> &str { COMMAND }
-    fn model(&self) -> &str { self.model.as_cli_arg() }
-    fn project_file(&self) -> &Path { Path::new("AGENTS.md") }
-    fn skills_dir(&self) -> &Path { Path::new(".claude/skills") }
-    fn skill_file(&self) -> &Path { Path::new("SKILL.md") }
-    fn settings_file(&self) -> Option<&Path> { Some(Path::new(".claude/settings.json")) }
-    fn settings_content(&self) -> Option<&str> { Some(include_str!("settings.json")) }
+    fn kind(&self) -> AgentKind {
+        AgentKind::Claude
+    }
+    fn command(&self) -> &str {
+        COMMAND
+    }
+    fn model(&self) -> &str {
+        self.model.as_cli_arg()
+    }
+    fn project_file(&self) -> &Path {
+        Path::new("AGENTS.md")
+    }
+    fn skills_dir(&self) -> &Path {
+        Path::new(".claude/skills")
+    }
+    fn skill_file(&self) -> &Path {
+        Path::new("SKILL.md")
+    }
+    fn settings_file(&self) -> Option<&Path> {
+        Some(Path::new(".claude/settings.json"))
+    }
+    fn settings_content(&self) -> Option<&str> {
+        Some(include_str!("settings.json"))
+    }
 
     fn hook_event_name(&self, hook: HookType) -> Option<&str> {
         match hook {
@@ -79,9 +97,8 @@ impl AgentBackend for ClaudeCode {
     fn spawn(&self, prompt: &str, disallowed_tools: &[String]) -> String {
         let escaped = prompt.replace('\'', "'\\''");
         let model = self.model.as_cli_arg();
-        let mut cmd = format!(
-            "{COMMAND} '{escaped}' --dangerously-skip-permissions --model {model}"
-        );
+        let mut cmd =
+            format!("{COMMAND} '{escaped}' --dangerously-skip-permissions --model {model}");
 
         let mut all_tools: Vec<&str> = DEFAULT_DISALLOWED_TOOLS.to_vec();
         for tool in disallowed_tools {
@@ -99,9 +116,8 @@ impl AgentBackend for ClaudeCode {
     fn resume(&self, prompt: &str, disallowed_tools: &[String]) -> String {
         let escaped = prompt.replace('\'', "'\\''");
         let model = self.model.as_cli_arg();
-        let mut cmd = format!(
-            "{COMMAND} -c '{escaped}' --dangerously-skip-permissions --model {model}"
-        );
+        let mut cmd =
+            format!("{COMMAND} -c '{escaped}' --dangerously-skip-permissions --model {model}");
 
         let mut all_tools: Vec<&str> = DEFAULT_DISALLOWED_TOOLS.to_vec();
         for tool in disallowed_tools {
@@ -239,8 +255,9 @@ impl AgentBackend for ClaudeCode {
             if let Some(parent) = settings_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let content = serde_json::to_string_pretty(&settings)
-                .map_err(|e| super::AgentError::Other(format!("failed to serialize settings: {e}")))?;
+            let content = serde_json::to_string_pretty(&settings).map_err(|e| {
+                super::AgentError::Other(format!("failed to serialize settings: {e}"))
+            })?;
             std::fs::write(&settings_path, content)?;
         }
 
@@ -270,8 +287,10 @@ mod tests {
 
     #[test]
     fn spawn_with_opus() {
-        let cmd = Agent::from_config("claude", Some("opus"), &[]).unwrap()
-            .spawn(Prompt::new("do work")).unwrap();
+        let cmd = Agent::from_config("claude", Some("opus"), &[])
+            .unwrap()
+            .spawn(Prompt::new("do work"))
+            .unwrap();
         assert!(cmd.contains("--model opus"));
     }
 
@@ -287,7 +306,8 @@ mod tests {
 
     #[test]
     fn spawn_extra_disallowed() {
-        let cmd = Agent::from_config("claude", None, &["Bash(rm -rf:*)".into()]).unwrap()
+        let cmd = Agent::from_config("claude", None, &["Bash(rm -rf:*)".into()])
+            .unwrap()
             .spawn(Prompt::new("do work"))
             .unwrap();
         assert_eq!(
@@ -299,7 +319,8 @@ mod tests {
 
     #[test]
     fn spawn_deduplicates() {
-        let cmd = Agent::from_config("claude", None, &["Bash(gh pr create:*)".into()]).unwrap()
+        let cmd = Agent::from_config("claude", None, &["Bash(gh pr create:*)".into()])
+            .unwrap()
             .spawn(Prompt::new("work"))
             .unwrap();
         assert_eq!(
@@ -341,9 +362,7 @@ mod tests {
 
     #[test]
     fn once_no_tools() {
-        let argv = agent()
-            .once(Prompt::new("hello"), &[])
-            .unwrap();
+        let argv = agent().once(Prompt::new("hello"), &[]).unwrap();
         assert_eq!(
             argv,
             vec![

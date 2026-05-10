@@ -281,7 +281,11 @@ base = "origin/main"
     #[test]
     fn load_with_local_overlay() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join(JIG_TOML), "[worktree]\nbase = \"origin/main\"\n").unwrap();
+        fs::write(
+            dir.path().join(JIG_TOML),
+            "[worktree]\nbase = \"origin/main\"\n",
+        )
+        .unwrap();
         fs::write(
             dir.path().join(JIG_LOCAL_TOML),
             "[issues]\nauto_spawn_labels = []\n",

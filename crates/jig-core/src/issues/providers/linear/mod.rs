@@ -6,8 +6,6 @@
 pub mod client;
 mod provider;
 
-
-
 use crate::issues::issue::{Issue, IssueFilter, IssueStatus};
 use client::{LinearClient, LinearError};
 
@@ -57,7 +55,11 @@ impl LinearProvider {
 
 impl LinearProvider {
     /// Update the workflow state of a Linear issue.
-    pub fn update_status(&self, identifier: &str, new_status: &IssueStatus) -> Result<(), LinearError> {
+    pub fn update_status(
+        &self,
+        identifier: &str,
+        new_status: &IssueStatus,
+    ) -> Result<(), LinearError> {
         Ok(self
             .client
             .update_issue_status(identifier, &self.team, new_status)?)
@@ -103,14 +105,22 @@ impl LinearProvider {
     /// Add a "blocked by" dependency relation.
     ///
     /// `identifier` is blocked by `blocker_identifier`.
-    pub fn add_blocked_by(&self, identifier: &str, blocker_identifier: &str) -> Result<(), LinearError> {
+    pub fn add_blocked_by(
+        &self,
+        identifier: &str,
+        blocker_identifier: &str,
+    ) -> Result<(), LinearError> {
         Ok(self
             .client
             .create_blocked_by_relation(identifier, blocker_identifier)?)
     }
 
     /// Remove a "blocked by" dependency relation.
-    pub fn remove_blocked_by(&self, identifier: &str, blocker_identifier: &str) -> Result<(), LinearError> {
+    pub fn remove_blocked_by(
+        &self,
+        identifier: &str,
+        blocker_identifier: &str,
+    ) -> Result<(), LinearError> {
         Ok(self
             .client
             .remove_blocked_by_relation(identifier, blocker_identifier)?)

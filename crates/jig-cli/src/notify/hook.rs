@@ -3,8 +3,8 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use crate::context::NotifyConfig;
 use super::{NotificationEvent, NotificationQueue};
+use crate::context::NotifyConfig;
 
 /// Notifier wraps the queue and executes hooks on emit.
 pub struct Notifier {

@@ -40,7 +40,10 @@ impl Op for Attach {
                 Ok(NoOutput)
             }
             Err(_) => {
-                let branch = self.branch.as_deref().ok_or(AttachError::Usage("branch is required".into()))?;
+                let branch = self
+                    .branch
+                    .as_deref()
+                    .ok_or(AttachError::Usage("branch is required".into()))?;
                 let registry = RepoRegistry::load().unwrap_or_default();
                 let configs: Vec<_> = registry
                     .repos()
@@ -51,7 +54,9 @@ impl Op for Attach {
                 let cfg = configs
                     .iter()
                     .find(|c| c.worktrees_path.join(branch).exists())
-                    .ok_or(AttachError::Worker(crate::worker::WorkerError::NotFound(branch.to_string())))?;
+                    .ok_or(AttachError::Worker(crate::worker::WorkerError::NotFound(
+                        branch.to_string(),
+                    )))?;
                 attach(cfg, Some(&Branch::new(branch)))?;
                 Ok(NoOutput)
             }

@@ -289,7 +289,11 @@ impl Agent {
     pub fn install(&self) -> Result<InstallResult, AgentError> {
         let hooks: Vec<(&str, &str)> = HookType::ALL
             .iter()
-            .filter_map(|ht| self.inner.hook_event_name(*ht).map(|name| (name, ht.script())))
+            .filter_map(|ht| {
+                self.inner
+                    .hook_event_name(*ht)
+                    .map(|name| (name, ht.script()))
+            })
             .collect();
         let result = self.inner.install(&hooks)?;
         for path in &result.executables {

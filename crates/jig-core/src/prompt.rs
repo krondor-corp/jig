@@ -4,8 +4,6 @@ use std::collections::HashMap;
 
 use handlebars::Handlebars;
 
-
-
 /// A context builder that takes a Handlebars template string and renders
 /// it with accumulated vars.
 #[derive(Debug, Clone)]

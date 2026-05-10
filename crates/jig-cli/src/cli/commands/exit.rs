@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use jig_core::Worktree;
 
 use crate::cli::op::Op;
-use crate::context::RepoConfig;
 use crate::cli::ui;
+use crate::context::RepoConfig;
 
 /// Exit current worktree and remove it
 #[derive(Args, Debug, Clone)]

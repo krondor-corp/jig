@@ -34,5 +34,9 @@ pub fn check_dep(name: &str, version_args: &[&str]) -> DepCheck {
     } else {
         None
     };
-    DepCheck { name: name.to_string(), found, version }
+    DepCheck {
+        name: name.to_string(),
+        found,
+        version,
+    }
 }

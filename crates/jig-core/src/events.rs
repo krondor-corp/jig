@@ -15,7 +15,6 @@ pub enum EventLogError {
     Json(#[from] serde_json::Error),
 }
 
-
 /// An event type that knows how to fold into a state.
 ///
 /// Implement on your event enum, then call [`EventLog::reduce()`] to
@@ -227,7 +226,13 @@ mod tests {
         log.append(&TestEvent::Started { ts: 3 }).unwrap();
 
         let state = log.reduce().unwrap();
-        assert_eq!(state, Counter { started: 2, stopped: 1 });
+        assert_eq!(
+            state,
+            Counter {
+                started: 2,
+                stopped: 1
+            }
+        );
     }
 
     #[test]

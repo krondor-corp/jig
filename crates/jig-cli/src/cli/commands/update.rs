@@ -10,7 +10,8 @@ use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
 
 const GITHUB_REPO: &str = "krondor-corp/jig";
-const INSTALL_SCRIPT_URL: &str = "https://raw.githubusercontent.com/krondor-corp/jig/main/install.sh";
+const INSTALL_SCRIPT_URL: &str =
+    "https://raw.githubusercontent.com/krondor-corp/jig/main/install.sh";
 
 /// Update jig to latest version
 #[derive(Args, Debug, Clone)]

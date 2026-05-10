@@ -49,8 +49,13 @@ impl Op for Ps {
             Context::from_cwd()?
         };
         if !self.global {
-            let jig_toml = JigToml::load(&cfg.repo()?.repo_root).ok().flatten().unwrap_or_default();
-            cfg.config.max_concurrent_workers = self.max_workers.unwrap_or(jig_toml.spawn.max_concurrent_workers);
+            let jig_toml = JigToml::load(&cfg.repo()?.repo_root)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            cfg.config.max_concurrent_workers = self
+                .max_workers
+                .unwrap_or(jig_toml.spawn.max_concurrent_workers);
         }
         self.execute_ps(cfg, self.global)
     }
@@ -104,7 +109,6 @@ impl Ps {
 
         Ok(NoOutput)
     }
-
 }
 
 /// View mode for the watch display.

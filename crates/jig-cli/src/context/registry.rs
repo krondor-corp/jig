@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-
 /// A single registered repository
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoEntry {

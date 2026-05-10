@@ -50,14 +50,15 @@ impl Op for Remove {
             for repo in &cfg.repos {
                 let git_repo = Repo::open(&repo.repo_root)?;
                 let worktrees = git_repo.list_worktrees()?;
-                let has_match = worktrees
-                    .iter()
-                    .any(|wt| wt.branch_name() == self.pattern);
+                let has_match = worktrees.iter().any(|wt| wt.branch_name() == self.pattern);
                 if has_match {
                     return self.remove_from_repo(repo);
                 }
             }
-            return Err(RemoveError::NotFound(format!("worktree '{}' not found", self.pattern)));
+            return Err(RemoveError::NotFound(format!(
+                "worktree '{}' not found",
+                self.pattern
+            )));
         }
 
         let cfg = Context::from_cwd()?;
@@ -95,7 +96,10 @@ impl Remove {
                 ));
                 return Ok(NoOutput);
             }
-            return Err(RemoveError::NotFound(format!("no worktrees matching '{}'", pattern.as_str())));
+            return Err(RemoveError::NotFound(format!(
+                "no worktrees matching '{}'",
+                pattern.as_str()
+            )));
         }
 
         // Remove each matching worktree

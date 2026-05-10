@@ -44,9 +44,9 @@ use actors::sync::SyncActor;
 use actors::triage::TriageActor;
 use actors::ActorHandle;
 
-pub use checks::{PrChecks, PrHealth};
 pub use crate::worker::events::WorkerState;
 pub use actors::triage::TriageEntry;
+pub use checks::{PrChecks, PrHealth};
 
 /// The daemon — owns actors and drives the tick loop.
 pub struct Daemon {
@@ -138,9 +138,8 @@ impl Daemon {
         };
 
         // Send monitor request every tick
-        self.monitor.send(actors::monitor::MonitorRequest {
-            ctx: ctx.clone(),
-        });
+        self.monitor
+            .send(actors::monitor::MonitorRequest { ctx: ctx.clone() });
 
         // Drain prune targets from completed monitor passes
         let prune_targets: Vec<_> = self.monitor.drain().into_iter().flatten().collect();
@@ -152,9 +151,12 @@ impl Daemon {
 
         // Trigger background sync + spawn + triage if interval elapsed
         if self.poll_is_due() {
-            self.sync.send(actors::sync::SyncRequest { ctx: ctx.clone() });
-            self.spawn.send(actors::spawn::SpawnRequest { ctx: ctx.clone() });
-            self.triage.send(actors::triage::TriageRequest { ctx: ctx.clone() });
+            self.sync
+                .send(actors::sync::SyncRequest { ctx: ctx.clone() });
+            self.spawn
+                .send(actors::spawn::SpawnRequest { ctx: ctx.clone() });
+            self.triage
+                .send(actors::triage::TriageRequest { ctx: ctx.clone() });
             self.mark_polled();
         }
 
@@ -163,7 +165,11 @@ impl Daemon {
 }
 
 /// Try to resume a worker whose mux window is dead.
-fn try_resume_worker(repo_root: &std::path::Path, worker_name: &str, mux: &dyn jig_core::mux::Mux) -> Result<bool, DaemonError> {
+fn try_resume_worker(
+    repo_root: &std::path::Path,
+    worker_name: &str,
+    mux: &dyn jig_core::mux::Mux,
+) -> Result<bool, DaemonError> {
     let worker = Worker::from_branch(repo_root, worker_name.into());
     if worker.has_mux_window(mux) {
         return Ok(false);
@@ -176,9 +182,7 @@ fn try_resume_worker(repo_root: &std::path::Path, worker_name: &str, mux: &dyn j
         &jig_config.agent.disallowed_tools,
     )
     .unwrap_or_else(|| jig_core::agents::Agent::from_config("claude", None, &[]).unwrap());
-    let prompt = crate::prompts::resume_task(
-        "You were interrupted. Resume your previous task.",
-    );
+    let prompt = crate::prompts::resume_task("You were interrupted. Resume your previous task.");
     Worker::resume(&wt, &agent, prompt, mux)?;
     Ok(true)
 }

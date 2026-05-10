@@ -3,16 +3,16 @@
 use clap::Args;
 
 use crate::context;
+use crate::context::ContextError;
+use crate::terminal;
 use crate::worker::Worker;
 use jig_core::agents;
 use jig_core::git::Branch;
-use crate::context::ContextError;
-use crate::terminal;
 use jig_core::mux::TmuxMux;
 
 use crate::cli::op::{NoOutput, Op};
-use crate::context::Context;
 use crate::cli::ui;
+use crate::context::Context;
 
 /// Create worktree and launch Claude in tmux
 #[derive(Args, Debug, Clone)]
@@ -136,8 +136,12 @@ impl Op for Spawn {
         );
         let prompt = crate::prompts::spawn_task_raw(task_context);
 
-        let copy_files: Vec<std::path::PathBuf> =
-            jig_config.worktree.copy.iter().map(std::path::PathBuf::from).collect();
+        let copy_files: Vec<std::path::PathBuf> = jig_config
+            .worktree
+            .copy
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
         let on_create = jig_config.worktree.on_create.as_ref().map(|cmd| {
             let mut c = std::process::Command::new("sh");
             c.args(["-c", cmd]);
@@ -145,7 +149,8 @@ impl Op for Spawn {
         });
 
         let issue_ref = self.issue.as_deref().map(jig_core::IssueRef::new);
-        let repo_name = repo.repo_root
+        let repo_name = repo
+            .repo_root
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
