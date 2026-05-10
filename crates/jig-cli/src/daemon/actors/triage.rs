@@ -178,6 +178,7 @@ impl Actor for TriageActor {
                     },
                 );
 
+                let issue_id = issue.id().to_string();
                 let ti = TriageIssue {
                     repo_root: repo_root.clone(),
                     issue,
@@ -185,6 +186,10 @@ impl Actor for TriageActor {
                 };
 
                 run_single(&ti);
+
+                // Triage subprocess is synchronous; clear tracker so the
+                // display surface and is_active() reflect the actual state.
+                self.remove(&issue_id);
             }
         }
     }
