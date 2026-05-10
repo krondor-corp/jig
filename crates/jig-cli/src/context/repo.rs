@@ -21,6 +21,9 @@ pub struct JigToml {
     pub triage: TriageConfig,
     #[serde(skip)]
     pub has_local_overlay: bool,
+    /// True when jig.local.toml was loaded standalone (no jig.toml present).
+    #[serde(skip)]
+    pub local_only: bool,
     #[serde(skip)]
     pub base_keys: Vec<String>,
     #[serde(skip)]
@@ -116,13 +119,26 @@ impl Default for TriageConfig {
 impl JigToml {
     pub fn load(repo_root: &Path) -> Result<Option<Self>, super::ContextError> {
         let toml_path = repo_root.join(JIG_TOML);
+        let local_path = repo_root.join(JIG_LOCAL_TOML);
+
         if !toml_path.exists() {
+            if local_path.exists() {
+                // No jig.toml but jig.local.toml present — load local as standalone config.
+                let local_content = fs::read_to_string(&local_path)?;
+                let local_value: toml::Value = toml::from_str(&local_content)?;
+                let local_keys: Vec<String> = local_value
+                    .as_table()
+                    .map(|t| t.keys().cloned().collect())
+                    .unwrap_or_default();
+                let mut config: JigToml = local_value.try_into()?;
+                config.local_only = true;
+                config.local_keys = local_keys;
+                return Ok(Some(config));
+            }
             return Ok(None);
         }
 
         let content = fs::read_to_string(&toml_path)?;
-        let local_path = repo_root.join(JIG_LOCAL_TOML);
-
         let base_value: toml::Value = toml::from_str(&content)?;
         let base_keys: Vec<String> = base_value
             .as_table()
@@ -163,6 +179,10 @@ impl JigToml {
 
     pub fn exists(repo_root: &Path) -> bool {
         repo_root.join(JIG_TOML).exists()
+    }
+
+    pub fn local_only_exists(repo_root: &Path) -> bool {
+        !repo_root.join(JIG_TOML).exists() && repo_root.join(JIG_LOCAL_TOML).exists()
     }
 }
 
@@ -298,14 +318,36 @@ base = "origin/main"
     }
 
     #[test]
-    fn local_only_returns_none() {
+    fn local_only_loads_standalone() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(
             dir.path().join(JIG_LOCAL_TOML),
-            "[issues]\nauto_spawn_labels = []\n",
+            "[issues]\nauto_spawn_labels = [\"auto\"]\n",
         )
         .unwrap();
+        let config = JigToml::load(dir.path()).unwrap().unwrap();
+        assert!(config.local_only);
+        assert!(!config.has_local_overlay);
+        assert_eq!(
+            config.issues.auto_spawn_labels,
+            Some(vec!["auto".to_string()])
+        );
+    }
+
+    #[test]
+    fn neither_toml_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
         assert!(JigToml::load(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn local_only_exists_detects_correctly() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!JigToml::local_only_exists(dir.path()));
+        fs::write(dir.path().join(JIG_LOCAL_TOML), "[issues]\n").unwrap();
+        assert!(JigToml::local_only_exists(dir.path()));
+        fs::write(dir.path().join(JIG_TOML), "[worktree]\n").unwrap();
+        assert!(!JigToml::local_only_exists(dir.path()));
     }
 
     #[test]
