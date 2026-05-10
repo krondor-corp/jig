@@ -60,9 +60,8 @@ impl LinearProvider {
         identifier: &str,
         new_status: &IssueStatus,
     ) -> Result<(), LinearError> {
-        Ok(self
-            .client
-            .update_issue_status(identifier, &self.team, new_status)?)
+        self.client
+            .update_issue_status(identifier, &self.team, new_status)
     }
 
     /// Update an existing issue's fields in Linear.
@@ -88,7 +87,7 @@ impl LinearProvider {
             other => other.map(|s| s.to_string()),
         };
 
-        Ok(self.client.update_issue(
+        self.client.update_issue(
             identifier,
             &self.team,
             title,
@@ -99,7 +98,7 @@ impl LinearProvider {
             resolved_assignee.as_deref(),
             parent,
             remove_parent,
-        )?)
+        )
     }
 
     /// Add a "blocked by" dependency relation.
@@ -110,9 +109,8 @@ impl LinearProvider {
         identifier: &str,
         blocker_identifier: &str,
     ) -> Result<(), LinearError> {
-        Ok(self
-            .client
-            .create_blocked_by_relation(identifier, blocker_identifier)?)
+        self.client
+            .create_blocked_by_relation(identifier, blocker_identifier)
     }
 
     /// Remove a "blocked by" dependency relation.
@@ -121,9 +119,8 @@ impl LinearProvider {
         identifier: &str,
         blocker_identifier: &str,
     ) -> Result<(), LinearError> {
-        Ok(self
-            .client
-            .remove_blocked_by_relation(identifier, blocker_identifier)?)
+        self.client
+            .remove_blocked_by_relation(identifier, blocker_identifier)
     }
 
     /// Create a new issue in Linear.
@@ -151,7 +148,7 @@ impl LinearProvider {
         // Category maps to Linear project; explicit overrides config
         let project = category.or_else(|| self.projects.first().map(|s| s.as_str()));
 
-        Ok(self.client.create_issue(
+        self.client.create_issue(
             &self.team,
             title,
             body,
@@ -161,7 +158,7 @@ impl LinearProvider {
             self.assignee.as_deref(),
             parent,
             initial_status,
-        )?)
+        )
     }
 }
 
@@ -199,6 +196,6 @@ impl LinearProvider {
     }
 
     pub(crate) fn get_issue(&self, id: &str) -> Result<Option<Issue>, LinearError> {
-        Ok(self.client.get_issue(id)?)
+        self.client.get_issue(id)
     }
 }

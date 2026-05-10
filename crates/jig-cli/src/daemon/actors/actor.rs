@@ -60,7 +60,15 @@ impl<A: Actor> ActorHandle<A> {
             _handle: handle,
         }
     }
+}
 
+impl<A: Actor> Default for ActorHandle<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<A: Actor> ActorHandle<A> {
     pub fn send(&self, req: A::Request) -> bool {
         if self.pending.load(Ordering::Relaxed) {
             return false;

@@ -355,7 +355,7 @@ fn worker_row(w: &WorkerState) -> Vec<Cell> {
         .as_ref()
         .map(|url| {
             url.path_segments()
-                .and_then(|s| s.last())
+                .and_then(|mut s| s.next_back())
                 .map(|n| format!("#{}", n))
                 .unwrap_or_else(|| "yes".to_string())
         })
@@ -502,7 +502,7 @@ fn triage_row(t: &TriageEntry) -> Vec<Cell> {
     vec![
         Cell::new(&t.issue_id).fg(Color::Cyan),
         Cell::new(&t.worker_name).fg(Color::White),
-        Cell::new(&format_duration_short(elapsed))
+        Cell::new(format_duration_short(elapsed))
             .fg(Color::White)
             .set_alignment(CellAlignment::Right),
         Cell::new(&t.repo_name).fg(Color::DarkGrey),

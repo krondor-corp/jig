@@ -199,6 +199,7 @@ impl Worker {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         repo: &Repo,
         branch: &Branch,

@@ -8,8 +8,8 @@ pub struct LogTailer {
     offset: u64,
 }
 
-impl LogTailer {
-    pub fn new() -> Self {
+impl Default for LogTailer {
+    fn default() -> Self {
         let path = super::latest_daemon_log().ok().flatten();
         let offset = path
             .as_ref()
@@ -17,6 +17,12 @@ impl LogTailer {
             .map(|m| m.len())
             .unwrap_or(0);
         Self { path, offset }
+    }
+}
+
+impl LogTailer {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn poll(&mut self, max_lines: usize) -> Vec<String> {

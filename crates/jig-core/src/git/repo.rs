@@ -174,7 +174,7 @@ impl Repo {
             let Ok(wt) = self.inner.find_worktree(name) else {
                 continue;
             };
-            let Ok(worktree) = super::Worktree::open(&wt.path().to_path_buf()) else {
+            let Ok(worktree) = super::Worktree::open(wt.path()) else {
                 continue;
             };
             worktrees.push(worktree);
@@ -530,7 +530,7 @@ impl Repo {
         Ok(clone
             .list_worktrees()?
             .iter()
-            .any(|wt| wt.branch().map_or(false, |b| &*b == local)))
+            .any(|wt| wt.branch().is_ok_and(|b| &*b == local)))
     }
 
     /// Low-level: create a git2 worktree at `path` for `branch`, forking

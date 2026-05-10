@@ -64,7 +64,7 @@ impl Actor for SpawnActor {
                 }
             };
 
-            let provider = match cfg.issue_provider(&global) {
+            let provider = match cfg.issue_provider(global) {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::debug!(repo = %repo_name, error = %e, "failed to create issue provider");
@@ -73,7 +73,7 @@ impl Actor for SpawnActor {
             };
 
             // -- Parent integration branches --
-            let base = cfg.base_branch(&global);
+            let base = cfg.base_branch(global);
             let parent_candidates: Vec<_> = [IssueStatus::Planned, IssueStatus::InProgress]
                 .into_iter()
                 .flat_map(|status| {
