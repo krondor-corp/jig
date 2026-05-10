@@ -204,8 +204,12 @@ impl Context {
     pub fn from_cwd() -> Result<Self, ContextError> {
         let config = Config::load().unwrap_or_default();
         let repo = RepoConfig::from_cwd()?;
-        let mut registry = RepoRegistry::default();
+        // Load persisted registry so global commands (-g flags, daemon) see this repo.
+        // register() already calls touch() for existing entries, so one call covers both cases.
+        // last-writer-wins under concurrent jig processes — acceptable for a path list.
+        let mut registry = RepoRegistry::load().unwrap_or_default();
         registry.register(repo.repo_root.clone());
+        let _ = registry.save(); // best-effort; don't fail unrelated commands on FS issues
         Ok(Self {
             config,
             registry,
@@ -356,6 +360,36 @@ mod tests {
         assert!(repo.worktrees_path.ends_with(JIG_DIR));
         assert!(repo.session_name().starts_with("jig-"));
         assert_eq!(repo.base_branch(&ctx.config), "origin/main");
+
+        // from_cwd must include the current repo in the registry so that
+        // global commands (-g flags, daemon) can iterate it.
+        assert_eq!(
+            ctx.registry.repos().len(),
+            1,
+            "registry returned by from_cwd should contain the current repo"
+        );
+        assert_eq!(
+            ctx.registry.repos()[0].path.canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_registry_no_duplicate_on_repeated_register() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_path = dir.path().to_path_buf();
+
+        let mut registry = RepoRegistry::default();
+        let added_first = registry.register(repo_path.clone());
+        let added_second = registry.register(repo_path.clone());
+
+        assert!(added_first, "first register should report newly added");
+        assert!(!added_second, "second register should report already present");
+        assert_eq!(
+            registry.repos().len(),
+            1,
+            "repeated register must not duplicate entries"
+        );
     }
 
     #[test]
