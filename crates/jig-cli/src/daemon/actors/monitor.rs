@@ -691,16 +691,19 @@ fn process_pr_report(
         PrStatus::Error { error, .. } => {
             pr_health.pr_error = Some(error.clone());
         }
-        PrStatus::Merged { pr_url } | PrStatus::Closed { pr_url } => {
+        PrStatus::Merged { pr_url } => {
             pr_health.has_pr = true;
-            if state.pr_url.is_none() {
-                let pr_number = pr_url
-                    .path_segments()
-                    .and_then(|mut s| s.next_back())
-                    .unwrap_or("0");
-                let _ = event_log.append(&Event::now(EventKind::PrOpened {
+            if !state.status.is_terminal() {
+                let _ = event_log.append(&Event::now(EventKind::PrMerged {
                     pr_url: pr_url.to_string(),
-                    pr_number: pr_number.to_string(),
+                }));
+            }
+        }
+        PrStatus::Closed { pr_url } => {
+            pr_health.has_pr = true;
+            if !state.status.is_terminal() {
+                let _ = event_log.append(&Event::now(EventKind::PrClosed {
+                    pr_url: pr_url.to_string(),
                 }));
             }
         }
