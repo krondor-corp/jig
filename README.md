@@ -3,6 +3,7 @@
 </p>
 
 # jig
+<!-- merge cleanup probe -->
 <!-- daemon spawn verified -->
 
 [![CI](https://github.com/krondor-corp/jig/actions/workflows/test.yml/badge.svg)](https://github.com/krondor-corp/jig/actions/workflows/test.yml)
