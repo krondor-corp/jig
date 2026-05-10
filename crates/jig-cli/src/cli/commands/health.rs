@@ -36,6 +36,13 @@ impl Op for Health {
                 eprintln!("  {} {}", ui::SYM_OK, name);
             }
         };
+        let check_warn = |name: &str, note: Option<&str>| {
+            if let Some(n) = note {
+                eprintln!("  {} {} {}", ui::SYM_WARN, name, ui::dim(n));
+            } else {
+                eprintln!("  {} {}", ui::SYM_WARN, name);
+            }
+        };
         let check_fail = |name: &str, note: Option<&str>| {
             if let Some(n) = note {
                 eprintln!("  {} {} {}", ui::SYM_FAIL, name, ui::dim(n));
@@ -97,6 +104,11 @@ impl Op for Health {
 
                 if JigToml::exists(&repo.repo_root) {
                     check_ok("jig.toml", None);
+                } else if JigToml::local_only_exists(&repo.repo_root) {
+                    check_warn(
+                        "jig.toml",
+                        Some("(not found — using jig.local.toml standalone; consider committing a base jig.toml)"),
+                    );
                 } else {
                     check_fail("jig.toml", Some("(not found)"));
                     all_passed = false;
