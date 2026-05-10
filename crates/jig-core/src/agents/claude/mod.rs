@@ -143,8 +143,9 @@ impl AgentBackend for ClaudeCode {
         ];
 
         if !allowed_tools.is_empty() {
-            argv.push("--allowed-tools".to_string());
-            argv.push(allowed_tools.join(","));
+            // --allowed-tools is variadic in the Claude CLI; using the
+            // `=value` form keeps the prompt below from being swallowed.
+            argv.push(format!("--allowed-tools={}", allowed_tools.join(",")));
         }
 
         argv.push(prompt.to_string());
@@ -353,8 +354,7 @@ mod tests {
                 "--dangerously-skip-permissions",
                 "--model",
                 "sonnet",
-                "--allowed-tools",
-                "Read,Glob",
+                "--allowed-tools=Read,Glob",
                 "review this"
             ]
         );
