@@ -278,7 +278,6 @@ fn log_shutdown(reason: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     fn should_auto_complete(
         auto_complete_on_merge: bool,

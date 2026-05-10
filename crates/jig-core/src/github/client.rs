@@ -101,7 +101,13 @@ impl GitHubClient {
 
     /// Create a draft PR via `gh pr create`.
     /// Returns the PR URL on success.
-    pub fn create_pr(&self, base: &str, title: Option<&str>, body: Option<&str>) -> Result<String> {
+    pub fn create_pr(
+        &self,
+        base: &str,
+        head: Option<&str>,
+        title: Option<&str>,
+        body: Option<&str>,
+    ) -> Result<String> {
         let mut args = vec![
             "pr".to_string(),
             "create".to_string(),
@@ -111,6 +117,11 @@ impl GitHubClient {
             "--base".to_string(),
             base.to_string(),
         ];
+
+        if let Some(h) = head {
+            args.push("--head".to_string());
+            args.push(h.to_string());
+        }
 
         if let Some(t) = title {
             args.push("--title".to_string());

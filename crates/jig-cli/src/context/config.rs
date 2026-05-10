@@ -180,11 +180,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("config.toml");
 
-        let mut cfg = Config::default();
-        cfg.silence_threshold_seconds = 600;
-        cfg.notify.exec = Some("notify-send".to_string());
-        cfg.notify.events = vec!["worker.done".to_string()];
-        cfg.default_base_branch = Some("origin/develop".to_string());
+        let cfg = Config {
+            silence_threshold_seconds: 600,
+            notify: NotifyConfig {
+                exec: Some("notify-send".to_string()),
+                events: vec!["worker.done".to_string()],
+                ..Default::default()
+            },
+            default_base_branch: Some("origin/develop".to_string()),
+            ..Default::default()
+        };
 
         cfg.save_to(&path).unwrap();
         let loaded = Config::load_from(&path).unwrap();
