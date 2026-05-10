@@ -384,7 +384,10 @@ mod tests {
         let added_second = registry.register(repo_path.clone());
 
         assert!(added_first, "first register should report newly added");
-        assert!(!added_second, "second register should report already present");
+        assert!(
+            !added_second,
+            "second register should report already present"
+        );
         assert_eq!(
             registry.repos().len(),
             1,
