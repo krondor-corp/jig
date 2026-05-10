@@ -1,3 +1,4 @@
+<!-- cleanup verification probe -->
 <p align="center">
   <img src="assets/logo.svg" width="72" height="72" alt="jig logo">
 </p>
