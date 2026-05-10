@@ -66,6 +66,20 @@ impl Op for Health {
             all_passed = false;
         }
 
+        let gh = check_dep("gh", &["--version"]);
+        if gh.found {
+            check_ok("gh", gh.version.as_deref());
+            if jig_core::GitHubClient::is_healthy() {
+                check_ok("gh auth", Some("authenticated"));
+            } else {
+                check_fail("gh auth", Some("run `gh auth login`"));
+                all_passed = false;
+            }
+        } else {
+            check_fail("gh", Some("install from https://cli.github.com"));
+            all_passed = false;
+        }
+
         // Section 2: Repository
         eprintln!();
         let cfg = Context::from_cwd().ok();
