@@ -8,6 +8,8 @@ use tempfile::TempDir;
 
 /// Jig worktree directory name - must match jig_core::config::JIG_DIR
 const JIG_DIR: &str = ".jig";
+/// Default branch name used in test repos
+const DEFAULT_BRANCH: &str = "main";
 
 struct TestRepo {
     dir: TempDir,
@@ -21,7 +23,7 @@ impl TestRepo {
 
         // Initialize git repo
         StdCommand::new("git")
-            .args(["init", "-q", "-b", "main"])
+            .args(["init", "-q", "-b", DEFAULT_BRANCH])
             .current_dir(dir.path())
             .output()
             .expect("Failed to init git repo");
@@ -70,7 +72,7 @@ impl TestRepo {
         // Set global config to use "main" as base branch (since origin/main doesn't exist in test repos)
         let config_file = config_dir.path().join("jig").join("config");
         fs::create_dir_all(config_file.parent().unwrap()).unwrap();
-        fs::write(&config_file, "_default=main\n").expect("Failed to write config");
+        fs::write(&config_file, &format!("_default={DEFAULT_BRANCH}\n")).expect("Failed to write config");
 
         TestRepo { dir, config_dir }
     }
