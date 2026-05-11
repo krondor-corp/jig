@@ -125,7 +125,9 @@ mod tests {
 
         let gh = GitHubClient::new("krondor-corp/jig");
         let result = gh
-            .get_pr_for_branch("feature/kro-142-test-merge-cleanup-verification-add-html-comment-to-readme")
+            .get_pr_for_branch(
+                "feature/kro-142-test-merge-cleanup-verification-add-html-comment-to-readme",
+            )
             .expect("gh api call failed");
 
         let pr = result.expect("expected PR, got None — the state=all fix is broken");
