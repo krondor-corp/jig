@@ -5,10 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.3.0 (2026-05-10)
+## v0.3.1 (2026-05-11)
 
 ### Chore
 
+ - <csr-id-909aed62e05b2131f65428735aea480b2c7c536f/> bump version to 0.3.1
  - <csr-id-6bd4cd521f95bfd6fbd8fdba97a0a642e1725a02/> bump version to 0.3.0
  - <csr-id-9f12c306cfcfb1eea60707d32360eb89479993a9/> bump version to 0.2.0
 
@@ -18,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+ - <csr-id-a6a59f1aad09365f570b64c283e11a0f4b281667/> query all PR states and add integration tests (KRO-143)
+   get_pr_for_branch used state=open, making closed/merged PRs invisible
+   and preventing cleanup. Changed to state=all and parse actual state from
+   the response instead of hardcoding Open. Added integration tests against
+   real closed PR #17 and merged PR #18 on krondor-corp/jig (gated behind
+   #[ignore], run with cargo test -p jig-core -- --ignored).
  - <csr-id-50c054d030c0d8a42fa6f105c4771c606c94810d/> pass prompt via --allowed-tools= form and clear tracker after run
    Two related bugs in the triage path:
    
@@ -44,8 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <csr-read-only-do-not-edit/>
 
- - 12 commits contributed to the release.
- - 8 commits were understood as [conventional](https://www.conventionalcommits.org).
+ - 16 commits contributed to the release.
+ - 10 commits were understood as [conventional](https://www.conventionalcommits.org).
  - 0 issues like '(#ID)' were seen in commit messages
 
 ### Commit Details
@@ -55,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <details><summary>view details</summary>
 
  * **Uncategorized**
+    - Bump version to 0.3.1 ([`909aed6`](https://github.com/krondor-corp/jig/commit/909aed62e05b2131f65428735aea480b2c7c536f))
+    - Query all PR states and add integration tests (KRO-143) ([`a6a59f1`](https://github.com/krondor-corp/jig/commit/a6a59f1aad09365f570b64c283e11a0f4b281667))
+    - Merge pull request #19 from krondor-corp/release-automation ([`eb8e28c`](https://github.com/krondor-corp/jig/commit/eb8e28c03456fcab820c9281ccbed24c9800feb5))
+    - Bump jig-core v0.3.0, jig-cli v0.3.0 ([`ea44da2`](https://github.com/krondor-corp/jig/commit/ea44da2fd4eda8b11533f33b23f753eef5fdcdc0))
     - Bump version to 0.3.0 ([`6bd4cd5`](https://github.com/krondor-corp/jig/commit/6bd4cd521f95bfd6fbd8fdba97a0a642e1725a02))
     - Merge pull request #14 from krondor-corp/fix/claude-allowed-tools-and-triage-tracker ([`4aa4eb7`](https://github.com/krondor-corp/jig/commit/4aa4eb704216a1c4967a90a25f5d82dffbea0d40))
     - Pass prompt via --allowed-tools= form and clear tracker after run ([`50c054d`](https://github.com/krondor-corp/jig/commit/50c054d030c0d8a42fa6f105c4771c606c94810d))
@@ -68,6 +79,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Cargo fmt ([`54d326b`](https://github.com/krondor-corp/jig/commit/54d326b275eebbc3ff783d8ecbabb0b2bb28a3db))
     - Jig — git worktree manager for parallel Claude Code sessions ([`5cff652`](https://github.com/krondor-corp/jig/commit/5cff652c9698daa6a067086234c50c6abd884517))
 </details>
+
+## v0.3.0 (2026-05-10)
+
+<csr-id-6bd4cd521f95bfd6fbd8fdba97a0a642e1725a02/>
+<csr-id-9f12c306cfcfb1eea60707d32360eb89479993a9/>
+<csr-id-54d326b275eebbc3ff783d8ecbabb0b2bb28a3db/>
+
+### Chore
+
+ - <csr-id-6bd4cd521f95bfd6fbd8fdba97a0a642e1725a02/> bump version to 0.3.0
+ - <csr-id-9f12c306cfcfb1eea60707d32360eb89479993a9/> bump version to 0.2.0
+
+### New Features
+
+ - <csr-id-5cff652c9698daa6a067086234c50c6abd884517/> jig — git worktree manager for parallel Claude Code sessions
+
+### Bug Fixes
+
+ - <csr-id-50c054d030c0d8a42fa6f105c4771c606c94810d/> pass prompt via --allowed-tools= form and clear tracker after run
+   Two related bugs in the triage path:
+   
+   1. `Agent::once` builds argv with `--allowed-tools <tools...>` (variadic),
+   which swallows the prompt as another tool name. Claude exits with
+   "Input must be provided either through stdin or as a prompt argument".
+   Switch to the `--allowed-tools=value` form so the prompt remains a
+   separate positional.
+   
+   2. `TriageActor::register` adds an entry to the tracker but no path
+   removes it on success — only the stuck-timeout sweep (default 600s)
+   clears completed triages. The `jig ps -gw` display surface keeps
+   showing finished triages for up to 10 minutes. Remove the tracker
+   entry immediately after the synchronous `run_single` returns.
+ - <csr-id-cc11b783045bb5d4d897e5e7660557ced9c41cc5/> resolve clippy warnings in issues list and format pr create
+ - <csr-id-9e3deddc1a6070d619d13874f63a6343b7e6ab02/> pass --head flag to gh pr create for git worktree compatibility
+ - <csr-id-ba3ee31ba372af56cf1ed953128792b433deaf8c/> resolve clippy warnings for CI
+
+### Style
+
+ - <csr-id-54d326b275eebbc3ff783d8ecbabb0b2bb28a3db/> cargo fmt
 
 ## v0.2.0 (2026-05-10)
 
