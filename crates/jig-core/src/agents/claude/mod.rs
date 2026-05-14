@@ -18,7 +18,7 @@ pub enum Model {
 
 impl Model {
     pub const ALL: &[Model] = &[Self::Sonnet, Self::Opus, Self::Haiku];
-    pub const DEFAULT: Model = Model::Sonnet;
+    pub const DEFAULT: Model = Model::Opus;
 
     pub fn as_cli_arg(&self) -> &str {
         match self {
@@ -281,7 +281,7 @@ mod tests {
         let cmd = agent().spawn(Prompt::new("hello world")).unwrap();
         assert_eq!(
             cmd,
-            "claude 'hello world' --dangerously-skip-permissions --model sonnet \
+            "claude 'hello world' --dangerously-skip-permissions --model opus \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
         );
     }
@@ -300,7 +300,7 @@ mod tests {
         let cmd = agent().spawn(Prompt::new("it's a test")).unwrap();
         assert_eq!(
             cmd,
-            "claude 'it'\\''s a test' --dangerously-skip-permissions --model sonnet \
+            "claude 'it'\\''s a test' --dangerously-skip-permissions --model opus \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
         );
     }
@@ -313,7 +313,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             cmd,
-            "claude 'do work' --dangerously-skip-permissions --model sonnet \
+            "claude 'do work' --dangerously-skip-permissions --model opus \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*),Bash(rm -rf:*)\""
         );
     }
@@ -326,7 +326,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             cmd,
-            "claude 'work' --dangerously-skip-permissions --model sonnet \
+            "claude 'work' --dangerously-skip-permissions --model opus \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
         );
     }
@@ -336,7 +336,7 @@ mod tests {
         let cmd = agent().resume(Prompt::new("continue working")).unwrap();
         assert!(cmd.contains("-c 'continue working'"));
         assert!(cmd.contains("--dangerously-skip-permissions"));
-        assert!(cmd.contains("--model sonnet"));
+        assert!(cmd.contains("--model opus"));
         assert!(cmd.contains("--disallowedTools"));
     }
 
@@ -353,7 +353,7 @@ mod tests {
                 "--no-session-persistence",
                 "--dangerously-skip-permissions",
                 "--model",
-                "sonnet",
+                "opus",
                 "--allowed-tools=Read,Glob",
                 "review this"
             ]
@@ -371,7 +371,7 @@ mod tests {
                 "--no-session-persistence",
                 "--dangerously-skip-permissions",
                 "--model",
-                "sonnet",
+                "opus",
                 "hello"
             ]
         );
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn from_config_default_model() {
         let a = Agent::from_config("claude", None, &[]).unwrap();
-        assert_eq!(a.model(), "sonnet");
+        assert_eq!(a.model(), "opus");
     }
 
     #[test]
