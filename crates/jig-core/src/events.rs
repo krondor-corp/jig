@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EventLogError {
@@ -15,6 +15,23 @@ pub enum EventLogError {
     Json(#[from] serde_json::Error),
 }
 
+/// A single timestamped event with a flattened payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Event<K> {
+    pub ts: i64,
+    #[serde(flatten)]
+    pub kind: K,
+}
+
+impl<K> Event<K> {
+    pub fn now(kind: K) -> Self {
+        Self {
+            ts: chrono::Utc::now().timestamp(),
+            kind,
+        }
+    }
+}
+
 /// An event type that knows how to fold into a state.
 ///
 /// Implement on your event enum, then call [`EventLog::reduce()`] to
@@ -22,6 +39,24 @@ pub enum EventLogError {
 pub trait Reducible {
     type State: Default;
     fn apply(state: &mut Self::State, event: &Self);
+}
+
+/// Like [`Reducible`], but for the payload of an [`Event<K>`] wrapper.
+///
+/// Implement this on your `EventKind` enum; the blanket impl below then
+/// satisfies `Reducible for Event<K>`, which [`EventLog::reduce()`] needs.
+/// The `ts` parameter gives access to the outer timestamp that would otherwise
+/// be unavailable when only the inner kind is passed.
+pub trait ReducibleKind {
+    type State: Default;
+    fn apply(state: &mut Self::State, ts: i64, kind: &Self);
+}
+
+impl<K: ReducibleKind> Reducible for Event<K> {
+    type State = K::State;
+    fn apply(state: &mut Self::State, event: &Self) {
+        K::apply(state, event.ts, &event.kind);
+    }
 }
 
 /// Append-only JSONL event log, generic over event type.
@@ -233,6 +268,27 @@ mod tests {
                 stopped: 1
             }
         );
+    }
+
+    #[test]
+    fn event_flatten_roundtrip() {
+        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        enum Kind {
+            Started { pid: u32 },
+        }
+
+        let event = Event::now(Kind::Started { pid: 42 });
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert!(parsed["ts"].is_i64());
+        assert_eq!(parsed["type"], "started");
+        assert_eq!(parsed["pid"], 42);
+        assert!(parsed.get("kind").is_none());
+
+        let restored: Event<Kind> = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.kind, Kind::Started { pid: 42 });
     }
 
     #[test]

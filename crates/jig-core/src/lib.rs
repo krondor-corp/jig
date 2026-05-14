@@ -10,7 +10,7 @@ pub mod mux;
 pub mod prompt;
 
 pub use agents::Agent;
-pub use events::{EventLog, Reducible};
+pub use events::{Event, EventLog, Reducible, ReducibleKind};
 pub use git::{Branch, DiffStats, FileDiff, GitError, Repo, Worktree, WorktreeRef, WORKTREES_DIR};
 pub use github::GitHubClient;
 pub use issues::issue::IssueRef;

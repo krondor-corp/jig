@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use url::Url;
 
-use jig_core::Reducible;
+use jig_core::ReducibleKind;
 
 use crate::context::{Config, RepoEntry};
 use crate::daemon::checks::PrHealth;
@@ -12,7 +12,9 @@ use crate::worker::{MuxStatus, WorkerStatus};
 use jig_core::git::Branch;
 use jig_core::issues::issue::IssueRef;
 
-use super::schema::{Event, EventKind, TerminalKind};
+#[cfg(test)]
+use super::schema::Event;
+use super::schema::{EventKind, TerminalKind};
 
 /// Full worker state — event-log reduction + runtime enrichment.
 ///
@@ -122,17 +124,17 @@ impl WorkerState {
     }
 }
 
-impl Reducible for Event {
+impl ReducibleKind for EventKind {
     type State = WorkerState;
 
-    fn apply(state: &mut WorkerState, event: &Event) {
+    fn apply(state: &mut WorkerState, ts: i64, kind: &EventKind) {
         if state.started_at.is_none() {
-            state.started_at = Some(event.ts);
+            state.started_at = Some(ts);
         }
-        state.last_event_at = Some(event.ts);
+        state.last_event_at = Some(ts);
 
         // Terminal events are sticky
-        if let EventKind::Terminal { terminal, .. } = &event.kind {
+        if let EventKind::Terminal { terminal, .. } = kind {
             state.status = match terminal {
                 TerminalKind::Merged => WorkerStatus::Merged,
                 TerminalKind::Approved => WorkerStatus::Approved,
@@ -146,7 +148,7 @@ impl Reducible for Event {
             return;
         }
 
-        match &event.kind {
+        match kind {
             EventKind::Create { .. } => {
                 state.status = WorkerStatus::Created;
             }
@@ -168,7 +170,7 @@ impl Reducible for Event {
             EventKind::Commit { .. } => {
                 state.status = WorkerStatus::Running;
                 state.commit_count += 1;
-                state.last_commit_at = Some(event.ts);
+                state.last_commit_at = Some(ts);
             }
             EventKind::Push { .. } => {
                 state.status = WorkerStatus::Running;
@@ -185,7 +187,7 @@ impl Reducible for Event {
             }
             EventKind::Nudge { nudge_type, .. } => {
                 *state.nudge_counts.entry(nudge_type.clone()).or_insert(0) += 1;
-                state.last_nudge_at.insert(nudge_type.clone(), event.ts);
+                state.last_nudge_at.insert(nudge_type.clone(), ts);
             }
             EventKind::CiStatus => {}
             EventKind::PrCiStatus { passed, failures } => {
@@ -229,7 +231,7 @@ mod tests {
     fn reduce(events: &[Event], config: &Config) -> WorkerState {
         let mut state = WorkerState::default();
         for event in events {
-            Event::apply(&mut state, event);
+            EventKind::apply(&mut state, event.ts, &event.kind);
         }
         state.check_silence(config);
         state
@@ -331,27 +333,27 @@ mod tests {
                 repo: "r".into(),
                 issue: IssueRef::new("JIG-1"),
             }),
-            Event::at(
-                now - 600,
-                EventKind::Nudge {
+            Event {
+                ts: now - 600,
+                kind: EventKind::Nudge {
                     nudge_type: "ci".into(),
                     message: "m".into(),
                 },
-            ),
-            Event::at(
-                now - 100,
-                EventKind::Nudge {
+            },
+            Event {
+                ts: now - 100,
+                kind: EventKind::Nudge {
                     nudge_type: "ci".into(),
                     message: "m".into(),
                 },
-            ),
-            Event::at(
-                now - 500,
-                EventKind::Nudge {
+            },
+            Event {
+                ts: now - 500,
+                kind: EventKind::Nudge {
                     nudge_type: "review".into(),
                     message: "m".into(),
                 },
-            ),
+            },
         ];
         let state = reduce(&events, &default_config());
         assert_eq!(state.last_nudge_at.get("ci"), Some(&(now - 100)));
@@ -435,7 +437,10 @@ mod tests {
     #[test]
     fn silence_triggers_stalled() {
         let old_ts = chrono::Utc::now().timestamp() - 600;
-        let events = vec![Event::at(old_ts, EventKind::ToolUseEnd)];
+        let events = vec![Event {
+            ts: old_ts,
+            kind: EventKind::ToolUseEnd,
+        }];
         let config = Config {
             silence_threshold_seconds: 300,
             ..Default::default()
@@ -493,14 +498,14 @@ mod tests {
     #[test]
     fn initializing_not_marked_stalled() {
         let old_ts = chrono::Utc::now().timestamp() - 600;
-        let events = vec![Event::at(
-            old_ts,
-            EventKind::Initializing {
+        let events = vec![Event {
+            ts: old_ts,
+            kind: EventKind::Initializing {
                 branch: "main".into(),
                 base: "main".into(),
                 auto: false,
             },
-        )];
+        }];
         let config = Config {
             silence_threshold_seconds: 300,
             ..Default::default()

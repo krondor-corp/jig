@@ -220,7 +220,7 @@ fn startup_recovery(global_config: &Config, registry: &RepoRegistry) {
         }
     }
 
-    if let Err(e) = log.append(&events::Event::started()) {
+    if let Err(e) = log.append(&events::started()) {
         tracing::warn!("failed to write daemon Started event: {}", e);
     }
 
@@ -271,7 +271,7 @@ fn log_shutdown(reason: &str) {
             return;
         }
     };
-    if let Err(e) = log.append(&events::Event::stopped(reason)) {
+    if let Err(e) = log.append(&events::stopped(reason)) {
         tracing::warn!("failed to write daemon Stopped event: {}", e);
     }
 }

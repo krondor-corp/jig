@@ -32,11 +32,7 @@ impl NotificationQueue {
             fs::create_dir_all(parent)?;
         }
         tracing::debug!(event_type = event.type_name(), "queuing notification");
-        let notification = Notification {
-            ts: chrono::Utc::now().timestamp(),
-            id: uuid::Uuid::new_v4().to_string(),
-            event,
-        };
+        let notification = Notification::now(event);
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -106,10 +102,9 @@ mod tests {
         let notifications = queue.tail(10).unwrap();
         assert_eq!(notifications.len(), 1);
         assert!(matches!(
-            notifications[0].event,
+            notifications[0].kind,
             NotificationEvent::WorkStarted { .. }
         ));
-        assert!(!notifications[0].id.is_empty());
     }
 
     #[test]
