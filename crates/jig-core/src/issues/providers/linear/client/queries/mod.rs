@@ -1,4 +1,3 @@
-pub mod get_issue;
 pub mod labels_by_team;
 pub mod list_issues;
 pub mod projects_by_name;

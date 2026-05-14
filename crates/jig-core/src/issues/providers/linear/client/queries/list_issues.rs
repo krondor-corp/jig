@@ -34,6 +34,19 @@ query ListIssues($filter: IssueFilter, $first: Int) {
 }
 "#;
 
+/// Fetch issues from Linear.
+///
+/// This is the **single** underlying GraphQL operation for both
+/// list-many and get-one workflows. If you need a single issue,
+/// pass `first: 1` and call `.into_iter().next()` on the result.
+///
+/// **Do not** add a separate `GetIssue` query — all issue field
+/// selection lives here so the field set has one canonical source
+/// of truth. If you need genuinely different field selection
+/// (e.g., a lightweight fetch that omits `inverseRelations`),
+/// define a distinct query with a distinct output type and
+/// document the intentional divergence — but only when the
+/// difference is real, not for output-type ergonomics.
 pub struct ListIssues {
     pub filter: serde_json::Value,
     pub first: i32,
