@@ -5,10 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.3.1 (2026-05-11)
+## v0.3.2 (2026-05-14)
 
 ### Chore
 
+ - <csr-id-6fcfa7cfcf8bf4e19efc50935bd1a00277c4397a/> bump version to 0.3.2
+ - <csr-id-020bac48693bb36b95913cae6dc4cb5746ecc132/> bump default claude model from sonnet to opus
+   Backend default at `Model::DEFAULT` is dead code in practice today (the
+   jig.toml defaults at `context/repo.rs:94,113` shadow it on every real
+   call site), so this has no runtime effect until KRO-152 consolidates
+   those duplicates. Lands the intent now; behavior shift happens when the
+   consolidation lands.
  - <csr-id-e1dfd6b90ac3e80c6af9fd46fd1e19fd0207b3f5/> bump version to 0.3.1
  - <csr-id-6bd4cd521f95bfd6fbd8fdba97a0a642e1725a02/> bump version to 0.3.0
  - <csr-id-9f12c306cfcfb1eea60707d32360eb89479993a9/> bump version to 0.2.0
@@ -19,6 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+ - <csr-id-595ecea0aeed045cb76d1ff5f0b93bdf0978ec24/> work around libgit2 ENOENT on missing .git/shallow
+   libgit2 1.9.2 (via git2 0.20.4) surfaces a fatal "could not find
+   .git/shallow to stat" error during worktree iteration on macOS even
+   though file-absent is supposed to mean "not a shallow clone." Hit
+   reproducibly via `jig rm` on non-shallow repos.
+   
+   We're already on the latest git2/libgit2-sys, so the fix is on our
+   side: after Repo::open / Repo::discover, proactively create an empty
+   .git/shallow in the common dir if missing. Per git's own semantics,
+   an empty shallow file means "no shallow refs" — no behavior change
+   for git itself, only avoids the libgit2 internal stat from blowing
+   up downstream.
  - <csr-id-a6a59f1aad09365f570b64c283e11a0f4b281667/> query all PR states and add integration tests (KRO-143)
    get_pr_for_branch used state=open, making closed/merged PRs invisible
    and preventing cleanup. Changed to state=all and parse actual state from
@@ -52,8 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <csr-read-only-do-not-edit/>
 
- - 17 commits contributed to the release.
- - 11 commits were understood as [conventional](https://www.conventionalcommits.org).
+ - 22 commits contributed to the release.
+ - 14 commits were understood as [conventional](https://www.conventionalcommits.org).
  - 0 issues like '(#ID)' were seen in commit messages
 
 ### Commit Details
@@ -63,6 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <details><summary>view details</summary>
 
  * **Uncategorized**
+    - Bump version to 0.3.2 ([`6fcfa7c`](https://github.com/krondor-corp/jig/commit/6fcfa7cfcf8bf4e19efc50935bd1a00277c4397a))
+    - Work around libgit2 ENOENT on missing .git/shallow ([`595ecea`](https://github.com/krondor-corp/jig/commit/595ecea0aeed045cb76d1ff5f0b93bdf0978ec24))
+    - Bump default claude model from sonnet to opus ([`020bac4`](https://github.com/krondor-corp/jig/commit/020bac48693bb36b95913cae6dc4cb5746ecc132))
+    - Merge pull request #21 from krondor-corp/release-automation ([`6e5e121`](https://github.com/krondor-corp/jig/commit/6e5e1218c422440dfe296c5a3aade37f7247f1d8))
+    - Bump jig-core v0.3.1, jig-cli v0.3.1 ([`c834648`](https://github.com/krondor-corp/jig/commit/c83464870957aedcebc37cd4136472cd404c5537))
     - Bump version to 0.3.1 ([`e1dfd6b`](https://github.com/krondor-corp/jig/commit/e1dfd6b90ac3e80c6af9fd46fd1e19fd0207b3f5))
     - Cargo fmt ([`6f958a8`](https://github.com/krondor-corp/jig/commit/6f958a8c78b08a0374f80d5d2ecd868e3bed8c68))
     - Query all PR states and add integration tests (KRO-143) ([`a6a59f1`](https://github.com/krondor-corp/jig/commit/a6a59f1aad09365f570b64c283e11a0f4b281667))
@@ -81,6 +105,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Cargo fmt ([`54d326b`](https://github.com/krondor-corp/jig/commit/54d326b275eebbc3ff783d8ecbabb0b2bb28a3db))
     - Jig — git worktree manager for parallel Claude Code sessions ([`5cff652`](https://github.com/krondor-corp/jig/commit/5cff652c9698daa6a067086234c50c6abd884517))
 </details>
+
+## v0.3.1 (2026-05-11)
+
+<csr-id-e1dfd6b90ac3e80c6af9fd46fd1e19fd0207b3f5/>
+<csr-id-6bd4cd521f95bfd6fbd8fdba97a0a642e1725a02/>
+<csr-id-9f12c306cfcfb1eea60707d32360eb89479993a9/>
+<csr-id-6f958a8c78b08a0374f80d5d2ecd868e3bed8c68/>
+<csr-id-54d326b275eebbc3ff783d8ecbabb0b2bb28a3db/>
+
+### Chore
+
+ - <csr-id-e1dfd6b90ac3e80c6af9fd46fd1e19fd0207b3f5/> bump version to 0.3.1
+ - <csr-id-6bd4cd521f95bfd6fbd8fdba97a0a642e1725a02/> bump version to 0.3.0
+ - <csr-id-9f12c306cfcfb1eea60707d32360eb89479993a9/> bump version to 0.2.0
+
+### New Features
+
+ - <csr-id-5cff652c9698daa6a067086234c50c6abd884517/> jig — git worktree manager for parallel Claude Code sessions
+
+### Bug Fixes
+
+ - <csr-id-a6a59f1aad09365f570b64c283e11a0f4b281667/> query all PR states and add integration tests (KRO-143)
+   get_pr_for_branch used state=open, making closed/merged PRs invisible
+   and preventing cleanup. Changed to state=all and parse actual state from
+   the response instead of hardcoding Open. Added integration tests against
+   real closed PR #17 and merged PR #18 on krondor-corp/jig (gated behind
+   #[ignore], run with cargo test -p jig-core -- --ignored).
+ - <csr-id-50c054d030c0d8a42fa6f105c4771c606c94810d/> pass prompt via --allowed-tools= form and clear tracker after run
+   Two related bugs in the triage path:
+   
+   1. `Agent::once` builds argv with `--allowed-tools <tools...>` (variadic),
+   which swallows the prompt as another tool name. Claude exits with
+   "Input must be provided either through stdin or as a prompt argument".
+   Switch to the `--allowed-tools=value` form so the prompt remains a
+   separate positional.
+   
+   2. `TriageActor::register` adds an entry to the tracker but no path
+   removes it on success — only the stuck-timeout sweep (default 600s)
+   clears completed triages. The `jig ps -gw` display surface keeps
+   showing finished triages for up to 10 minutes. Remove the tracker
+   entry immediately after the synchronous `run_single` returns.
+ - <csr-id-cc11b783045bb5d4d897e5e7660557ced9c41cc5/> resolve clippy warnings in issues list and format pr create
+ - <csr-id-9e3deddc1a6070d619d13874f63a6343b7e6ab02/> pass --head flag to gh pr create for git worktree compatibility
+ - <csr-id-ba3ee31ba372af56cf1ed953128792b433deaf8c/> resolve clippy warnings for CI
+
+### Style
+
+ - <csr-id-6f958a8c78b08a0374f80d5d2ecd868e3bed8c68/> cargo fmt
+ - <csr-id-54d326b275eebbc3ff783d8ecbabb0b2bb28a3db/> cargo fmt
 
 ## v0.3.0 (2026-05-10)
 
