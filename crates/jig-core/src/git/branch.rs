@@ -102,10 +102,7 @@ mod tests {
 
     #[test]
     fn remote_prefix_local_branch_with_slash() {
-        assert_eq!(
-            Branch::new("feature/foo").remote_prefix(),
-            Some("feature")
-        );
+        assert_eq!(Branch::new("feature/foo").remote_prefix(), Some("feature"));
     }
 
     #[test]
