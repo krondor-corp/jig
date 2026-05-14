@@ -68,12 +68,12 @@ impl fmt::Display for MyCmdOutput {
 }
 ```
 
-In `main.rs`, the dispatch is thin:
+In `main.rs`, the dispatch is thin. The top-level `Command` enum uses `type Context = ()`, so context-building is separated from the run call to avoid a `clippy::let_unit_value` lint:
 
 ```rust
 Some(ref command) => {
-    let ctx = command.build_context()?;
-    let output = command.run(ctx)?;
+    command.build_context()?;       // each variant builds its own ctx internally
+    let output = command.run(())?;
     // ...
 }
 ```
