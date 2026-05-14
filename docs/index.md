@@ -12,7 +12,7 @@ Find the right doc by what you're working on. The **Sources** column tells you w
 
 | Document | Summary | Sources |
 |----------|---------|---------|
-| [PATTERNS.md](./PATTERNS.md) | Error handling, Op trait, module layout, output conventions, actor pattern, naming | `crates/jig-cli/src/cli/op.rs`, `crates/jig-cli/src/cli/ui.rs`, `crates/jig-core/src/error.rs` |
+| [PATTERNS.md](./PATTERNS.md) | Error handling, Op trait, module layout, output conventions, actor pattern, naming | `crates/jig-cli/src/cli/op.rs`, `crates/jig-cli/src/cli/ui/`, `crates/jig-core/src/error.rs` |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Commit format, PR workflow, agent constraints | — |
 | [SUCCESS_CRITERIA.md](./SUCCESS_CRITERIA.md) | CI gate: build, test, clippy, fmt commands | — |
 
@@ -21,7 +21,7 @@ Find the right doc by what you're working on. The **Sources** column tells you w
 | Document | Summary | Sources |
 |----------|---------|---------|
 | [daemon.md](./daemon.md) | Tick loop, actor threads, nudging, auto-spawn, auto-prune, PR monitoring | `crates/jig-cli/src/daemon/` |
-| [STDOUT-FORMATTING.md](./STDOUT-FORMATTING.md) | Op trait pattern, Display impls, comfy-table usage, color conventions | `crates/jig-cli/src/cli/op.rs`, `crates/jig-cli/src/cli/ui.rs`, `crates/jig-cli/src/cli/commands/*.rs` |
+| [STDOUT-FORMATTING.md](./STDOUT-FORMATTING.md) | Op trait pattern, Display impls, comfy-table usage, color conventions | `crates/jig-cli/src/cli/op.rs`, `crates/jig-cli/src/cli/ui/`, `crates/jig-cli/src/cli/commands/*.rs` |
 
 ### Operations
 
