@@ -4,7 +4,7 @@ mod reducer;
 mod schema;
 
 pub use reducer::DaemonState;
-pub use schema::{Event, EventKind};
+pub use schema::{started, stopped, Event, EventKind};
 
 use crate::context::daemon_log_path;
 use jig_core::EventLog;

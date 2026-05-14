@@ -1,8 +1,10 @@
 //! State reducer — builds DaemonState from events.
 
-use jig_core::Reducible;
+use jig_core::ReducibleKind;
 
-use super::schema::{Event, EventKind};
+use super::schema::EventKind;
+#[cfg(test)]
+use super::schema::{Event, started, stopped};
 
 #[derive(Debug, Clone, Default)]
 pub struct DaemonState {
@@ -12,19 +14,19 @@ pub struct DaemonState {
     pub stop_reason: Option<String>,
 }
 
-impl Reducible for Event {
+impl ReducibleKind for EventKind {
     type State = DaemonState;
 
-    fn apply(state: &mut DaemonState, event: &Event) {
-        match &event.kind {
+    fn apply(state: &mut DaemonState, ts: i64, kind: &EventKind) {
+        match kind {
             EventKind::Started { pid } => {
-                state.started_at = Some(event.ts);
+                state.started_at = Some(ts);
                 state.stopped_at = None;
                 state.pid = Some(*pid);
                 state.stop_reason = None;
             }
             EventKind::Stopped { pid: _, reason } => {
-                state.stopped_at = Some(event.ts);
+                state.stopped_at = Some(ts);
                 state.stop_reason = Some(reason.clone());
             }
         }
@@ -44,7 +46,7 @@ mod tests {
     fn reduce(events: &[Event]) -> DaemonState {
         let mut state = DaemonState::default();
         for event in events {
-            Event::apply(&mut state, event);
+            EventKind::apply(&mut state, event.ts, &event.kind);
         }
         state
     }
@@ -58,7 +60,7 @@ mod tests {
 
     #[test]
     fn started_without_stopped_is_crash() {
-        let events = vec![Event::started()];
+        let events = vec![started()];
         let state = reduce(&events);
         assert!(state.started_at.is_some());
         assert!(state.previous_run_crashed());
@@ -66,7 +68,7 @@ mod tests {
 
     #[test]
     fn started_then_stopped_is_clean() {
-        let events = vec![Event::started(), Event::stopped("normal")];
+        let events = vec![started(), stopped("normal")];
         let state = reduce(&events);
         assert!(state.started_at.is_some());
         assert!(state.stopped_at.is_some());
@@ -76,7 +78,7 @@ mod tests {
 
     #[test]
     fn multiple_runs_last_wins() {
-        let events = vec![Event::started(), Event::stopped("normal"), Event::started()];
+        let events = vec![started(), stopped("normal"), started()];
         let state = reduce(&events);
         assert!(state.previous_run_crashed());
         assert!(state.stopped_at.is_none());

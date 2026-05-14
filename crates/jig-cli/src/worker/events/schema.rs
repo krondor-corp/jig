@@ -6,20 +6,8 @@ use jig_core::issues::issue::IssueRef;
 
 /// A single event in the worker event log.
 ///
-/// Each variant carries exactly the fields relevant to that lifecycle stage.
 /// Serializes as `{"ts":..., "type":"spawn", "branch":"feat/foo", ...}`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Event {
-    pub ts: i64,
-    #[serde(flatten)]
-    pub kind: EventKind,
-}
-
-impl Event {
-    pub fn event_type(&self) -> EventType {
-        self.kind.event_type()
-    }
-}
+pub type Event = jig_core::Event<EventKind>;
 
 /// The discriminated payload of an event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,20 +146,6 @@ impl EventKind {
     }
 }
 
-impl Event {
-    pub fn now(kind: EventKind) -> Self {
-        Self {
-            ts: chrono::Utc::now().timestamp(),
-            kind,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn at(ts: i64, kind: EventKind) -> Self {
-        Self { ts, kind }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,7 +176,7 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let restored: Event = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(restored.event_type(), EventType::PrOpened);
+        assert_eq!(restored.kind.event_type(), EventType::PrOpened);
         if let EventKind::PrOpened { pr_url, pr_number } = &restored.kind {
             assert_eq!(pr_url, "https://github.com/pr/1");
             assert_eq!(pr_number, "42");
