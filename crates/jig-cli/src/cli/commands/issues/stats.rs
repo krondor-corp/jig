@@ -1,11 +1,11 @@
+use std::fmt;
+
 use clap::Args;
 
 use jig_core::issues::{Issue as CoreIssue, IssueFilter, IssuePriority, IssueStatus};
 
 use crate::cli::op::Op;
 use crate::context::{Context, RepoConfig, ScopedCtx};
-
-use super::{IssuesError, IssuesOutput, StatsData};
 
 /// Show issue statistics
 #[derive(Args, Debug, Clone)]
@@ -15,19 +15,51 @@ pub struct Stats {
     pub global: bool,
 }
 
+#[derive(Debug)]
+pub struct StatsOutput {
+    pub by_status: Vec<(String, usize)>,
+    pub by_priority: Vec<(String, usize)>,
+}
+
+impl fmt::Display for StatsOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "By Status:  ")?;
+        for (i, (name, count)) in self.by_status.iter().enumerate() {
+            if i > 0 {
+                write!(f, "  ")?;
+            }
+            write!(f, "{}: {}", name, count)?;
+        }
+        writeln!(f)?;
+        write!(f, "By Priority:")?;
+        for (name, count) in &self.by_priority {
+            write!(f, "  {}: {}", name, count)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StatsError {
+    #[error(transparent)]
+    Context(#[from] crate::context::ContextError),
+    #[error(transparent)]
+    Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
+}
+
 fn run_for_repos(
     repos: &[RepoConfig],
     global: &crate::context::Config,
-) -> Result<IssuesOutput, IssuesError> {
+) -> Result<StatsOutput, StatsError> {
     let mut all_issues = Vec::new();
     for repo in repos {
         let provider = repo.issue_provider(global)?;
         all_issues.extend(provider.list(&IssueFilter::default())?);
     }
-    Ok(IssuesOutput::Stats(compute_stats(&all_issues)))
+    Ok(compute_stats(&all_issues))
 }
 
-fn compute_stats(issues: &[CoreIssue]) -> StatsData {
+fn compute_stats(issues: &[CoreIssue]) -> StatsOutput {
     let mut triage = 0usize;
     let mut backlog = 0usize;
     let mut planned = 0usize;
@@ -75,7 +107,7 @@ fn compute_stats(issues: &[CoreIssue]) -> StatsData {
     ];
     by_priority.retain(|(_, count)| *count > 0);
 
-    StatsData {
+    StatsOutput {
         by_status,
         by_priority,
     }
@@ -83,10 +115,10 @@ fn compute_stats(issues: &[CoreIssue]) -> StatsData {
 
 impl Op for Stats {
     type Context = ScopedCtx;
-    type Error = IssuesError;
-    type Output = IssuesOutput;
+    type Error = StatsError;
+    type Output = StatsOutput;
 
-    fn build_context(&self) -> Result<ScopedCtx, IssuesError> {
+    fn build_context(&self) -> Result<ScopedCtx, StatsError> {
         Ok(ScopedCtx::from_global(self.global)?)
     }
 

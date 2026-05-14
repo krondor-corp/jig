@@ -3,8 +3,6 @@
 mod comments;
 mod create;
 
-use std::fmt;
-
 use clap::Args;
 
 use crate::cli::op::Op;
@@ -15,62 +13,32 @@ pub use create::Create;
 #[derive(Args, Debug, Clone)]
 pub struct Pr {
     #[command(subcommand)]
-    pub command: Option<PrCommand>,
+    pub command: Option<Command>,
 
     #[command(flatten)]
     pub create: Create,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum PrError {
-    #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
-    #[error(transparent)]
-    Git(#[from] jig_core::GitError),
-    #[error(transparent)]
-    GitHub(#[from] jig_core::github::GitHubError),
-    #[error(transparent)]
-    Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
-    #[error("could not determine current branch")]
-    NoBranch,
-    #[error("no PR found for current branch")]
-    NoPr,
-}
-
-#[derive(Debug)]
-pub struct PrOutput(pub String);
-
-impl fmt::Display for PrOutput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 crate::command_enum! {
-    PrCommand: PrOutput, PrError {
-        /// Push current branch and create a draft PR (default)
-        (Create, Create),
-        /// Show review comments and feedback on the current PR
-        (Comments, comments::Comments),
-    }
+    /// Push current branch and create a draft PR (default)
+    (Create, Create),
+    /// Show review comments and feedback on the current PR
+    (Comments, comments::Comments),
 }
 
 impl Op for Pr {
     type Context = ();
-    type Error = PrError;
-    type Output = PrOutput;
+    type Output = OpOutput;
+    type Error = OpError;
 
-    fn build_context(&self) -> Result<(), PrError> {
+    fn build_context(&self) -> Result<(), Self::Error> {
         Ok(())
     }
 
     fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.command {
             Some(cmd) => cmd.run(()),
-            None => {
-                let ctx = self.create.build_context()?;
-                self.create.run(ctx)
-            }
+            None => Command::Create(self.create.clone()).run(()),
         }
     }
 }

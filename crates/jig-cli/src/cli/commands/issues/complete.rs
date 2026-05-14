@@ -1,11 +1,11 @@
+use std::fmt;
+
 use clap::Args;
 
 use jig_core::issues::IssueStatus;
 
 use crate::cli::op::Op;
 use crate::context::{RepoConfig, RepoCtx};
-
-use super::{IssuesError, IssuesOutput};
 
 /// Mark an issue as complete
 #[derive(Args, Debug, Clone)]
@@ -18,23 +18,50 @@ pub struct Complete {
     pub delete: bool,
 }
 
+#[derive(Debug)]
+pub struct CompleteOutput {
+    pub id: String,
+    pub deleted: bool,
+}
+
+impl fmt::Display for CompleteOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.deleted {
+            write!(f, "Completed and deleted: {}", self.id)
+        } else {
+            write!(f, "Completed: {}", self.id)
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CompleteError {
+    #[error(transparent)]
+    Context(#[from] crate::context::ContextError),
+    #[error(transparent)]
+    Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
+}
+
 fn run(
     repo: &RepoConfig,
     global: &crate::context::Config,
     cmd: &Complete,
-) -> Result<IssuesOutput, IssuesError> {
+) -> Result<CompleteOutput, CompleteError> {
     let linear_provider = repo.linear_provider(global)?;
     linear_provider.update_status(&cmd.id, &IssueStatus::Complete)?;
 
-    Ok(IssuesOutput::Completed(cmd.id.clone(), cmd.delete))
+    Ok(CompleteOutput {
+        id: cmd.id.clone(),
+        deleted: cmd.delete,
+    })
 }
 
 impl Op for Complete {
     type Context = RepoCtx;
-    type Error = IssuesError;
-    type Output = IssuesOutput;
+    type Error = CompleteError;
+    type Output = CompleteOutput;
 
-    fn build_context(&self) -> Result<RepoCtx, IssuesError> {
+    fn build_context(&self) -> Result<RepoCtx, CompleteError> {
         Ok(RepoCtx::from_cwd()?)
     }
 

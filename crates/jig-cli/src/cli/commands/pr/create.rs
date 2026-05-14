@@ -1,5 +1,7 @@
 //! Create subcommand — push current branch and create a draft PR
 
+use std::fmt;
+
 use clap::Args;
 
 use crate::cli::op::Op;
@@ -9,8 +11,6 @@ use crate::worker::events::{self, WorkerState};
 use jig_core::git::{Branch, Repo};
 use jig_core::github::GitHubClient;
 use jig_core::Worktree;
-
-use super::{PrError, PrOutput};
 
 /// Push current branch and create a draft PR
 #[derive(Args, Debug, Clone)]
@@ -24,18 +24,43 @@ pub struct Create {
     pub body: Option<String>,
 }
 
+#[derive(Debug)]
+pub struct CreateOutput(pub String);
+
+impl fmt::Display for CreateOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CreateError {
+    #[error(transparent)]
+    Context(#[from] crate::context::ContextError),
+    #[error(transparent)]
+    Git(#[from] jig_core::GitError),
+    #[error(transparent)]
+    GitHub(#[from] jig_core::github::GitHubError),
+    #[error(transparent)]
+    Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
+    #[error("could not determine current branch")]
+    NoBranch,
+}
+
 impl Op for Create {
     type Context = RepoCtx;
-    type Error = PrError;
-    type Output = PrOutput;
+    type Error = CreateError;
+    type Output = CreateOutput;
 
-    fn build_context(&self) -> Result<RepoCtx, PrError> {
+    fn build_context(&self) -> Result<RepoCtx, CreateError> {
         Ok(RepoCtx::from_cwd()?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
         let git_repo = Repo::discover()?;
-        let branch = git_repo.current_branch().map_err(|_| PrError::NoBranch)?;
+        let branch = git_repo
+            .current_branch()
+            .map_err(|_| CreateError::NoBranch)?;
 
         let base = resolve_base(&ctx.repo, &ctx.config)?;
         let base_str: &str = &base;
@@ -61,11 +86,11 @@ impl Op for Create {
 
         ui::success(&format!("Draft PR created: {}", ui::highlight(&url)));
 
-        Ok(PrOutput(url))
+        Ok(CreateOutput(url))
     }
 }
 
-fn resolve_base(repo: &RepoConfig, global: &crate::context::Config) -> Result<Branch, PrError> {
+fn resolve_base(repo: &RepoConfig, global: &crate::context::Config) -> Result<Branch, CreateError> {
     let worktree_name = match Worktree::current() {
         Ok(wt) => wt.branch_name(),
         Err(_) => return Ok(repo.base_branch(global)),

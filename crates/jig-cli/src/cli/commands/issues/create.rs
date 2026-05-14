@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io;
 
 use clap::Args;
@@ -6,8 +7,6 @@ use jig_core::issues::{IssuePriority, IssueStatus};
 
 use crate::cli::op::Op;
 use crate::context::{RepoConfig, RepoCtx};
-
-use super::{IssuesError, IssuesOutput};
 
 /// Create a new issue
 #[derive(Args, Debug, Clone)]
@@ -44,7 +43,28 @@ pub struct Create {
     pub status: String,
 }
 
-fn read_body(body: Option<&str>) -> Result<Option<String>, IssuesError> {
+#[derive(Debug)]
+pub struct CreateOutput(pub String);
+
+impl fmt::Display for CreateOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Created issue: {}", self.0)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CreateError {
+    #[error(transparent)]
+    Context(#[from] crate::context::ContextError),
+    #[error(transparent)]
+    Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
+    #[error("{0}")]
+    Usage(String),
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+}
+
+fn read_body(body: Option<&str>) -> Result<Option<String>, CreateError> {
     match body {
         Some("-") => {
             let mut buf = String::new();
@@ -60,12 +80,12 @@ fn run(
     repo: &RepoConfig,
     global: &crate::context::Config,
     cmd: &Create,
-) -> Result<IssuesOutput, IssuesError> {
+) -> Result<CreateOutput, CreateError> {
     let pri: Option<IssuePriority> = cmd.priority.as_deref().and_then(|s| s.parse().ok());
     let initial_status: IssueStatus = cmd
         .status
         .parse()
-        .map_err(|_| IssuesError::Usage(format!("unknown status: {}", cmd.status)))?;
+        .map_err(|_| CreateError::Usage(format!("unknown status: {}", cmd.status)))?;
     let body_text = read_body(cmd.body.as_deref())?;
 
     let linear_provider = repo.linear_provider(global)?;
@@ -79,15 +99,15 @@ fn run(
         Some(&initial_status),
     )?;
 
-    Ok(IssuesOutput::Created(id))
+    Ok(CreateOutput(id))
 }
 
 impl Op for Create {
     type Context = RepoCtx;
-    type Error = IssuesError;
-    type Output = IssuesOutput;
+    type Error = CreateError;
+    type Output = CreateOutput;
 
-    fn build_context(&self) -> Result<RepoCtx, IssuesError> {
+    fn build_context(&self) -> Result<RepoCtx, CreateError> {
         Ok(RepoCtx::from_cwd()?)
     }
 

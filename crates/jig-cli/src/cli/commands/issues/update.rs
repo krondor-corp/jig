@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io;
 
 use clap::Args;
@@ -5,7 +6,26 @@ use clap::Args;
 use crate::cli::op::Op;
 use crate::context::{RepoConfig, RepoCtx};
 
-use super::{IssuesError, IssuesOutput};
+#[derive(Debug)]
+pub struct UpdateOutput(pub String);
+
+impl fmt::Display for UpdateOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Updated issue: {}", self.0)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum UpdateError {
+    #[error(transparent)]
+    Context(#[from] crate::context::ContextError),
+    #[error(transparent)]
+    Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
+    #[error("{0}")]
+    Usage(String),
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+}
 
 /// Update an existing issue's fields
 #[derive(Args, Debug, Clone)]
@@ -68,7 +88,7 @@ pub struct Update {
     pub remove_parent: bool,
 }
 
-fn read_body(body: Option<&str>) -> Result<Option<String>, IssuesError> {
+fn read_body(body: Option<&str>) -> Result<Option<String>, UpdateError> {
     match body {
         Some("-") => {
             let mut buf = String::new();
@@ -84,12 +104,12 @@ fn run(
     repo: &RepoConfig,
     global: &crate::context::Config,
     cmd: &Update,
-) -> Result<IssuesOutput, IssuesError> {
+) -> Result<UpdateOutput, UpdateError> {
     let pri = cmd.priority.as_deref().and_then(|s| s.parse().ok());
     let body_text = read_body(cmd.body.as_deref())?;
 
     if !cmd.label.is_empty() && (!cmd.add_label.is_empty() || !cmd.remove_label.is_empty()) {
-        return Err(IssuesError::Usage(
+        return Err(UpdateError::Usage(
             "--label (replace) cannot be combined with --add-label / --remove-label".to_string(),
         ));
     }
@@ -107,7 +127,7 @@ fn run(
         && cmd.parent.is_none()
         && !cmd.remove_parent
     {
-        return Err(IssuesError::Usage(
+        return Err(UpdateError::Usage(
             "at least one field to update is required (--title, --body, --priority, --label, --add-label, --remove-label, --category, --assignee, --blocked-by, --remove-blocked-by, --parent, --remove-parent)".to_string(),
         ));
     }
@@ -117,7 +137,7 @@ fn run(
             let provider = repo.issue_provider(global)?;
             let existing = provider
                 .get(&cmd.id)?
-                .ok_or_else(|| IssuesError::Usage(format!("issue not found: {}", cmd.id)))?;
+                .ok_or_else(|| UpdateError::Usage(format!("issue not found: {}", cmd.id)))?;
             let existing_desc = existing
                 .body()
                 .strip_prefix(&format!("# {}\n\n", existing.title()))
@@ -138,7 +158,7 @@ fn run(
         let provider = repo.issue_provider(global)?;
         let existing = provider
             .get(&cmd.id)?
-            .ok_or_else(|| IssuesError::Usage(format!("issue not found: {}", cmd.id)))?;
+            .ok_or_else(|| UpdateError::Usage(format!("issue not found: {}", cmd.id)))?;
         let mut set: Vec<String> = existing.labels().to_vec();
         for add in &cmd.add_label {
             if !set.iter().any(|l| l.eq_ignore_ascii_case(add)) {
@@ -180,15 +200,15 @@ fn run(
         linear_provider.remove_blocked_by(&cmd.id, blocker)?;
     }
 
-    Ok(IssuesOutput::Updated(cmd.id.clone()))
+    Ok(UpdateOutput(cmd.id.clone()))
 }
 
 impl Op for Update {
     type Context = RepoCtx;
-    type Error = IssuesError;
-    type Output = IssuesOutput;
+    type Error = UpdateError;
+    type Output = UpdateOutput;
 
-    fn build_context(&self) -> Result<RepoCtx, IssuesError> {
+    fn build_context(&self) -> Result<RepoCtx, UpdateError> {
         Ok(RepoCtx::from_cwd()?)
     }
 
