@@ -183,9 +183,9 @@ Key conventions:
   - Check repo config first, fall back to global, then hardcoded default
 
 - **Context types**: Each command declares `type Context` in its `Op` impl
-  - `RepoCtx` — single repo from cwd (`RepoCtx::from_cwd()`); fields: `repo: RepoConfig`, `config: Config`
+  - `RepoCtx` — single repo from cwd (`RepoCtx::from_cwd()`); fields: `repo: RepoConfig`, `config: Config`, `jig_toml: JigToml`
   - `GlobalCtx` — all tracked repos (`GlobalCtx::load()`); fields: `repos`, `config`, `registry`
-  - `ScopedCtx` — enum for commands with `--global`; `build_context` branches on `self.global`
+  - `ScopedCtx` — enum for commands with `--global`; use `ScopedCtx::from_global(self.global)` in `build_context`
   - `()` — no context needed (pure commands like `version`, `which`, `shell-init`)
   - Both `RepoCtx` and `GlobalCtx` convert to `Context` via `From` impls for daemon/legacy code
 
