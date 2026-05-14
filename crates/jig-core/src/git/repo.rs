@@ -16,13 +16,35 @@ impl Repo {
     /// Open a repository by discovering from the current directory.
     pub fn discover() -> Result<Self> {
         let inner = git2::Repository::discover(".").map_err(|_| GitError::NotInRepo)?;
-        Ok(Self { inner })
+        Ok(Self::wrap(inner))
     }
 
     /// Open a repository at a specific path.
     pub fn open(path: &Path) -> Result<Self> {
         let inner = git2::Repository::open(path)?;
-        Ok(Self { inner })
+        Ok(Self::wrap(inner))
+    }
+
+    fn wrap(inner: git2::Repository) -> Self {
+        let repo = Self { inner };
+        repo.ensure_shallow_marker();
+        repo
+    }
+
+    /// Workaround for a libgit2 quirk where internal stat of `.git/shallow`
+    /// surfaces ENOENT as a fatal error during operations like worktree
+    /// iteration on macOS (observed against libgit2 1.9.2). An empty
+    /// `shallow` file is git's documented "no shallow refs" state, so
+    /// creating it is a no-op for git's own behavior.
+    fn ensure_shallow_marker(&self) {
+        let shallow = self.inner.commondir().join("shallow");
+        if !shallow.exists() {
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false)
+                .open(&shallow);
+        }
     }
 
     /// Access the underlying git2::Repository.
@@ -629,5 +651,70 @@ impl Repo {
 
         self.resolve_to_commit("HEAD")
             .map_err(|_| GitError::BranchNotFound(base_branch.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod shallow_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn init_test_repo(dir: &Path) -> git2::Repository {
+        let repo = git2::Repository::init(dir).unwrap();
+        {
+            let mut config = repo.config().unwrap();
+            config.set_str("user.email", "test@test.com").unwrap();
+            config.set_str("user.name", "Test").unwrap();
+            config.set_bool("commit.gpgsign", false).unwrap();
+        }
+        {
+            let mut index = repo.index().unwrap();
+            let tree_oid = index.write_tree().unwrap();
+            let tree = repo.find_tree(tree_oid).unwrap();
+            let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+        repo
+    }
+
+    #[test]
+    fn open_creates_shallow_marker_when_missing() {
+        let tmp = TempDir::new().unwrap();
+        let _ = init_test_repo(tmp.path());
+        let shallow = tmp.path().join(".git").join("shallow");
+        assert!(!shallow.exists(), "fresh repo should have no shallow file");
+
+        let _repo = Repo::open(tmp.path()).unwrap();
+        assert!(
+            shallow.exists(),
+            "Repo::open must create .git/shallow as a libgit2 quirk workaround"
+        );
+        assert_eq!(
+            std::fs::metadata(&shallow).unwrap().len(),
+            0,
+            "shallow marker must be empty (= no shallow refs)"
+        );
+    }
+
+    #[test]
+    fn open_preserves_existing_shallow_file() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_test_repo(tmp.path());
+
+        let head_oid = repo.head().unwrap().target().unwrap().to_string();
+        let shallow_contents = format!("{}\n", head_oid);
+        drop(repo);
+
+        let shallow = tmp.path().join(".git").join("shallow");
+        std::fs::write(&shallow, shallow_contents.as_bytes()).unwrap();
+
+        let _repo = Repo::open(tmp.path()).unwrap();
+        let contents = std::fs::read(&shallow).unwrap();
+        assert_eq!(
+            contents,
+            shallow_contents.as_bytes(),
+            "existing shallow contents must not be clobbered"
+        );
     }
 }
