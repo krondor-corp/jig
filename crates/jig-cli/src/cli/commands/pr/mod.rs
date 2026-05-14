@@ -3,9 +3,7 @@
 mod comments;
 mod create;
 
-use std::fmt;
-
-use clap::{Args, Subcommand};
+use clap::Args;
 
 use crate::cli::op::Op;
 
@@ -15,54 +13,32 @@ pub use create::Create;
 #[derive(Args, Debug, Clone)]
 pub struct Pr {
     #[command(subcommand)]
-    pub command: Option<PrCommand>,
+    pub command: Option<Command>,
 
     #[command(flatten)]
     pub create: Create,
 }
 
-#[derive(Subcommand, Debug, Clone)]
-pub enum PrCommand {
+crate::command_enum! {
     /// Push current branch and create a draft PR (default)
-    Create(Create),
+    (Create, Create),
     /// Show review comments and feedback on the current PR
-    Comments(comments::Comments),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum PrError {
-    #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
-    #[error(transparent)]
-    Git(#[from] jig_core::GitError),
-    #[error(transparent)]
-    GitHub(#[from] jig_core::github::GitHubError),
-    #[error(transparent)]
-    Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
-    #[error("could not determine current branch")]
-    NoBranch,
-    #[error("no PR found for current branch")]
-    NoPr,
-}
-
-#[derive(Debug)]
-pub struct PrOutput(pub String);
-
-impl fmt::Display for PrOutput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
+    (Comments, comments::Comments),
 }
 
 impl Op for Pr {
-    type Error = PrError;
-    type Output = PrOutput;
+    type Context = ();
+    type Output = OpOutput;
+    type Error = OpError;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(PrCommand::Create(cmd)) => cmd.run(),
-            Some(PrCommand::Comments(cmd)) => cmd.run(),
-            None => self.create.run(),
+            Some(cmd) => cmd.run(()),
+            None => Command::Create(self.create.clone()).run(()),
         }
     }
 }

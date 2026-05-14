@@ -7,7 +7,7 @@ use jig_core::Worktree;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::RepoConfig;
+use crate::context::RepoCtx;
 
 /// Exit current worktree and remove it
 #[derive(Args, Debug, Clone)]
@@ -38,12 +38,15 @@ pub enum ExitError {
 }
 
 impl Op for Exit {
+    type Context = RepoCtx;
     type Error = ExitError;
     type Output = ExitOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        let cfg = RepoConfig::from_cwd()?;
+    fn build_context(&self) -> Result<RepoCtx, ExitError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
 
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
         let wt = Worktree::current()?;
         let name = wt.branch_name();
 
@@ -51,7 +54,7 @@ impl Op for Exit {
 
         ui::success(&format!("Exited worktree '{}'", ui::highlight(&name)));
 
-        let canonical = cfg.repo_root.canonicalize()?;
+        let canonical = ctx.repo.repo_root.canonicalize()?;
         Ok(ExitOutput(canonical))
     }
 }

@@ -30,10 +30,15 @@ pub enum AttachError {
 }
 
 impl Op for Attach {
+    type Context = ();
     type Error = AttachError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), AttachError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match RepoConfig::from_cwd() {
             Ok(cfg) => {
                 attach(&cfg, self.branch.as_deref().map(Branch::new).as_ref())?;

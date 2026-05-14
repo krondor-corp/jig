@@ -1,6 +1,6 @@
 //! Nuke command — kill all workers, remove worktrees, clear state
 
-use crate::context::{Context, RepoConfig};
+use crate::context::{RepoConfig, ScopedCtx};
 use jig_core::git::Repo;
 use jig_core::mux::{Mux, TmuxMux};
 
@@ -26,22 +26,27 @@ pub enum NukeError {
 }
 
 impl Op for Nuke {
+    type Context = ScopedCtx;
     type Error = NukeError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        if self.global {
-            let cfg = Context::from_global()?;
-            if cfg.repos.is_empty() {
-                return Err(crate::context::ContextError::NotInGitRepo.into());
+    fn build_context(&self) -> Result<ScopedCtx, NukeError> {
+        Ok(ScopedCtx::from_global(self.global)?)
+    }
+
+    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
+        match ctx {
+            ScopedCtx::Global(g) => {
+                if g.repos.is_empty() {
+                    return Err(crate::context::ContextError::NotInGitRepo.into());
+                }
+                for repo in &g.repos {
+                    nuke_repo(repo)?;
+                }
             }
-            for repo in &cfg.repos {
-                nuke_repo(repo)?;
+            ScopedCtx::Repo(r) => {
+                nuke_repo(&r.repo)?;
             }
-        } else {
-            let cfg = Context::from_cwd()?;
-            let repo = cfg.repo()?;
-            nuke_repo(repo)?;
         }
 
         if let Ok(logs_dir) = crate::context::daemon_logs_dir() {
@@ -60,11 +65,7 @@ impl Op for Nuke {
 }
 
 fn nuke_repo(cfg: &RepoConfig) -> Result<(), NukeError> {
-    let repo_name = cfg
-        .repo_root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let repo_name = cfg.name();
 
     // 1. Kill mux session for this repo (takes out all windows at once)
     let session_name = cfg.session_name();

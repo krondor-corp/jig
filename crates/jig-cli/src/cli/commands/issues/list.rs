@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io::{self, Write};
 
 use clap::Args;
@@ -9,9 +10,75 @@ use jig_core::issues::{self, Issue as CoreIssue, IssueFilter, IssuePriority, Iss
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::Context;
+use crate::context::{Context, ScopedCtx};
 
-use super::{IssuesError, IssuesOutput};
+#[derive(Debug)]
+pub enum ListOutput {
+    Table(Vec<CoreIssue>, Option<Vec<String>>),
+    Detail(Box<CoreIssue>),
+    Interactive,
+    Ids(Vec<String>),
+}
+
+impl fmt::Display for ListOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Table(issues, auto_spawn_labels) => {
+                if issues.is_empty() {
+                    return write!(f, "No issues found");
+                }
+                if ui::is_plain() {
+                    for issue in issues {
+                        writeln!(
+                            f,
+                            "{}\t{}\t{}",
+                            issue.status(),
+                            issue.priority(),
+                            issue.title()
+                        )?;
+                    }
+                    return Ok(());
+                }
+                let table = render_table(issues, auto_spawn_labels.as_deref());
+                write!(f, "{table}")
+            }
+            Self::Detail(issue) => {
+                if let Some(parent) = &issue.parent() {
+                    writeln!(f, "Parent: {}", parent)?;
+                    writeln!(f)?;
+                }
+                write!(f, "{}", issue.body())?;
+                if !issue.labels().is_empty() {
+                    write!(f, "\n\nLabels: {}", issue.labels().join(", "))?;
+                }
+                if !issue.depends_on().is_empty() {
+                    let deps: Vec<&str> = issue.depends_on().iter().map(|d| d.as_ref()).collect();
+                    write!(f, "\n\nBlocked by: {}", deps.join(", "))?;
+                }
+                Ok(())
+            }
+            Self::Interactive => Ok(()),
+            Self::Ids(ids) => {
+                for id in ids {
+                    writeln!(f, "{}", id)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ListError {
+    #[error(transparent)]
+    Context(#[from] crate::context::ContextError),
+    #[error(transparent)]
+    Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
+    #[error("{0}")]
+    Usage(String),
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+}
 
 /// List and browse issues
 #[derive(Args, Debug, Clone)]
@@ -108,21 +175,21 @@ impl List {
         &self,
         all_issues: Vec<CoreIssue>,
         auto_spawn_labels: Option<Vec<String>>,
-    ) -> Result<IssuesOutput, IssuesError> {
+    ) -> Result<ListOutput, ListError> {
         if self.ids {
             let ids: Vec<String> = all_issues.into_iter().map(|i| i.into_id().into()).collect();
-            return Ok(IssuesOutput::Ids(ids));
+            return Ok(ListOutput::Ids(ids));
         }
 
         if self.interactive {
             run_interactive(&all_issues, auto_spawn_labels.as_deref())?;
-            return Ok(IssuesOutput::Interactive);
+            return Ok(ListOutput::Interactive);
         }
 
-        Ok(IssuesOutput::Table(all_issues, auto_spawn_labels))
+        Ok(ListOutput::Table(all_issues, auto_spawn_labels))
     }
 
-    fn run_list(&self, cfg: &Context) -> Result<IssuesOutput, IssuesError> {
+    fn run_list(&self, cfg: &Context) -> Result<ListOutput, ListError> {
         let repo = cfg.repo()?;
         let filter = self.filter();
         let provider = repo.issue_provider(&cfg.config)?;
@@ -130,8 +197,8 @@ impl List {
         if let Some(ref id) = self.id {
             let issue = provider
                 .get(id)?
-                .ok_or_else(|| IssuesError::Usage(format!("issue not found: {}", id)))?;
-            return Ok(IssuesOutput::Detail(Box::new(issue)));
+                .ok_or_else(|| ListError::Usage(format!("issue not found: {}", id)))?;
+            return Ok(ListOutput::Detail(Box::new(issue)));
         }
 
         let spawn_labels = repo.repo.issues.auto_spawn_labels.clone();
@@ -152,7 +219,7 @@ impl List {
         self.finish(all_issues, spawn_labels)
     }
 
-    fn run_list_global(&self, cfg: &Context) -> Result<IssuesOutput, IssuesError> {
+    fn run_list_global(&self, cfg: &Context) -> Result<ListOutput, ListError> {
         let filter = self.filter();
 
         let mut all_issues = Vec::new();
@@ -161,7 +228,7 @@ impl List {
 
             if let Some(ref id) = self.id {
                 if let Some(issue) = provider.get(id)? {
-                    return Ok(IssuesOutput::Detail(Box::new(issue)));
+                    return Ok(ListOutput::Detail(Box::new(issue)));
                 }
                 continue;
             }
@@ -184,7 +251,7 @@ impl List {
         }
 
         if let Some(id) = &self.id {
-            return Err(IssuesError::Usage(format!("issue not found: {}", id)));
+            return Err(ListError::Usage(format!("issue not found: {}", id)));
         }
 
         let all_issues = self.exclude_completed(all_issues);
@@ -193,16 +260,18 @@ impl List {
 }
 
 impl Op for List {
-    type Error = IssuesError;
-    type Output = IssuesOutput;
+    type Context = ScopedCtx;
+    type Error = ListError;
+    type Output = ListOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        if self.global {
-            let cfg = Context::from_global()?;
-            self.run_list_global(&cfg)
-        } else {
-            let cfg = Context::from_cwd()?;
-            self.run_list(&cfg)
+    fn build_context(&self) -> Result<ScopedCtx, ListError> {
+        Ok(ScopedCtx::from_global(self.global)?)
+    }
+
+    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
+        match ctx {
+            ScopedCtx::Repo(r) => self.run_list(&Context::from(r)),
+            ScopedCtx::Global(g) => self.run_list_global(&Context::from(g)),
         }
     }
 }
@@ -255,7 +324,7 @@ pub fn render_table(
 fn run_interactive(
     issues: &[CoreIssue],
     auto_spawn_labels: Option<&[String]>,
-) -> Result<(), IssuesError> {
+) -> Result<(), ListError> {
     if issues.is_empty() {
         eprintln!("No issues found");
         return Ok(());
@@ -268,7 +337,7 @@ fn interactive_loop(
     w: &mut io::Stderr,
     issues: &[CoreIssue],
     auto_spawn_labels: Option<&[String]>,
-) -> Result<(), IssuesError> {
+) -> Result<(), ListError> {
     let mut cursor = 0usize;
     let mut scroll = 0usize;
 
@@ -353,7 +422,7 @@ fn interactive_loop(
     Ok(())
 }
 
-fn view_issue(issue: &CoreIssue, w: &mut impl Write) -> Result<(), IssuesError> {
+fn view_issue(issue: &CoreIssue, w: &mut impl Write) -> Result<(), ListError> {
     let lines: Vec<&str> = issue.body().lines().collect();
     let mut scroll = 0usize;
 

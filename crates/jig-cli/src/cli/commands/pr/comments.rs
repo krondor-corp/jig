@@ -1,13 +1,13 @@
 //! Comments subcommand — fetch and display PR review feedback
 
+use std::fmt;
+
 use clap::Args;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
 use jig_core::git::Repo;
 use jig_core::github::{GitHubClient, ReviewComment, ReviewState};
-
-use super::{PrError, PrOutput};
 
 /// Show review comments and feedback on the PR for the current branch
 #[derive(Args, Debug, Clone)]
@@ -21,19 +21,47 @@ pub struct Comments {
     pub between: Option<String>,
 }
 
-impl Op for Comments {
-    type Error = PrError;
-    type Output = PrOutput;
+#[derive(Debug)]
+pub struct CommentsOutput(pub String);
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+impl fmt::Display for CommentsOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CommentsError {
+    #[error(transparent)]
+    Git(#[from] jig_core::GitError),
+    #[error(transparent)]
+    GitHub(#[from] jig_core::github::GitHubError),
+    #[error("could not determine current branch")]
+    NoBranch,
+    #[error("no PR found for current branch")]
+    NoPr,
+}
+
+impl Op for Comments {
+    type Context = ();
+    type Error = CommentsError;
+    type Output = CommentsOutput;
+
+    fn build_context(&self) -> Result<(), CommentsError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         let gh = GitHubClient::from_remote()?;
 
         let pr_number = match self.pr {
             Some(n) => n,
             None => {
                 let git_repo = Repo::discover()?;
-                let branch = git_repo.current_branch().map_err(|_| PrError::NoBranch)?;
-                let pr_info = gh.get_pr_for_branch(&branch)?.ok_or(PrError::NoPr)?;
+                let branch = git_repo
+                    .current_branch()
+                    .map_err(|_| CommentsError::NoBranch)?;
+                let pr_info = gh.get_pr_for_branch(&branch)?.ok_or(CommentsError::NoPr)?;
                 pr_info.number
             }
         };
@@ -55,7 +83,7 @@ impl Op for Comments {
             .collect();
 
         if actionable_reviews.is_empty() && inline.is_empty() {
-            return Ok(PrOutput("No review feedback on this PR.".into()));
+            return Ok(CommentsOutput("No review feedback on this PR.".into()));
         }
 
         if !actionable_reviews.is_empty() {
@@ -117,7 +145,7 @@ impl Op for Comments {
             }
         }
 
-        Ok(PrOutput(output.trim_end().to_string()))
+        Ok(CommentsOutput(output.trim_end().to_string()))
     }
 }
 

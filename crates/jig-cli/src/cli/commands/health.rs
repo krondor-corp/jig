@@ -7,7 +7,7 @@ use crate::terminal::check_dep;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::Context;
+use crate::context::RepoCtx;
 
 /// Show terminal and dependency status
 #[derive(Args, Debug, Clone)]
@@ -22,10 +22,15 @@ pub enum HealthError {
 }
 
 impl Op for Health {
+    type Context = ();
     type Error = HealthError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), HealthError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         let version = env!("CARGO_PKG_VERSION");
         let mut all_passed = true;
 
@@ -89,17 +94,13 @@ impl Op for Health {
 
         // Section 2: Repository
         eprintln!();
-        let cfg = Context::from_cwd().ok();
-        let global = cfg.as_ref().map(|c| &c.config);
+        let ctx = RepoCtx::from_cwd().ok();
+        let global = ctx.as_ref().map(|c| &c.config);
 
-        let repo = cfg.as_ref().and_then(|c| c.repo().ok());
+        let repo = ctx.as_ref().map(|c| &c.repo);
         match repo {
             Some(repo) => {
-                let repo_name = repo
-                    .repo_root
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
+                let repo_name = repo.name();
                 ui::header(&format!("Repository: {}", repo_name));
 
                 if JigToml::exists(&repo.repo_root) {

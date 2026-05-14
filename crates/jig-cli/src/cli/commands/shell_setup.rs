@@ -31,10 +31,15 @@ pub enum ShellSetupError {
 }
 
 impl Op for ShellSetup {
+    type Context = ();
     type Error = ShellSetupError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), ShellSetupError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         let detected = Shell::detect()?;
         let home = dirs::home_dir().ok_or(ShellSetupError::NoHomeDir)?;
         let config_path = detected.config_file(&home);

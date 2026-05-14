@@ -9,7 +9,7 @@ use jig_core::Worktree;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::Context;
+use crate::context::RepoCtx;
 
 /// Create a new worktree
 #[derive(Args, Debug, Clone)]
@@ -59,16 +59,19 @@ pub enum CreateError {
 }
 
 impl Op for Create {
+    type Context = RepoCtx;
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        let cfg = Context::from_cwd()?;
-        let repo = cfg.repo()?;
+    fn build_context(&self) -> Result<RepoCtx, CreateError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
 
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+        let repo = &ctx.repo;
         let base_branch = match &self.base {
             Some(b) => Branch::new(b),
-            None => repo.base_branch(&cfg.config),
+            None => repo.base_branch(&ctx.config),
         };
 
         let git_repo = jig_core::Repo::open(&repo.repo_root)?;
@@ -87,11 +90,7 @@ impl Op for Create {
         });
         let wt = Worktree::create(&git_repo, &branch, &base_branch, &copy_files, on_create)?;
 
-        let repo_name = repo
-            .repo_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let repo_name = repo.name();
         if let Ok(event_log) = events::event_log_for_worker(&repo_name, &self.branch) {
             if let Err(e) = event_log.append(&Event::now(EventKind::Create {
                 branch: branch.to_string(),

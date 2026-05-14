@@ -4,7 +4,7 @@ use clap::Args;
 use std::fs;
 use std::path::Path;
 
-use crate::context::{Config, Context, JigToml, JIG_DIR, JIG_LOCAL_TOML};
+use crate::context::{Config, JigToml, RepoCtx, JIG_DIR, JIG_LOCAL_TOML};
 use jig_core::git::Repo;
 use jig_core::{agents, Prompt};
 
@@ -72,10 +72,15 @@ pub enum InitError {
 }
 
 impl Op for Init {
+    type Context = ();
     type Error = InitError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), InitError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         if self.global {
             return init_global(self.force);
         }
@@ -96,11 +101,8 @@ impl Op for Init {
 
         // Init needs to discover repo root directly because Config may not exist
         // (init is often the first jig command run in a repo)
-        let repo_root = match Context::from_cwd() {
-            Ok(cfg) => cfg.repo().map(|r| r.repo_root.clone()).unwrap_or_else(|_| {
-                let git_repo = Repo::discover().expect("must be in a git repo");
-                git_repo.clone_path()
-            }),
+        let repo_root = match RepoCtx::from_cwd() {
+            Ok(ctx) => ctx.repo.repo_root,
             Err(_) => {
                 let git_repo = Repo::discover()?;
                 git_repo.clone_path()

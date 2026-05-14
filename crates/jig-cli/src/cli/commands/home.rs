@@ -4,7 +4,7 @@ use clap::Args;
 use std::path::PathBuf;
 
 use crate::cli::op::Op;
-use crate::context::RepoConfig;
+use crate::context::RepoCtx;
 
 /// Go to base repository root
 #[derive(Args, Debug, Clone)]
@@ -26,11 +26,15 @@ pub enum HomeError {
 }
 
 impl Op for Home {
+    type Context = RepoCtx;
     type Error = HomeError;
     type Output = HomeOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        let cfg = RepoConfig::from_cwd()?;
-        Ok(HomeOutput(cfg.repo_root.clone()))
+    fn build_context(&self) -> Result<RepoCtx, HomeError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
+
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+        Ok(HomeOutput(ctx.repo.repo_root.clone()))
     }
 }

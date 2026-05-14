@@ -1,11 +1,11 @@
+use std::fmt;
+
 use clap::Args;
 
 use jig_core::issues::IssueStatus;
 
 use crate::cli::op::Op;
-use crate::context::{Context, RepoConfig};
-
-use super::{IssuesError, IssuesOutput};
+use crate::context::{RepoConfig, RepoCtx};
 
 /// Update issue status
 #[derive(Args, Debug, Clone)]
@@ -18,32 +18,57 @@ pub struct Status {
     pub status: String,
 }
 
+#[derive(Debug)]
+pub struct StatusOutput {
+    pub id: String,
+    pub status: String,
+}
+
+impl fmt::Display for StatusOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Updated {} -> {}", self.id, self.status)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StatusError {
+    #[error(transparent)]
+    Context(#[from] crate::context::ContextError),
+    #[error(transparent)]
+    Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
+    #[error("{0}")]
+    Usage(String),
+}
+
 fn run(
     repo: &RepoConfig,
     global: &crate::context::Config,
     cmd: &Status,
-) -> Result<IssuesOutput, IssuesError> {
+) -> Result<StatusOutput, StatusError> {
     let status: IssueStatus = cmd
         .status
         .parse()
-        .map_err(|_| IssuesError::Usage(format!("unknown status: {}", cmd.status)))?;
+        .map_err(|_| StatusError::Usage(format!("unknown status: {}", cmd.status)))?;
 
     let linear_provider = repo.linear_provider(global)?;
     linear_provider.update_status(&cmd.id, &status)?;
 
-    Ok(IssuesOutput::StatusUpdated(
-        cmd.id.clone(),
-        status.to_string(),
-    ))
+    Ok(StatusOutput {
+        id: cmd.id.clone(),
+        status: status.to_string(),
+    })
 }
 
 impl Op for Status {
-    type Error = IssuesError;
-    type Output = IssuesOutput;
+    type Context = RepoCtx;
+    type Error = StatusError;
+    type Output = StatusOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        let cfg = Context::from_cwd()?;
-        let repo = cfg.repo()?;
-        run(repo, &cfg.config, self)
+    fn build_context(&self) -> Result<RepoCtx, StatusError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
+
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+        run(&ctx.repo, &ctx.config, self)
     }
 }

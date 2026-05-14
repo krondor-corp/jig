@@ -28,10 +28,15 @@ pub enum ShellInitError {
 }
 
 impl Op for ShellInit {
+    type Context = ();
     type Error = ShellInitError;
     type Output = ShellInitOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), ShellInitError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         let shell = match self.shell.to_lowercase().as_str() {
             "bash" => Shell::Bash,
             "zsh" => Shell::Zsh,

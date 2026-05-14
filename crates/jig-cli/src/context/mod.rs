@@ -115,6 +115,14 @@ impl RepoConfig {
         Branch::new(name)
     }
 
+    /// Display name derived from the repo root directory.
+    pub fn name(&self) -> String {
+        self.repo_root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
     /// Tmux session name for this repo.
     pub fn session_name(&self) -> String {
         let repo_name = self
@@ -238,6 +246,98 @@ impl Context {
     /// Single repo convenience — errors if no repos.
     pub fn repo(&self) -> Result<&RepoConfig, ContextError> {
         self.repos.first().ok_or(ContextError::NotInGitRepo)
+    }
+}
+
+/// Single-repo context: the repo discovered from cwd plus global config.
+pub struct RepoCtx {
+    pub repo: RepoConfig,
+    pub config: Config,
+    pub jig_toml: JigToml,
+}
+
+impl RepoCtx {
+    pub fn from_cwd() -> Result<Self, ContextError> {
+        let config = Config::load().unwrap_or_default();
+        let repo = RepoConfig::from_cwd()?;
+        let jig_toml = JigToml::load(&repo.repo_root)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        // Register so daemon/-g commands see this repo.
+        let mut global = RepoRegistry::load().unwrap_or_default();
+        global.register(repo.repo_root.clone());
+        let _ = global.save();
+        Ok(Self {
+            repo,
+            config,
+            jig_toml,
+        })
+    }
+}
+
+impl From<RepoCtx> for Context {
+    fn from(ctx: RepoCtx) -> Self {
+        let mut registry = RepoRegistry::default();
+        registry.register(ctx.repo.repo_root.clone());
+        Context {
+            config: ctx.config,
+            registry,
+            repos: vec![ctx.repo],
+        }
+    }
+}
+
+/// All-repos context: full registry plus config.
+pub struct GlobalCtx {
+    pub config: Config,
+    pub registry: RepoRegistry,
+    pub repos: Vec<RepoConfig>,
+}
+
+impl GlobalCtx {
+    pub fn load() -> Result<Self, ContextError> {
+        let config = Config::load().unwrap_or_default();
+        let registry = RepoRegistry::load()?;
+        let repos = registry
+            .repos()
+            .iter()
+            .filter(|e| e.path.exists())
+            .filter_map(|e| RepoConfig::from_path(&e.path).ok())
+            .collect();
+        Ok(Self {
+            config,
+            registry,
+            repos,
+        })
+    }
+}
+
+impl From<GlobalCtx> for Context {
+    fn from(ctx: GlobalCtx) -> Self {
+        Context {
+            config: ctx.config,
+            registry: ctx.registry,
+            repos: ctx.repos,
+        }
+    }
+}
+
+/// Either single-repo or all-repos context (for commands with `--global`).
+// CLI context enum — constructed once per invocation, not on a hot path.
+#[allow(clippy::large_enum_variant)]
+pub enum ScopedCtx {
+    Repo(RepoCtx),
+    Global(GlobalCtx),
+}
+
+impl ScopedCtx {
+    pub fn from_global(global: bool) -> Result<Self, ContextError> {
+        if global {
+            Ok(ScopedCtx::Global(GlobalCtx::load()?))
+        } else {
+            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
+        }
     }
 }
 

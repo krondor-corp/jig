@@ -195,10 +195,15 @@ pub enum NotifyError {
 }
 
 impl Op for Notify {
+    type Context = ();
     type Error = NotifyError;
     type Output = NotifyOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), NotifyError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.subcommand {
             NotifyCommands::Doctor => run_doctor(),
             NotifyCommands::Test => run_test(),

@@ -37,10 +37,15 @@ pub enum OpenError {
 }
 
 impl Op for Open {
+    type Context = ();
     type Error = OpenError;
     type Output = OpenOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), OpenError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         let name = self
             .branch
             .as_deref()

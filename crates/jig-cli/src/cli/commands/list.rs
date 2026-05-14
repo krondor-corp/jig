@@ -5,7 +5,7 @@ use std::path::Path;
 use clap::Args;
 use comfy_table::{Cell, CellAlignment, Color};
 
-use crate::context::{Config, Context, RepoConfig};
+use crate::context::{Config, RepoConfig, ScopedCtx};
 use crate::worker::events::{self, WorkerState};
 use crate::worker::WorkerStatus;
 use jig_core::git::{Branch, Repo};
@@ -48,44 +48,53 @@ pub enum ListError {
 }
 
 impl Op for List {
+    type Context = ScopedCtx;
     type Error = ListError;
     type Output = ListOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<ScopedCtx, ListError> {
+        Ok(ScopedCtx::from_global(self.global)?)
+    }
+
+    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
         if self.all {
             return self.list_all_git_worktrees();
         }
 
-        if self.global {
-            let cfg = Context::from_global()?;
-            if self.plain || ui::is_plain() {
-                return self.run_global_plain(&cfg.repos, &cfg.config);
+        match ctx {
+            ScopedCtx::Global(g) => {
+                if self.plain || ui::is_plain() {
+                    return self.run_global_plain(&g.repos, &g.config);
+                }
+                self.run_global_table(&g.repos, &g.config)
             }
-            return self.run_global_table(&cfg.repos, &cfg.config);
-        }
+            ScopedCtx::Repo(r) => {
+                let git_repo = Repo::open(&r.repo.repo_root)?;
+                let worktrees = git_repo.list_worktrees()?;
+                let names: Vec<String> = worktrees
+                    .iter()
+                    .map(|wt| wt.branch_name().to_string())
+                    .collect();
+                if names.is_empty() {
+                    eprintln!("No worktrees found");
+                }
 
-        let cfg = Context::from_cwd()?;
-        let repo = cfg.repo()?;
-        let git_repo = Repo::open(&repo.repo_root)?;
-        let worktrees = git_repo.list_worktrees()?;
-        let names: Vec<String> = worktrees
-            .iter()
-            .map(|wt| wt.branch_name().to_string())
-            .collect();
-        if names.is_empty() {
-            eprintln!("No worktrees found");
-        }
+                if self.plain || ui::is_plain() {
+                    let out = names.iter().map(|w| format!("{w}\n")).collect::<String>();
+                    return Ok(ListOutput(out));
+                }
 
-        if self.plain || ui::is_plain() {
-            let out = names.iter().map(|w| format!("{w}\n")).collect::<String>();
-            return Ok(ListOutput(out));
+                let base_branch = r.repo.base_branch(&r.config);
+                let table = build_worktree_table(
+                    &names,
+                    &r.repo.worktrees_path,
+                    &base_branch,
+                    &r.repo.name(),
+                );
+                eprintln!("{table}");
+                Ok(ListOutput(String::new()))
+            }
         }
-
-        let base_branch = repo.base_branch(&cfg.config);
-        let table =
-            build_worktree_table(&names, &repo.worktrees_path, &base_branch, &repo.repo_root);
-        eprintln!("{table}");
-        Ok(ListOutput(String::new()))
     }
 }
 
@@ -116,11 +125,7 @@ impl List {
             if worktrees.is_empty() {
                 continue;
             }
-            let repo_name = cfg
-                .repo_root
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
+            let repo_name = cfg.name();
             if !first {
                 out.push('\n');
             }
@@ -147,23 +152,15 @@ impl List {
             }
             let worktrees: Vec<String> =
                 wts.iter().map(|wt| wt.branch_name().to_string()).collect();
-            let repo_name = cfg
-                .repo_root
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
+            let repo_name = cfg.name();
             if !first {
                 eprintln!();
             }
             first = false;
             ui::header(&repo_name);
             let base_branch = cfg.base_branch(global);
-            let table = build_worktree_table(
-                &worktrees,
-                &cfg.worktrees_path,
-                &base_branch,
-                &cfg.repo_root,
-            );
+            let table =
+                build_worktree_table(&worktrees, &cfg.worktrees_path, &base_branch, &cfg.name());
             eprintln!("{table}");
         }
         Ok(ListOutput(String::new()))
@@ -171,12 +168,8 @@ impl List {
 }
 
 /// Get worker status from event log for a worktree.
-fn worktree_event_status(repo_root: &Path, name: &str) -> Option<WorkerStatus> {
-    let repo_name = repo_root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    let event_log = events::event_log_for_worker(&repo_name, name).ok()?;
+fn worktree_event_status(repo_name: &str, name: &str) -> Option<WorkerStatus> {
+    let event_log = events::event_log_for_worker(repo_name, name).ok()?;
     if !event_log.exists() {
         return None;
     }
@@ -190,7 +183,7 @@ fn build_worktree_table(
     names: &[String],
     worktrees_path: &Path,
     base_branch: &Branch,
-    repo_root: &Path,
+    repo_name: &str,
 ) -> comfy_table::Table {
     let mut table = ui::new_table(&["NAME", "BRANCH", "COMMITS"]);
 
@@ -198,7 +191,7 @@ fn build_worktree_table(
         let wt_path = worktrees_path.join(name);
 
         // Check if worker is initializing or failed
-        let worker_status = worktree_event_status(repo_root, name);
+        let worker_status = worktree_event_status(repo_name, name);
 
         let branch = Repo::open(&wt_path)
             .and_then(|r| r.current_branch())

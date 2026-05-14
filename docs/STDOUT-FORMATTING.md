@@ -2,28 +2,35 @@
 
 ## The Op Pattern
 
-Every CLI command implements the `Op` trait, cleanly separating command logic from presentation:
+Every CLI command implements the `Op` trait, cleanly separating context-building, command logic, and presentation:
 
 ```rust
 pub trait Op {
+    type Context;
     type Error: std::error::Error + Send + Sync + 'static;
     type Output: std::fmt::Display;
 
-    fn execute(&self) -> Result<Self::Output, Self::Error>;
+    fn build_context(&self) -> Result<Self::Context, Self::Error>;
+    fn run(&self, ctx: Self::Context) -> Result<Self::Output, Self::Error>;
 }
 ```
 
 **Ops never:** print, use color, or check terminal width.
 **Display impls own:** all color/styling, table layout, human-readable formatting.
-**The boundary (main.rs) owns:** arg parsing, calling execute, printing, exit codes.
+**The boundary (main.rs) owns:** arg parsing, calling build_context + run, printing, exit codes.
 
 ## Adding a New Command
 
 1. **Command struct** — clap parses args into this (may be a unit struct for no-arg commands)
 2. **Error enum** — one variant per failure mode, derives `thiserror::Error`
 3. **Output struct** — typed data, no formatting
-4. **`Op` impl** — does work, returns `Output` or `Error`
+4. **`Op` impl** — declares `type Context`, builds it in `build_context`, does work in `run`
 5. **`Display` impl** — all presentation logic lives here
+
+Choose the right context type:
+- `()` — no context needed (pure commands: `version`, `which`, `shell-init`)
+- `RepoCtx` — single repo from cwd (most commands)
+- `ScopedCtx` — commands with `--global` flag (`list`, `ps`, `kill`, `nuke`, `remove`)
 
 Example skeleton:
 
@@ -32,6 +39,8 @@ pub struct MyCmd;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MyCmdError {
+    #[error(transparent)]
+    Context(#[from] crate::context::ContextError),
     #[error("something failed: {0}")]
     SomeFailure(#[from] jig_core::Error),
 }
@@ -39,11 +48,16 @@ pub enum MyCmdError {
 pub struct MyCmdOutput { /* typed fields */ }
 
 impl Op for MyCmd {
+    type Context = RepoCtx;
     type Error = MyCmdError;
     type Output = MyCmdOutput;
 
-    fn execute(&self) -> Result<Self::Output, Self::Error> {
-        // do work, return data
+    fn build_context(&self) -> Result<RepoCtx, MyCmdError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
+
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+        // do work using ctx.repo and ctx.config
     }
 }
 
@@ -54,19 +68,14 @@ impl fmt::Display for MyCmdOutput {
 }
 ```
 
-In `main.rs`, the dispatch is thin:
+In `main.rs`, the dispatch is thin. The top-level `Command` enum uses `type Context = ()`, so context-building is separated from the run call to avoid a `clippy::let_unit_value` lint:
 
 ```rust
-Some(Commands::MyCmd) => match commands::my_cmd::MyCmd.execute() {
-    Ok(output) => {
-        eprintln!("{output}");
-        return Ok(());
-    }
-    Err(e) => {
-        eprintln!("{} {}", "error:".red().bold(), e);
-        std::process::exit(1);
-    }
-},
+Some(ref command) => {
+    command.build_context()?;       // each variant builds its own ctx internally
+    let output = command.run(())?;
+    // ...
+}
 ```
 
 ## Table Formatting with comfy-table

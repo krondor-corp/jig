@@ -1,17 +1,20 @@
 //! Op trait — typed command pattern for CLI operations
 //!
-//! Every CLI command implements `Op`: it does work and returns typed data or
-//! a typed error. Formatting lives in `Display` impls on the output types.
+//! Every CLI command implements `Op`: it declares a `Context` shape, builds
+//! that context via `build_context`, then runs with `run(ctx)`. Formatting
+//! lives in `Display` impls on the output types.
 
 use std::error::Error;
 use std::fmt::Display;
 
 /// Trait for CLI operations.
 pub trait Op {
+    type Context;
     type Error: Error + Send + Sync + 'static;
     type Output: Display;
 
-    fn run(&self) -> Result<Self::Output, Self::Error>;
+    fn build_context(&self) -> Result<Self::Context, Self::Error>;
+    fn run(&self, ctx: Self::Context) -> Result<Self::Output, Self::Error>;
 }
 
 /// Unit output for commands that only produce stderr
@@ -52,14 +55,20 @@ macro_rules! command_enum {
         }
 
         impl $crate::cli::op::Op for Command {
+            type Context = ();
             type Output = OpOutput;
             type Error = OpError;
 
-            fn run(&self) -> Result<Self::Output, Self::Error> {
+            fn build_context(&self) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            fn run(&self, _ctx: ()) -> Result<Self::Output, Self::Error> {
                 match self {
                     $(
                         Command::$variant(op) => {
-                            op.run()
+                            let ctx = op.build_context().map_err(OpError::$variant)?;
+                            op.run(ctx)
                                 .map(OpOutput::$variant)
                                 .map_err(OpError::$variant)
                         },
