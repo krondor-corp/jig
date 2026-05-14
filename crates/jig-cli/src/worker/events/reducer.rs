@@ -12,9 +12,9 @@ use crate::worker::{MuxStatus, WorkerStatus};
 use jig_core::git::Branch;
 use jig_core::issues::issue::IssueRef;
 
-use super::schema::{EventKind, TerminalKind};
 #[cfg(test)]
 use super::schema::Event;
+use super::schema::{EventKind, TerminalKind};
 
 /// Full worker state — event-log reduction + runtime enrichment.
 ///
@@ -437,7 +437,10 @@ mod tests {
     #[test]
     fn silence_triggers_stalled() {
         let old_ts = chrono::Utc::now().timestamp() - 600;
-        let events = vec![Event { ts: old_ts, kind: EventKind::ToolUseEnd }];
+        let events = vec![Event {
+            ts: old_ts,
+            kind: EventKind::ToolUseEnd,
+        }];
         let config = Config {
             silence_threshold_seconds: 300,
             ..Default::default()

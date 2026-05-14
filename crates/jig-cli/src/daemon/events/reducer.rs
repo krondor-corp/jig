@@ -4,7 +4,7 @@ use jig_core::ReducibleKind;
 
 use super::schema::EventKind;
 #[cfg(test)]
-use super::schema::{Event, started, stopped};
+use super::schema::{started, stopped, Event};
 
 #[derive(Debug, Clone, Default)]
 pub struct DaemonState {

@@ -313,7 +313,10 @@ fn run_tail(n: usize) -> Result<NotifyOutput, NotifyError> {
     let queue = NotificationQueue::global()?;
     let events = queue.tail(n)?;
 
-    let lines: Vec<String> = events.iter().filter_map(|e| serde_json::to_string(e).ok()).collect();
+    let lines: Vec<String> = events
+        .iter()
+        .filter_map(|e| serde_json::to_string(e).ok())
+        .collect();
 
     if lines.is_empty() {
         eprintln!("no events in queue");
