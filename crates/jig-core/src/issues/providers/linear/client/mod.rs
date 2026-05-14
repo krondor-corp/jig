@@ -413,7 +413,10 @@ impl LinearClient {
             "number": { "eq": number }
         });
 
-        let raw = self.execute(queries::get_issue::GetIssue { filter })?;
+        let raw = self
+            .execute(queries::list_issues::ListIssues { filter, first: 1 })?
+            .into_iter()
+            .next();
         raw.map(|r| r.id)
             .ok_or_else(|| error::LinearError::Other(format!("issue not found: {identifier}")))
     }
@@ -449,7 +452,9 @@ impl LinearClient {
         });
 
         let raw_issue = self
-            .execute(queries::get_issue::GetIssue { filter })?
+            .execute(queries::list_issues::ListIssues { filter, first: 1 })?
+            .into_iter()
+            .next()
             .ok_or_else(|| {
                 error::LinearError::Other(format!("issue not found: {issue_identifier}"))
             })?;
@@ -483,7 +488,10 @@ impl LinearClient {
             "number": { "eq": number }
         });
 
-        let raw = self.execute(queries::get_issue::GetIssue { filter })?;
+        let raw = self
+            .execute(queries::list_issues::ListIssues { filter, first: 1 })?
+            .into_iter()
+            .next();
         Ok(raw.map(Issue::from))
     }
 }
