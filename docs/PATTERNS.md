@@ -34,10 +34,15 @@ pub enum CreateError {
 }
 
 impl Op for Create {
+    type Context = RepoCtx;
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn run(&self, ctx: &RepoCtx) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<RepoCtx, CreateError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
+
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
         // ...
     }
 }
@@ -177,11 +182,12 @@ Key conventions:
 - **Config cascading**: Repo-specific > Global > Default
   - Check repo config first, fall back to global, then hardcoded default
 
-- **Unified Config**: Load all config once, thread through all operations
-  - `Config::from_cwd()` loads global config, repo config (jig.toml + jig.local.toml), and git-derived paths
-  - CLI `RepoCtx` holds `config: Option<Config>` (None when not in a git repo)
-  - Commands call `ctx.config()?` to get `&Config`, pass it to jig-core functions
-  - Methods on Config: `base_branch()`, `session_name()`, `issue_provider()`, `linear_provider()`
+- **Context types**: Each command declares `type Context` in its `Op` impl
+  - `RepoCtx` — single repo from cwd (`RepoCtx::from_cwd()`); fields: `repo: RepoConfig`, `config: Config`
+  - `GlobalCtx` — all tracked repos (`GlobalCtx::load()`); fields: `repos`, `config`, `registry`
+  - `ScopedCtx` — enum for commands with `--global`; `build_context` branches on `self.global`
+  - `()` — no context needed (pure commands like `version`, `which`, `shell-init`)
+  - Both `RepoCtx` and `GlobalCtx` convert to `Context` via `From` impls for daemon/legacy code
 
 - **Agent adapters**: Use `Agent` struct for agent-specific behavior
   - Defined in `crates/jig-core/src/agents/`
