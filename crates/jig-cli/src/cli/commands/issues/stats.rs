@@ -3,7 +3,7 @@ use clap::Args;
 use jig_core::issues::{Issue as CoreIssue, IssueFilter, IssuePriority, IssueStatus};
 
 use crate::cli::op::Op;
-use crate::context::{Context, RepoConfig};
+use crate::context::{Context, GlobalCtx, RepoConfig, RepoCtx, ScopedCtx};
 
 use super::{IssuesError, IssuesOutput, StatsData};
 
@@ -82,16 +82,23 @@ fn compute_stats(issues: &[CoreIssue]) -> StatsData {
 }
 
 impl Op for Stats {
+    type Context = ScopedCtx;
     type Error = IssuesError;
     type Output = IssuesOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<ScopedCtx, IssuesError> {
         if self.global {
-            let cfg = Context::from_global()?;
-            run_for_repos(&cfg.repos, &cfg.config)
+            Ok(ScopedCtx::Global(GlobalCtx::load()?))
         } else {
-            let cfg = Context::from_cwd()?;
-            run_for_repos(&cfg.repos, &cfg.config)
+            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
         }
+    }
+
+    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
+        let cfg: Context = match ctx {
+            ScopedCtx::Global(g) => g.into(),
+            ScopedCtx::Repo(r) => r.into(),
+        };
+        run_for_repos(&cfg.repos, &cfg.config)
     }
 }

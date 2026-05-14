@@ -8,7 +8,7 @@ use jig_core::git::conventional::ValidationConfig;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::RepoConfig;
+use crate::context::{RepoConfig, RepoCtx};
 
 /// Validate and work with conventional commits
 #[derive(Args, Debug, Clone)]
@@ -53,13 +53,18 @@ pub enum CommitError {
 }
 
 impl Op for Commit {
+    type Context = RepoCtx;
     type Error = CommitError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<RepoCtx, CommitError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
+
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
         match &self.command {
             CommitCommand::Validate { rev, stdin, file } => {
-                run_validate(rev, *stdin, file.as_deref())
+                run_validate(rev, *stdin, file.as_deref(), &ctx.repo)
             }
             CommitCommand::Examples => {
                 print_examples();
@@ -69,7 +74,12 @@ impl Op for Commit {
     }
 }
 
-fn run_validate(rev: &str, stdin: bool, file: Option<&str>) -> Result<NoOutput, CommitError> {
+fn run_validate(
+    rev: &str,
+    stdin: bool,
+    file: Option<&str>,
+    repo: &RepoConfig,
+) -> Result<NoOutput, CommitError> {
     let message = if stdin {
         let mut buf = String::new();
         io::stdin().read_to_string(&mut buf)?;
@@ -77,8 +87,7 @@ fn run_validate(rev: &str, stdin: bool, file: Option<&str>) -> Result<NoOutput, 
     } else if let Some(path) = file {
         std::fs::read_to_string(path)?
     } else {
-        let cfg = RepoConfig::from_cwd()?;
-        let git_repo = git2::Repository::open(&cfg.repo_root)?;
+        let git_repo = git2::Repository::open(&repo.repo_root)?;
         let obj = git_repo.revparse_single(rev)?;
         let commit = obj
             .peel_to_commit()

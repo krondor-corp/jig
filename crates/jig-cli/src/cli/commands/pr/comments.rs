@@ -22,10 +22,15 @@ pub struct Comments {
 }
 
 impl Op for Comments {
+    type Context = ();
     type Error = PrError;
     type Output = PrOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), PrError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         let gh = GitHubClient::from_remote()?;
 
         let pr_number = match self.pr {

@@ -73,10 +73,15 @@ pub enum ConfigError {
 }
 
 impl Op for Config {
+    type Context = ();
     type Error = ConfigError;
     type Output = ConfigOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), ConfigError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         if self.list {
             return show_list();
         }
@@ -406,10 +411,9 @@ fn handle_base(
                     }
                 }
             } else {
-                let cfg = crate::context::Context::from_cwd()?;
-                let repo = cfg.repo()?;
+                let ctx = crate::context::RepoCtx::from_cwd()?;
                 Ok(ConfigOutput(Some(
-                    repo.base_branch(&cfg.config).to_string(),
+                    ctx.repo.base_branch(&ctx.config).to_string(),
                 )))
             }
         }

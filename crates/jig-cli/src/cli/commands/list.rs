@@ -5,7 +5,7 @@ use std::path::Path;
 use clap::Args;
 use comfy_table::{Cell, CellAlignment, Color};
 
-use crate::context::{Config, Context, RepoConfig};
+use crate::context::{Config, GlobalCtx, RepoConfig, RepoCtx, ScopedCtx};
 use crate::worker::events::{self, WorkerState};
 use crate::worker::WorkerStatus;
 use jig_core::git::{Branch, Repo};
@@ -48,44 +48,57 @@ pub enum ListError {
 }
 
 impl Op for List {
+    type Context = ScopedCtx;
     type Error = ListError;
     type Output = ListOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<ScopedCtx, ListError> {
+        if self.global {
+            Ok(ScopedCtx::Global(GlobalCtx::load()?))
+        } else {
+            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
+        }
+    }
+
+    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
         if self.all {
             return self.list_all_git_worktrees();
         }
 
-        if self.global {
-            let cfg = Context::from_global()?;
-            if self.plain || ui::is_plain() {
-                return self.run_global_plain(&cfg.repos, &cfg.config);
+        match ctx {
+            ScopedCtx::Global(g) => {
+                if self.plain || ui::is_plain() {
+                    return self.run_global_plain(&g.repos, &g.config);
+                }
+                self.run_global_table(&g.repos, &g.config)
             }
-            return self.run_global_table(&cfg.repos, &cfg.config);
-        }
+            ScopedCtx::Repo(r) => {
+                let git_repo = Repo::open(&r.repo.repo_root)?;
+                let worktrees = git_repo.list_worktrees()?;
+                let names: Vec<String> = worktrees
+                    .iter()
+                    .map(|wt| wt.branch_name().to_string())
+                    .collect();
+                if names.is_empty() {
+                    eprintln!("No worktrees found");
+                }
 
-        let cfg = Context::from_cwd()?;
-        let repo = cfg.repo()?;
-        let git_repo = Repo::open(&repo.repo_root)?;
-        let worktrees = git_repo.list_worktrees()?;
-        let names: Vec<String> = worktrees
-            .iter()
-            .map(|wt| wt.branch_name().to_string())
-            .collect();
-        if names.is_empty() {
-            eprintln!("No worktrees found");
-        }
+                if self.plain || ui::is_plain() {
+                    let out = names.iter().map(|w| format!("{w}\n")).collect::<String>();
+                    return Ok(ListOutput(out));
+                }
 
-        if self.plain || ui::is_plain() {
-            let out = names.iter().map(|w| format!("{w}\n")).collect::<String>();
-            return Ok(ListOutput(out));
+                let base_branch = r.repo.base_branch(&r.config);
+                let table = build_worktree_table(
+                    &names,
+                    &r.repo.worktrees_path,
+                    &base_branch,
+                    &r.repo.name(),
+                );
+                eprintln!("{table}");
+                Ok(ListOutput(String::new()))
+            }
         }
-
-        let base_branch = repo.base_branch(&cfg.config);
-        let table =
-            build_worktree_table(&names, &repo.worktrees_path, &base_branch, &repo.name());
-        eprintln!("{table}");
-        Ok(ListOutput(String::new()))
     }
 }
 

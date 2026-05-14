@@ -11,7 +11,7 @@ use clap::Args;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{self, disable_raw_mode};
 
-use crate::context::{Context, JigToml};
+use crate::context::{Context, GlobalCtx, JigToml, RepoCtx, ScopedCtx};
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
@@ -41,25 +41,35 @@ pub enum PsError {
 }
 
 impl Op for Ps {
+    type Context = ScopedCtx;
     type Error = PsError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        let mut cfg = if self.global {
-            Context::from_global()?
+    fn build_context(&self) -> Result<ScopedCtx, PsError> {
+        if self.global {
+            Ok(ScopedCtx::Global(GlobalCtx::load()?))
         } else {
-            Context::from_cwd()?
-        };
-        if !self.global {
-            let jig_toml = JigToml::load(&cfg.repo()?.repo_root)
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-            cfg.config.max_concurrent_workers = self
-                .max_workers
-                .unwrap_or(jig_toml.spawn.max_concurrent_workers);
+            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
         }
-        self.execute_ps(cfg, self.global)
+    }
+
+    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
+        let global = self.global;
+        let cfg: Context = match ctx {
+            ScopedCtx::Repo(r) => {
+                let jig_toml = JigToml::load(&r.repo.repo_root)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                let mut c = Context::from(r);
+                c.config.max_concurrent_workers = self
+                    .max_workers
+                    .unwrap_or(jig_toml.spawn.max_concurrent_workers);
+                c
+            }
+            ScopedCtx::Global(g) => Context::from(g),
+        };
+        self.execute_ps(cfg, global)
     }
 }
 

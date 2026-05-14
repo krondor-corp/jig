@@ -9,7 +9,7 @@ use jig_core::Worktree;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::Context;
+use crate::context::RepoCtx;
 
 /// Create a new worktree
 #[derive(Args, Debug, Clone)]
@@ -59,16 +59,19 @@ pub enum CreateError {
 }
 
 impl Op for Create {
+    type Context = RepoCtx;
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        let cfg = Context::from_cwd()?;
-        let repo = cfg.repo()?;
+    fn build_context(&self) -> Result<RepoCtx, CreateError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
 
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+        let repo = &ctx.repo;
         let base_branch = match &self.base {
             Some(b) => Branch::new(b),
-            None => repo.base_branch(&cfg.config),
+            None => repo.base_branch(&ctx.config),
         };
 
         let git_repo = jig_core::Repo::open(&repo.repo_root)?;

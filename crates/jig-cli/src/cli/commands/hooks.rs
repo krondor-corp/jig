@@ -6,7 +6,7 @@ use crate::context::JigToml;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::RepoConfig;
+use crate::context::RepoCtx;
 
 /// Manage hook integrations
 #[derive(Args, Debug, Clone)]
@@ -69,14 +69,18 @@ pub enum HooksError {
 }
 
 impl Op for Hooks {
+    type Context = RepoCtx;
     type Error = HooksError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<RepoCtx, HooksError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
+
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
         match &self.subcommand {
             HooksCommands::Init { force } => {
-                let cfg = RepoConfig::from_cwd()?;
-                let repo_path = &cfg.repo_root;
+                let repo_path = &ctx.repo.repo_root;
 
                 // Install git hooks
                 eprintln!("Installing git hooks...");
@@ -147,8 +151,7 @@ impl Op for Hooks {
                 Ok(NoOutput)
             }
             HooksCommands::Uninstall { hook } => {
-                let cfg = RepoConfig::from_cwd()?;
-                let repo_path = &cfg.repo_root;
+                let repo_path = &ctx.repo.repo_root;
 
                 eprintln!("Uninstalling jig hooks...");
                 eprintln!();
@@ -182,23 +185,19 @@ impl Op for Hooks {
                 Ok(NoOutput)
             }
             HooksCommands::PostCommit { .. } => {
-                let cfg = RepoConfig::from_cwd()?;
-                crate::hooks::handle_post_commit(&cfg.repo_root)?;
+                crate::hooks::handle_post_commit(&ctx.repo.repo_root)?;
                 Ok(NoOutput)
             }
             HooksCommands::PostMerge { .. } => {
-                let cfg = RepoConfig::from_cwd()?;
-                crate::hooks::handle_post_merge(&cfg.repo_root)?;
+                crate::hooks::handle_post_merge(&ctx.repo.repo_root)?;
                 Ok(NoOutput)
             }
             HooksCommands::CommitMsg { file, .. } => {
-                let cfg = RepoConfig::from_cwd()?;
-                crate::hooks::handle_commit_msg(&cfg.repo_root, file)?;
+                crate::hooks::handle_commit_msg(&ctx.repo.repo_root, file)?;
                 Ok(NoOutput)
             }
             HooksCommands::PreCommit { .. } => {
-                let cfg = RepoConfig::from_cwd()?;
-                crate::hooks::handle_pre_commit(&cfg.repo_root)?;
+                crate::hooks::handle_pre_commit(&ctx.repo.repo_root)?;
                 Ok(NoOutput)
             }
         }

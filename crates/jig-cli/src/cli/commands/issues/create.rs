@@ -5,7 +5,7 @@ use clap::Args;
 use jig_core::issues::{IssuePriority, IssueStatus};
 
 use crate::cli::op::Op;
-use crate::context::{Context, RepoConfig};
+use crate::context::{RepoConfig, RepoCtx};
 
 use super::{IssuesError, IssuesOutput};
 
@@ -83,12 +83,15 @@ fn run(
 }
 
 impl Op for Create {
+    type Context = RepoCtx;
     type Error = IssuesError;
     type Output = IssuesOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        let cfg = Context::from_cwd()?;
-        let repo = cfg.repo()?;
-        run(repo, &cfg.config, self)
+    fn build_context(&self) -> Result<RepoCtx, IssuesError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
+
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+        run(&ctx.repo, &ctx.config, self)
     }
 }

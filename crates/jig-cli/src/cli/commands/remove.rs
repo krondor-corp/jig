@@ -3,7 +3,7 @@
 use clap::Args;
 use glob::Pattern;
 
-use crate::context::{Context, RepoConfig};
+use crate::context::{GlobalCtx, RepoConfig, RepoCtx, ScopedCtx};
 use jig_core::git::Repo;
 use jig_core::Worktree;
 
@@ -40,30 +40,36 @@ pub enum RemoveError {
 }
 
 impl Op for Remove {
+    type Context = ScopedCtx;
     type Error = RemoveError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<ScopedCtx, RemoveError> {
         if self.global {
-            let cfg = Context::from_global()?;
-            // Search across all repos for the matching worktree
-            for repo in &cfg.repos {
-                let git_repo = Repo::open(&repo.repo_root)?;
-                let worktrees = git_repo.list_worktrees()?;
-                let has_match = worktrees.iter().any(|wt| wt.branch_name() == self.pattern);
-                if has_match {
-                    return self.remove_from_repo(repo);
-                }
-            }
-            return Err(RemoveError::NotFound(format!(
-                "worktree '{}' not found",
-                self.pattern
-            )));
+            Ok(ScopedCtx::Global(GlobalCtx::load()?))
+        } else {
+            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
         }
+    }
 
-        let cfg = Context::from_cwd()?;
-        let repo = cfg.repo()?;
-        self.remove_from_repo(repo)
+    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
+        match ctx {
+            ScopedCtx::Global(g) => {
+                for repo in &g.repos {
+                    let git_repo = Repo::open(&repo.repo_root)?;
+                    let worktrees = git_repo.list_worktrees()?;
+                    let has_match = worktrees.iter().any(|wt| wt.branch_name() == self.pattern);
+                    if has_match {
+                        return self.remove_from_repo(repo);
+                    }
+                }
+                Err(RemoveError::NotFound(format!(
+                    "worktree '{}' not found",
+                    self.pattern
+                )))
+            }
+            ScopedCtx::Repo(r) => self.remove_from_repo(&r.repo),
+        }
     }
 }
 

@@ -80,7 +80,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Some(ref command) => {
-            let output = command.run()?;
+            let ctx = command.build_context()?;
+            let output = command.run(ctx)?;
             let output_str = output.to_string();
             if !output_str.is_empty() {
                 println!("{}", output_str);

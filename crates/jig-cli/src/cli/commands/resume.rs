@@ -10,7 +10,7 @@ use jig_core::Worktree;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::RepoConfig;
+use crate::context::RepoCtx;
 
 /// Resume a dead worker by relaunching its agent session
 #[derive(Args, Debug, Clone)]
@@ -36,16 +36,20 @@ pub enum ResumeError {
 }
 
 impl Op for Resume {
+    type Context = RepoCtx;
     type Error = ResumeError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        let cfg = RepoConfig::from_cwd()?;
-        let repo_name = cfg.name();
+    fn build_context(&self) -> Result<RepoCtx, ResumeError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
+
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+        let repo_name = ctx.repo.name();
         let mux = TmuxMux::for_repo(&repo_name);
 
         // Open existing worktree
-        let wt_path = cfg.worktrees_path.join(&self.branch);
+        let wt_path = ctx.repo.worktrees_path.join(&self.branch);
         if !wt_path.exists() {
             return Err(ResumeError::Usage(format!(
                 "worktree '{}' not found",
@@ -73,7 +77,7 @@ impl Op for Resume {
             .clone()
             .unwrap_or_else(|| "You were interrupted. Resume your previous task.".to_string());
 
-        let jig_config = context::JigToml::load(&cfg.repo_root)?.unwrap_or_default();
+        let jig_config = context::JigToml::load(&ctx.repo.repo_root)?.unwrap_or_default();
         let agent = agents::Agent::from_config(
             &jig_config.agent.agent_type,
             Some(&jig_config.agent.model),

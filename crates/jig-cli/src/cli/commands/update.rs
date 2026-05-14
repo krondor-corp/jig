@@ -54,10 +54,15 @@ impl InstallMethod {
 }
 
 impl Op for Update {
+    type Context = ();
     type Error = UpdateError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), UpdateError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         let install_method = detect_installation()?;
         let current_version = env!("CARGO_PKG_VERSION");
 

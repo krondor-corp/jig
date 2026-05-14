@@ -1,6 +1,6 @@
 //! Nuke command — kill all workers, remove worktrees, clear state
 
-use crate::context::{Context, RepoConfig};
+use crate::context::{GlobalCtx, RepoConfig, RepoCtx, ScopedCtx};
 use jig_core::git::Repo;
 use jig_core::mux::{Mux, TmuxMux};
 
@@ -26,22 +26,31 @@ pub enum NukeError {
 }
 
 impl Op for Nuke {
+    type Context = ScopedCtx;
     type Error = NukeError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<ScopedCtx, NukeError> {
         if self.global {
-            let cfg = Context::from_global()?;
-            if cfg.repos.is_empty() {
-                return Err(crate::context::ContextError::NotInGitRepo.into());
-            }
-            for repo in &cfg.repos {
-                nuke_repo(repo)?;
-            }
+            Ok(ScopedCtx::Global(GlobalCtx::load()?))
         } else {
-            let cfg = Context::from_cwd()?;
-            let repo = cfg.repo()?;
-            nuke_repo(repo)?;
+            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
+        }
+    }
+
+    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
+        match ctx {
+            ScopedCtx::Global(g) => {
+                if g.repos.is_empty() {
+                    return Err(crate::context::ContextError::NotInGitRepo.into());
+                }
+                for repo in &g.repos {
+                    nuke_repo(repo)?;
+                }
+            }
+            ScopedCtx::Repo(r) => {
+                nuke_repo(&r.repo)?;
+            }
         }
 
         if let Ok(logs_dir) = crate::context::daemon_logs_dir() {

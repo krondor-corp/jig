@@ -9,7 +9,7 @@ use jig_core::issues::{self, Issue as CoreIssue, IssueFilter, IssuePriority, Iss
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::Context;
+use crate::context::{Context, GlobalCtx, RepoCtx, ScopedCtx};
 
 use super::{IssuesError, IssuesOutput};
 
@@ -193,15 +193,26 @@ impl List {
 }
 
 impl Op for List {
+    type Context = ScopedCtx;
     type Error = IssuesError;
     type Output = IssuesOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<ScopedCtx, IssuesError> {
         if self.global {
-            let cfg = Context::from_global()?;
+            Ok(ScopedCtx::Global(GlobalCtx::load()?))
+        } else {
+            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
+        }
+    }
+
+    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
+        let cfg: Context = match ctx {
+            ScopedCtx::Global(g) => g.into(),
+            ScopedCtx::Repo(r) => r.into(),
+        };
+        if self.global {
             self.run_list_global(&cfg)
         } else {
-            let cfg = Context::from_cwd()?;
             self.run_list(&cfg)
         }
     }

@@ -77,18 +77,44 @@ pub struct StatsData {
 }
 
 impl Op for Issues {
+    type Context = ();
     type Error = IssuesError;
     type Output = IssuesOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), IssuesError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(IssuesCommand::List(cmd)) => cmd.run(),
-            Some(IssuesCommand::Create(cmd)) => cmd.run(),
-            Some(IssuesCommand::Update(cmd)) => cmd.run(),
-            Some(IssuesCommand::Status(cmd)) => cmd.run(),
-            Some(IssuesCommand::Complete(cmd)) => cmd.run(),
-            Some(IssuesCommand::Stats(cmd)) => cmd.run(),
-            None => self.list.run(),
+            Some(IssuesCommand::List(cmd)) => {
+                let ctx = cmd.build_context()?;
+                cmd.run(ctx)
+            }
+            Some(IssuesCommand::Create(cmd)) => {
+                let ctx = cmd.build_context()?;
+                cmd.run(ctx)
+            }
+            Some(IssuesCommand::Update(cmd)) => {
+                let ctx = cmd.build_context()?;
+                cmd.run(ctx)
+            }
+            Some(IssuesCommand::Status(cmd)) => {
+                let ctx = cmd.build_context()?;
+                cmd.run(ctx)
+            }
+            Some(IssuesCommand::Complete(cmd)) => {
+                let ctx = cmd.build_context()?;
+                cmd.run(ctx)
+            }
+            Some(IssuesCommand::Stats(cmd)) => {
+                let ctx = cmd.build_context()?;
+                cmd.run(ctx)
+            }
+            None => {
+                let ctx = self.list.build_context()?;
+                self.list.run(ctx)
+            }
         }
     }
 }

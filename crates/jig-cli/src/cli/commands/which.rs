@@ -25,10 +25,15 @@ pub enum WhichError {
 }
 
 impl Op for Which {
+    type Context = ();
     type Error = WhichError;
     type Output = WhichOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), WhichError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         let exe = std::env::current_exe()?;
         Ok(WhichOutput(exe))
     }

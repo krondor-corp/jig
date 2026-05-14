@@ -4,7 +4,7 @@ use clap::Args;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::{Context, RepoConfig};
+use crate::context::{RepoConfig, RepoCtx};
 use crate::worker::events::{self, WorkerState};
 use jig_core::git::{Branch, Repo};
 use jig_core::github::GitHubClient;
@@ -25,17 +25,19 @@ pub struct Create {
 }
 
 impl Op for Create {
+    type Context = RepoCtx;
     type Error = PrError;
     type Output = PrOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        let cfg = Context::from_cwd()?;
-        let repo = cfg.repo()?;
+    fn build_context(&self) -> Result<RepoCtx, PrError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
 
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
         let git_repo = Repo::discover()?;
         let branch = git_repo.current_branch().map_err(|_| PrError::NoBranch)?;
 
-        let base = resolve_base(repo, &cfg.config)?;
+        let base = resolve_base(&ctx.repo, &ctx.config)?;
         let base_str: &str = &base;
         let base_for_gh = base_str.strip_prefix("origin/").unwrap_or(base_str);
 

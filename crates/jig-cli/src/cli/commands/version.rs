@@ -12,10 +12,15 @@ use crate::cli::ui;
 pub struct Version;
 
 impl Op for Version {
+    type Context = ();
     type Error = Infallible;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
+    fn build_context(&self) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         eprintln!(
             "{} {}",
             ui::bold("jig"),

@@ -12,7 +12,7 @@ use jig_core::mux::TmuxMux;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::Context;
+use crate::context::RepoCtx;
 
 /// Create worktree and launch Claude in tmux
 #[derive(Args, Debug, Clone)]
@@ -50,12 +50,16 @@ pub enum SpawnError {
 }
 
 impl Op for Spawn {
+    type Context = RepoCtx;
     type Error = SpawnError;
     type Output = NoOutput;
 
-    fn run(&self) -> Result<Self::Output, Self::Error> {
-        let cfg = Context::from_cwd()?;
-        let repo = cfg.repo()?;
+    fn build_context(&self) -> Result<RepoCtx, SpawnError> {
+        Ok(RepoCtx::from_cwd()?)
+    }
+
+    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+        let repo = &ctx.repo;
 
         if terminal::which("tmux").is_none() {
             return Err(SpawnError::Usage("missing dependency: tmux".into()));
@@ -65,7 +69,7 @@ impl Op for Spawn {
         }
 
         let issue = if let Some(ref issue_ref) = self.issue {
-            let provider = repo.issue_provider(&cfg.config)?;
+            let provider = repo.issue_provider(&ctx.config)?;
             Some(
                 provider
                     .get(issue_ref)?
@@ -98,7 +102,7 @@ impl Op for Spawn {
             .as_ref()
             .and_then(|i| i.parent())
             .and_then(|parent_ref| {
-                let provider = repo.issue_provider(&cfg.config).ok()?;
+                let provider = repo.issue_provider(&ctx.config).ok()?;
                 provider.get(parent_ref).ok().flatten()
             });
         let base_branch = if let Some(b) = &self.base {
@@ -106,7 +110,7 @@ impl Op for Spawn {
         } else if let Some(p) = &parent_issue {
             Branch::new(format!("origin/{}", p.branch()))
         } else {
-            repo.base_branch(&cfg.config)
+            repo.base_branch(&ctx.config)
         };
 
         // Track issue ID before consuming the issue
@@ -115,7 +119,7 @@ impl Op for Spawn {
 
         // Build effective context: --context takes precedence, issue body as fallback
         let effective_context = match (&self.context, &issue_context) {
-            (Some(ctx), _) => Some(ctx.clone()),
+            (Some(task_ctx), _) => Some(task_ctx.clone()),
             (None, Some(body)) => Some(body.clone()),
             (None, None) => None,
         };
@@ -165,7 +169,7 @@ impl Op for Spawn {
         )?;
 
         if let Some(ref issue_id) = issue_id_for_status {
-            if let Ok(provider) = repo.issue_provider(&cfg.config) {
+            if let Ok(provider) = repo.issue_provider(&ctx.config) {
                 let _ = provider.update_status(issue_id, &jig_core::IssueStatus::InProgress);
             }
         }
