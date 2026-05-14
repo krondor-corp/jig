@@ -20,3 +20,9 @@ cargo run -- <args>      # Run CLI (e.g., cargo run -- list)
 Key docs:
 - `docs/PATTERNS.md` — Coding conventions (error handling, Op trait, output, actors)
 - `docs/SUCCESS_CRITERIA.md` — CI gate commands
+
+## Inline doc-comment tripwires
+
+Some conventions are documented as `///` doc comments on the canonical implementation (e.g., "this is the single underlying query — do not add a separate one"). Before adding a new query, client method, helper, or abstraction, run the `rustdoc` skill to check whether such a tripwire already exists.
+
+If you're writing a canonical-pattern doc comment yourself, follow the authoring convention in the `rustdoc` skill so future searches find it.
