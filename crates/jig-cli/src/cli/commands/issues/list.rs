@@ -206,14 +206,9 @@ impl Op for List {
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
-        let cfg: Context = match ctx {
-            ScopedCtx::Global(g) => g.into(),
-            ScopedCtx::Repo(r) => r.into(),
-        };
-        if self.global {
-            self.run_list_global(&cfg)
-        } else {
-            self.run_list(&cfg)
+        match ctx {
+            ScopedCtx::Repo(r) => self.run_list(&Context::from(r)),
+            ScopedCtx::Global(g) => self.run_list_global(&Context::from(g)),
         }
     }
 }
