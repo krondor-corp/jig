@@ -3,7 +3,7 @@ use clap::Args;
 use jig_core::issues::{Issue as CoreIssue, IssueFilter, IssuePriority, IssueStatus};
 
 use crate::cli::op::Op;
-use crate::context::{Context, GlobalCtx, RepoConfig, RepoCtx, ScopedCtx};
+use crate::context::{Context, RepoConfig, ScopedCtx};
 
 use super::{IssuesError, IssuesOutput, StatsData};
 
@@ -87,11 +87,7 @@ impl Op for Stats {
     type Output = IssuesOutput;
 
     fn build_context(&self) -> Result<ScopedCtx, IssuesError> {
-        if self.global {
-            Ok(ScopedCtx::Global(GlobalCtx::load()?))
-        } else {
-            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
-        }
+        Ok(ScopedCtx::from_global(self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {

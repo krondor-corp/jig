@@ -11,7 +11,7 @@ use clap::Args;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{self, disable_raw_mode};
 
-use crate::context::{Context, GlobalCtx, JigToml, RepoCtx, ScopedCtx};
+use crate::context::{Context, ScopedCtx};
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
@@ -46,25 +46,18 @@ impl Op for Ps {
     type Output = NoOutput;
 
     fn build_context(&self) -> Result<ScopedCtx, PsError> {
-        if self.global {
-            Ok(ScopedCtx::Global(GlobalCtx::load()?))
-        } else {
-            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
-        }
+        Ok(ScopedCtx::from_global(self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
         let global = self.global;
         let cfg: Context = match ctx {
             ScopedCtx::Repo(r) => {
-                let jig_toml = JigToml::load(&r.repo.repo_root)
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default();
-                let mut c = Context::from(r);
-                c.config.max_concurrent_workers = self
+                let max_workers = self
                     .max_workers
-                    .unwrap_or(jig_toml.spawn.max_concurrent_workers);
+                    .unwrap_or(r.jig_toml.spawn.max_concurrent_workers);
+                let mut c = Context::from(r);
+                c.config.max_concurrent_workers = max_workers;
                 c
             }
             ScopedCtx::Global(g) => Context::from(g),

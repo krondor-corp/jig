@@ -253,17 +253,26 @@ impl Context {
 pub struct RepoCtx {
     pub repo: RepoConfig,
     pub config: Config,
+    pub jig_toml: JigToml,
 }
 
 impl RepoCtx {
     pub fn from_cwd() -> Result<Self, ContextError> {
         let config = Config::load().unwrap_or_default();
         let repo = RepoConfig::from_cwd()?;
+        let jig_toml = JigToml::load(&repo.repo_root)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
         // Register so daemon/-g commands see this repo.
         let mut global = RepoRegistry::load().unwrap_or_default();
         global.register(repo.repo_root.clone());
         let _ = global.save();
-        Ok(Self { repo, config })
+        Ok(Self {
+            repo,
+            config,
+            jig_toml,
+        })
     }
 }
 
@@ -320,6 +329,16 @@ impl From<GlobalCtx> for Context {
 pub enum ScopedCtx {
     Repo(RepoCtx),
     Global(GlobalCtx),
+}
+
+impl ScopedCtx {
+    pub fn from_global(global: bool) -> Result<Self, ContextError> {
+        if global {
+            Ok(ScopedCtx::Global(GlobalCtx::load()?))
+        } else {
+            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
+        }
+    }
 }
 
 /// Update a key in the local (gitignored) `jig.local.toml` config.

@@ -5,7 +5,7 @@ use std::path::Path;
 use clap::Args;
 use comfy_table::{Cell, CellAlignment, Color};
 
-use crate::context::{Config, GlobalCtx, RepoConfig, RepoCtx, ScopedCtx};
+use crate::context::{Config, RepoConfig, ScopedCtx};
 use crate::worker::events::{self, WorkerState};
 use crate::worker::WorkerStatus;
 use jig_core::git::{Branch, Repo};
@@ -53,11 +53,7 @@ impl Op for List {
     type Output = ListOutput;
 
     fn build_context(&self) -> Result<ScopedCtx, ListError> {
-        if self.global {
-            Ok(ScopedCtx::Global(GlobalCtx::load()?))
-        } else {
-            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
-        }
+        Ok(ScopedCtx::from_global(self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {

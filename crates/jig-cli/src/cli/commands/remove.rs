@@ -3,7 +3,7 @@
 use clap::Args;
 use glob::Pattern;
 
-use crate::context::{GlobalCtx, RepoConfig, RepoCtx, ScopedCtx};
+use crate::context::{RepoConfig, ScopedCtx};
 use jig_core::git::Repo;
 use jig_core::Worktree;
 
@@ -45,11 +45,7 @@ impl Op for Remove {
     type Output = NoOutput;
 
     fn build_context(&self) -> Result<ScopedCtx, RemoveError> {
-        if self.global {
-            Ok(ScopedCtx::Global(GlobalCtx::load()?))
-        } else {
-            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
-        }
+        Ok(ScopedCtx::from_global(self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {

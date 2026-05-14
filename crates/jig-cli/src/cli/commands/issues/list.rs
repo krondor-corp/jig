@@ -9,7 +9,7 @@ use jig_core::issues::{self, Issue as CoreIssue, IssueFilter, IssuePriority, Iss
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::{Context, GlobalCtx, RepoCtx, ScopedCtx};
+use crate::context::{Context, ScopedCtx};
 
 use super::{IssuesError, IssuesOutput};
 
@@ -198,11 +198,7 @@ impl Op for List {
     type Output = IssuesOutput;
 
     fn build_context(&self) -> Result<ScopedCtx, IssuesError> {
-        if self.global {
-            Ok(ScopedCtx::Global(GlobalCtx::load()?))
-        } else {
-            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
-        }
+        Ok(ScopedCtx::from_global(self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {

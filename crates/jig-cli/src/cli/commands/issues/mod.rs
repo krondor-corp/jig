@@ -76,6 +76,13 @@ pub struct StatsData {
     pub by_priority: Vec<(String, usize)>,
 }
 
+fn dispatch<C: Op<Output = IssuesOutput, Error = IssuesError>>(
+    cmd: &C,
+) -> Result<IssuesOutput, IssuesError> {
+    let ctx = cmd.build_context()?;
+    cmd.run(ctx)
+}
+
 impl Op for Issues {
     type Context = ();
     type Error = IssuesError;
@@ -87,34 +94,13 @@ impl Op for Issues {
 
     fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(IssuesCommand::List(cmd)) => {
-                let ctx = cmd.build_context()?;
-                cmd.run(ctx)
-            }
-            Some(IssuesCommand::Create(cmd)) => {
-                let ctx = cmd.build_context()?;
-                cmd.run(ctx)
-            }
-            Some(IssuesCommand::Update(cmd)) => {
-                let ctx = cmd.build_context()?;
-                cmd.run(ctx)
-            }
-            Some(IssuesCommand::Status(cmd)) => {
-                let ctx = cmd.build_context()?;
-                cmd.run(ctx)
-            }
-            Some(IssuesCommand::Complete(cmd)) => {
-                let ctx = cmd.build_context()?;
-                cmd.run(ctx)
-            }
-            Some(IssuesCommand::Stats(cmd)) => {
-                let ctx = cmd.build_context()?;
-                cmd.run(ctx)
-            }
-            None => {
-                let ctx = self.list.build_context()?;
-                self.list.run(ctx)
-            }
+            Some(IssuesCommand::List(cmd)) => dispatch(cmd),
+            Some(IssuesCommand::Create(cmd)) => dispatch(cmd),
+            Some(IssuesCommand::Update(cmd)) => dispatch(cmd),
+            Some(IssuesCommand::Status(cmd)) => dispatch(cmd),
+            Some(IssuesCommand::Complete(cmd)) => dispatch(cmd),
+            Some(IssuesCommand::Stats(cmd)) => dispatch(cmd),
+            None => dispatch(&self.list),
         }
     }
 }

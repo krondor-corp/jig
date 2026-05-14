@@ -54,6 +54,11 @@ impl fmt::Display for PrOutput {
     }
 }
 
+fn dispatch<C: Op<Output = PrOutput, Error = PrError>>(cmd: &C) -> Result<PrOutput, PrError> {
+    let ctx = cmd.build_context()?;
+    cmd.run(ctx)
+}
+
 impl Op for Pr {
     type Context = ();
     type Error = PrError;
@@ -65,18 +70,9 @@ impl Op for Pr {
 
     fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(PrCommand::Create(cmd)) => {
-                let ctx = cmd.build_context()?;
-                cmd.run(ctx)
-            }
-            Some(PrCommand::Comments(cmd)) => {
-                cmd.build_context()?;
-                cmd.run(())
-            }
-            None => {
-                let ctx = self.create.build_context()?;
-                self.create.run(ctx)
-            }
+            Some(PrCommand::Create(cmd)) => dispatch(cmd),
+            Some(PrCommand::Comments(cmd)) => dispatch(cmd),
+            None => dispatch(&self.create),
         }
     }
 }

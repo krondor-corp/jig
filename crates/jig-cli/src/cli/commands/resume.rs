@@ -2,7 +2,6 @@
 
 use clap::Args;
 
-use crate::context;
 use crate::worker::Worker;
 use jig_core::agents;
 use jig_core::mux::TmuxMux;
@@ -77,7 +76,7 @@ impl Op for Resume {
             .clone()
             .unwrap_or_else(|| "You were interrupted. Resume your previous task.".to_string());
 
-        let jig_config = context::JigToml::load(&ctx.repo.repo_root)?.unwrap_or_default();
+        let jig_config = ctx.jig_toml;
         let agent = agents::Agent::from_config(
             &jig_config.agent.agent_type,
             Some(&jig_config.agent.model),

@@ -1,6 +1,6 @@
 //! Nuke command — kill all workers, remove worktrees, clear state
 
-use crate::context::{GlobalCtx, RepoConfig, RepoCtx, ScopedCtx};
+use crate::context::{RepoConfig, ScopedCtx};
 use jig_core::git::Repo;
 use jig_core::mux::{Mux, TmuxMux};
 
@@ -31,11 +31,7 @@ impl Op for Nuke {
     type Output = NoOutput;
 
     fn build_context(&self) -> Result<ScopedCtx, NukeError> {
-        if self.global {
-            Ok(ScopedCtx::Global(GlobalCtx::load()?))
-        } else {
-            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
-        }
+        Ok(ScopedCtx::from_global(self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {

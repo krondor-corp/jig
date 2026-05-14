@@ -2,7 +2,7 @@
 
 use clap::Args;
 
-use crate::context::{GlobalCtx, RepoConfig, RepoCtx, ScopedCtx};
+use crate::context::{RepoConfig, ScopedCtx};
 use crate::worker::Worker;
 use jig_core::mux::TmuxMux;
 
@@ -42,11 +42,7 @@ impl Op for Kill {
     type Output = NoOutput;
 
     fn build_context(&self) -> Result<ScopedCtx, KillError> {
-        if self.global {
-            Ok(ScopedCtx::Global(GlobalCtx::load()?))
-        } else {
-            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
-        }
+        Ok(ScopedCtx::from_global(self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
