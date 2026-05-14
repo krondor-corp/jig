@@ -5,6 +5,7 @@
 # jig
 <!-- merge cleanup probe -->
 <!-- daemon spawn verified -->
+<!-- test copy probe: woop woop 🎉 -->
 
 [![CI](https://github.com/krondor-corp/jig/actions/workflows/test.yml/badge.svg)](https://github.com/krondor-corp/jig/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-violet.svg)](https://opensource.org/licenses/MIT)
