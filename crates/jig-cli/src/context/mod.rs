@@ -249,6 +249,77 @@ impl Context {
     }
 }
 
+/// Single-repo context: the repo discovered from cwd plus global config.
+pub struct RepoCtx {
+    pub repo: RepoConfig,
+    pub config: Config,
+}
+
+impl RepoCtx {
+    pub fn from_cwd() -> Result<Self, ContextError> {
+        let config = Config::load().unwrap_or_default();
+        let repo = RepoConfig::from_cwd()?;
+        // Register so daemon/-g commands see this repo.
+        let mut global = RepoRegistry::load().unwrap_or_default();
+        global.register(repo.repo_root.clone());
+        let _ = global.save();
+        Ok(Self { repo, config })
+    }
+}
+
+impl From<RepoCtx> for Context {
+    fn from(ctx: RepoCtx) -> Self {
+        let mut registry = RepoRegistry::default();
+        registry.register(ctx.repo.repo_root.clone());
+        Context {
+            config: ctx.config,
+            registry,
+            repos: vec![ctx.repo],
+        }
+    }
+}
+
+/// All-repos context: full registry plus config.
+pub struct GlobalCtx {
+    pub config: Config,
+    pub registry: RepoRegistry,
+    pub repos: Vec<RepoConfig>,
+}
+
+impl GlobalCtx {
+    pub fn load() -> Result<Self, ContextError> {
+        let config = Config::load().unwrap_or_default();
+        let registry = RepoRegistry::load()?;
+        let repos = registry
+            .repos()
+            .iter()
+            .filter(|e| e.path.exists())
+            .filter_map(|e| RepoConfig::from_path(&e.path).ok())
+            .collect();
+        Ok(Self {
+            config,
+            registry,
+            repos,
+        })
+    }
+}
+
+impl From<GlobalCtx> for Context {
+    fn from(ctx: GlobalCtx) -> Self {
+        Context {
+            config: ctx.config,
+            registry: ctx.registry,
+            repos: ctx.repos,
+        }
+    }
+}
+
+/// Either single-repo or all-repos context (for commands with `--global`).
+pub enum ScopedCtx {
+    Repo(RepoCtx),
+    Global(GlobalCtx),
+}
+
 /// Update a key in the local (gitignored) `jig.local.toml` config.
 ///
 /// Pass `Some(value)` to set, `None` to remove. Removes empty sections.
