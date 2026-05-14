@@ -58,7 +58,7 @@ impl Op for Create {
   - `prompt/` — Handlebars-based prompt rendering
 
 - **jig-cli modules**:
-  - `cli/` — CLI framework: `op.rs` (Op trait + command_enum! macro), `ui.rs` (rendering), `commands/` (one file per command)
+  - `cli/` — CLI framework: `op.rs` (Op trait + command_enum! macro), `ui/` (rendering primitives: `colors.rs`, `output.rs`), `commands/` (one file/dir per command)
   - `config/` — Configuration loading and management
   - `worker/` — Worker state, lifecycle, events
   - `daemon/` — Background daemon with actor threads
@@ -81,7 +81,7 @@ impl Op for Create {
 ## Output Conventions
 
 - **stderr**: Status messages, progress, errors (with color)
-  - Use shared helpers from `crates/jig-cli/src/cli/ui.rs` instead of inline `colored` calls
+  - Use shared helpers from `crates/jig-cli/src/cli/ui` instead of inline `colored` calls
   - `ui::success("msg")` — green ✓ prefix
   - `ui::progress("msg")` — cyan → prefix
   - `ui::warning("msg")` — yellow ! prefix

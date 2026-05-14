@@ -1,5 +1,7 @@
 //! Ps command — show status of spawned sessions
 
+mod render;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -83,10 +85,10 @@ impl Ps {
             eprintln!("No spawned sessions");
         } else if global {
             if !workers.is_empty() {
-                let output = ui::render_worker_table_grouped(&workers, false);
+                let output = render::render_worker_table_grouped(&workers, false);
                 eprintln!("{output}");
             }
-            let triage_section = ui::render_triage_section_grouped(&triages, false);
+            let triage_section = render::render_triage_section_grouped(&triages, false);
             if !triage_section.is_empty() {
                 if !workers.is_empty() {
                     eprintln!();
@@ -95,10 +97,10 @@ impl Ps {
             }
         } else {
             if !workers.is_empty() {
-                let table = ui::render_worker_table(&workers, false);
+                let table = render::render_worker_table(&workers, false);
                 eprintln!("{table}");
             }
-            let triage_section = ui::render_triage_section(&triages, false);
+            let triage_section = render::render_triage_section(&triages, false);
             if !triage_section.is_empty() {
                 if !workers.is_empty() {
                     eprintln!();
@@ -206,14 +208,14 @@ fn run_watch(cfg: Context, global: bool) {
             match view {
                 ViewMode::Table => {
                     let table_output = if global {
-                        ui::render_worker_table_grouped(&workers, true)
+                        render::render_worker_table_grouped(&workers, true)
                     } else {
-                        ui::render_worker_table(&workers, true).to_string()
+                        render::render_worker_table(&workers, true).to_string()
                     };
                     let triage_output = if global {
-                        ui::render_triage_section_grouped(&triages, true)
+                        render::render_triage_section_grouped(&triages, true)
                     } else {
-                        ui::render_triage_section(&triages, true)
+                        render::render_triage_section(&triages, true)
                     };
                     let triage_count = if triages.is_empty() {
                         String::new()
