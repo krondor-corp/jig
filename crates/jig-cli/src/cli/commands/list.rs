@@ -163,12 +163,8 @@ impl List {
             first = false;
             ui::header(&repo_name);
             let base_branch = cfg.base_branch(global);
-            let table = build_worktree_table(
-                &worktrees,
-                &cfg.worktrees_path,
-                &base_branch,
-                &cfg.name(),
-            );
+            let table =
+                build_worktree_table(&worktrees, &cfg.worktrees_path, &base_branch, &cfg.name());
             eprintln!("{table}");
         }
         Ok(ListOutput(String::new()))

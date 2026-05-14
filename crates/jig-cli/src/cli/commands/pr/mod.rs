@@ -70,8 +70,8 @@ impl Op for Pr {
                 cmd.run(ctx)
             }
             Some(PrCommand::Comments(cmd)) => {
-                let ctx = cmd.build_context()?;
-                cmd.run(ctx)
+                cmd.build_context()?;
+                cmd.run(())
             }
             None => {
                 let ctx = self.create.build_context()?;

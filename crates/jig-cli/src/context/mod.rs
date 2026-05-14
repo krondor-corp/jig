@@ -315,6 +315,8 @@ impl From<GlobalCtx> for Context {
 }
 
 /// Either single-repo or all-repos context (for commands with `--global`).
+// CLI context enum — constructed once per invocation, not on a hot path.
+#[allow(clippy::large_enum_variant)]
 pub enum ScopedCtx {
     Repo(RepoCtx),
     Global(GlobalCtx),

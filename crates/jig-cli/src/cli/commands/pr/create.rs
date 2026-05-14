@@ -65,10 +65,7 @@ impl Op for Create {
     }
 }
 
-fn resolve_base(
-    repo: &RepoConfig,
-    global: &crate::context::Config,
-) -> Result<Branch, PrError> {
+fn resolve_base(repo: &RepoConfig, global: &crate::context::Config) -> Result<Branch, PrError> {
     let worktree_name = match Worktree::current() {
         Ok(wt) => wt.branch_name(),
         Err(_) => return Ok(repo.base_branch(global)),
