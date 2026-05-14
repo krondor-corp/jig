@@ -83,6 +83,27 @@ fn dispatch<C: Op<Output = IssuesOutput, Error = IssuesError>>(
     cmd.run(ctx)
 }
 
+impl Op for IssuesCommand {
+    type Context = ();
+    type Error = IssuesError;
+    type Output = IssuesOutput;
+
+    fn build_context(&self) -> Result<(), IssuesError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<IssuesOutput, IssuesError> {
+        match self {
+            IssuesCommand::List(cmd) => dispatch(cmd),
+            IssuesCommand::Create(cmd) => dispatch(cmd),
+            IssuesCommand::Update(cmd) => dispatch(cmd),
+            IssuesCommand::Status(cmd) => dispatch(cmd),
+            IssuesCommand::Complete(cmd) => dispatch(cmd),
+            IssuesCommand::Stats(cmd) => dispatch(cmd),
+        }
+    }
+}
+
 impl Op for Issues {
     type Context = ();
     type Error = IssuesError;
@@ -94,12 +115,10 @@ impl Op for Issues {
 
     fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(IssuesCommand::List(cmd)) => dispatch(cmd),
-            Some(IssuesCommand::Create(cmd)) => dispatch(cmd),
-            Some(IssuesCommand::Update(cmd)) => dispatch(cmd),
-            Some(IssuesCommand::Status(cmd)) => dispatch(cmd),
-            Some(IssuesCommand::Complete(cmd)) => dispatch(cmd),
-            Some(IssuesCommand::Stats(cmd)) => dispatch(cmd),
+            Some(cmd) => {
+                cmd.build_context()?;
+                cmd.run(())
+            }
             None => dispatch(&self.list),
         }
     }

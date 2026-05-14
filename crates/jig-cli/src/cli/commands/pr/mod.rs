@@ -59,6 +59,23 @@ fn dispatch<C: Op<Output = PrOutput, Error = PrError>>(cmd: &C) -> Result<PrOutp
     cmd.run(ctx)
 }
 
+impl Op for PrCommand {
+    type Context = ();
+    type Error = PrError;
+    type Output = PrOutput;
+
+    fn build_context(&self) -> Result<(), PrError> {
+        Ok(())
+    }
+
+    fn run(&self, _: ()) -> Result<PrOutput, PrError> {
+        match self {
+            PrCommand::Create(cmd) => dispatch(cmd),
+            PrCommand::Comments(cmd) => dispatch(cmd),
+        }
+    }
+}
+
 impl Op for Pr {
     type Context = ();
     type Error = PrError;
@@ -70,8 +87,10 @@ impl Op for Pr {
 
     fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(PrCommand::Create(cmd)) => dispatch(cmd),
-            Some(PrCommand::Comments(cmd)) => dispatch(cmd),
+            Some(cmd) => {
+                cmd.build_context()?;
+                cmd.run(())
+            }
             None => dispatch(&self.create),
         }
     }
