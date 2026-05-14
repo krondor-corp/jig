@@ -10,7 +10,7 @@ mod update;
 use std::fmt;
 use std::io;
 
-use clap::{Args, Subcommand};
+use clap::Args;
 
 use jig_core::issues::Issue as CoreIssue;
 
@@ -29,20 +29,21 @@ pub struct Issues {
     pub list: List,
 }
 
-#[derive(Subcommand, Debug, Clone)]
-pub enum IssuesCommand {
-    /// List and browse issues (default)
-    List(List),
-    /// Create a new issue
-    Create(create::Create),
-    /// Update an existing issue's fields
-    Update(update::Update),
-    /// Update issue status
-    Status(status::Status),
-    /// Mark an issue as complete
-    Complete(complete::Complete),
-    /// Show issue statistics
-    Stats(stats::Stats),
+crate::command_enum! {
+    IssuesCommand: IssuesOutput, IssuesError {
+        /// List and browse issues (default)
+        (List, List),
+        /// Create a new issue
+        (Create, create::Create),
+        /// Update an existing issue's fields
+        (Update, update::Update),
+        /// Update issue status
+        (Status, status::Status),
+        /// Mark an issue as complete
+        (Complete, complete::Complete),
+        /// Show issue statistics
+        (Stats, stats::Stats),
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -76,34 +77,6 @@ pub struct StatsData {
     pub by_priority: Vec<(String, usize)>,
 }
 
-fn dispatch<C: Op<Output = IssuesOutput, Error = IssuesError>>(
-    cmd: &C,
-) -> Result<IssuesOutput, IssuesError> {
-    let ctx = cmd.build_context()?;
-    cmd.run(ctx)
-}
-
-impl Op for IssuesCommand {
-    type Context = ();
-    type Error = IssuesError;
-    type Output = IssuesOutput;
-
-    fn build_context(&self) -> Result<(), IssuesError> {
-        Ok(())
-    }
-
-    fn run(&self, _: ()) -> Result<IssuesOutput, IssuesError> {
-        match self {
-            IssuesCommand::List(cmd) => dispatch(cmd),
-            IssuesCommand::Create(cmd) => dispatch(cmd),
-            IssuesCommand::Update(cmd) => dispatch(cmd),
-            IssuesCommand::Status(cmd) => dispatch(cmd),
-            IssuesCommand::Complete(cmd) => dispatch(cmd),
-            IssuesCommand::Stats(cmd) => dispatch(cmd),
-        }
-    }
-}
-
 impl Op for Issues {
     type Context = ();
     type Error = IssuesError;
@@ -115,11 +88,11 @@ impl Op for Issues {
 
     fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(cmd) => {
-                cmd.build_context()?;
-                cmd.run(())
+            Some(cmd) => cmd.run(()),
+            None => {
+                let ctx = self.list.build_context()?;
+                self.list.run(ctx)
             }
-            None => dispatch(&self.list),
         }
     }
 }

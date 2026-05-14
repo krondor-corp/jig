@@ -27,9 +27,50 @@ impl Display for NoOutput {
     }
 }
 
-/// Macro to generate Command enum with Op implementation
+/// Macro to generate command enums with Op implementations.
+///
+/// Two forms:
+/// 1. Top-level: variants have distinct Output/Error types, the macro
+///    generates wrapping `OpOutput`/`OpError` enums.
+/// 2. Subcommand (`$enum: $output, $error`): variants share Output/Error,
+///    no wrapping enums are generated — the impl returns them directly.
 #[macro_export]
 macro_rules! command_enum {
+    // Subcommand form: all variants share the given Output/Error types.
+    ($enum:ident: $output:ty, $error:ty {
+        $($(#[$attr:meta])* ($variant:ident, $type:ty)),* $(,)?
+    }) => {
+        #[derive(clap::Subcommand, Debug, Clone)]
+        pub enum $enum {
+            $(
+                $(#[$attr])*
+                $variant($type),
+            )*
+        }
+
+        impl $crate::cli::op::Op for $enum {
+            type Context = ();
+            type Output = $output;
+            type Error = $error;
+
+            fn build_context(&self) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            fn run(&self, _ctx: ()) -> Result<Self::Output, Self::Error> {
+                match self {
+                    $(
+                        $enum::$variant(op) => {
+                            let ctx = op.build_context()?;
+                            op.run(ctx)
+                        },
+                    )*
+                }
+            }
+        }
+    };
+
+    // Top-level form: generates wrapping OpOutput/OpError enums.
     ($($(#[$attr:meta])* ($variant:ident, $type:ty)),* $(,)?) => {
         #[derive(clap::Subcommand, Debug, Clone)]
         #[allow(clippy::large_enum_variant)]

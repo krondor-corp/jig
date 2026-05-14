@@ -5,7 +5,7 @@ mod create;
 
 use std::fmt;
 
-use clap::{Args, Subcommand};
+use clap::Args;
 
 use crate::cli::op::Op;
 
@@ -19,14 +19,6 @@ pub struct Pr {
 
     #[command(flatten)]
     pub create: Create,
-}
-
-#[derive(Subcommand, Debug, Clone)]
-pub enum PrCommand {
-    /// Push current branch and create a draft PR (default)
-    Create(Create),
-    /// Show review comments and feedback on the current PR
-    Comments(comments::Comments),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -54,25 +46,12 @@ impl fmt::Display for PrOutput {
     }
 }
 
-fn dispatch<C: Op<Output = PrOutput, Error = PrError>>(cmd: &C) -> Result<PrOutput, PrError> {
-    let ctx = cmd.build_context()?;
-    cmd.run(ctx)
-}
-
-impl Op for PrCommand {
-    type Context = ();
-    type Error = PrError;
-    type Output = PrOutput;
-
-    fn build_context(&self) -> Result<(), PrError> {
-        Ok(())
-    }
-
-    fn run(&self, _: ()) -> Result<PrOutput, PrError> {
-        match self {
-            PrCommand::Create(cmd) => dispatch(cmd),
-            PrCommand::Comments(cmd) => dispatch(cmd),
-        }
+crate::command_enum! {
+    PrCommand: PrOutput, PrError {
+        /// Push current branch and create a draft PR (default)
+        (Create, Create),
+        /// Show review comments and feedback on the current PR
+        (Comments, comments::Comments),
     }
 }
 
@@ -87,11 +66,11 @@ impl Op for Pr {
 
     fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(cmd) => {
-                cmd.build_context()?;
-                cmd.run(())
+            Some(cmd) => cmd.run(()),
+            None => {
+                let ctx = self.create.build_context()?;
+                self.create.run(ctx)
             }
-            None => dispatch(&self.create),
         }
     }
 }
