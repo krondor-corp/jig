@@ -15,6 +15,13 @@ impl Branch {
         );
         Self(name)
     }
+
+    /// Returns the segment before the first `/`, or `None` if the branch name
+    /// has no slash. For `origin/main` this is `"origin"`; for `main` it is
+    /// `None`.
+    pub fn remote_prefix(&self) -> Option<&str> {
+        self.0.split_once('/').map(|(prefix, _)| prefix)
+    }
 }
 
 impl std::fmt::Display for Branch {
@@ -76,6 +83,29 @@ mod tests {
         Branch::new("feature/foo");
         Branch::new("origin/main");
         Branch::new("feature/aut-4969-spawn-agent-thread-is-broken");
+    }
+
+    #[test]
+    fn remote_prefix_with_slash() {
+        assert_eq!(Branch::new("origin/main").remote_prefix(), Some("origin"));
+        assert_eq!(
+            Branch::new("upstream/develop").remote_prefix(),
+            Some("upstream")
+        );
+    }
+
+    #[test]
+    fn remote_prefix_without_slash() {
+        assert_eq!(Branch::new("main").remote_prefix(), None);
+        assert_eq!(Branch::new("develop").remote_prefix(), None);
+    }
+
+    #[test]
+    fn remote_prefix_local_branch_with_slash() {
+        assert_eq!(
+            Branch::new("feature/foo").remote_prefix(),
+            Some("feature")
+        );
     }
 
     #[test]

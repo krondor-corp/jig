@@ -108,6 +108,11 @@ impl Repo {
         Ok(())
     }
 
+    /// Returns `true` if a remote with the given name is configured.
+    pub fn has_remote(&self, name: &str) -> bool {
+        self.inner.find_remote(name).is_ok()
+    }
+
     // ------------------------------------------------------------------
     // Branch operations
     // ------------------------------------------------------------------
@@ -649,8 +654,82 @@ impl Repo {
             }
         }
 
-        self.resolve_to_commit("HEAD")
-            .map_err(|_| GitError::BranchNotFound(base_branch.to_string()))
+        Err(GitError::BranchNotFound(base_branch.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn init_repo_with_commit(dir: &Path) -> git2::Repository {
+        let repo = git2::Repository::init(dir).unwrap();
+        {
+            let mut config = repo.config().unwrap();
+            config.set_str("user.email", "test@test.com").unwrap();
+            config.set_str("user.name", "Test").unwrap();
+            config.set_bool("commit.gpgsign", false).unwrap();
+        }
+        {
+            let mut index = repo.index().unwrap();
+            let tree_oid = index.write_tree().unwrap();
+            let tree = repo.find_tree(tree_oid).unwrap();
+            let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+        repo.head()
+            .unwrap()
+            .rename("refs/heads/main", true, "init main")
+            .unwrap();
+        repo
+    }
+
+    #[test]
+    fn has_remote_true_when_configured() {
+        let tmp = TempDir::new().unwrap();
+        let git = init_repo_with_commit(tmp.path());
+        let path = tmp.path().to_str().unwrap();
+        git.remote("origin", path).unwrap();
+
+        let repo = Repo::open(tmp.path()).unwrap();
+        assert!(repo.has_remote("origin"));
+    }
+
+    #[test]
+    fn has_remote_false_when_not_configured() {
+        let tmp = TempDir::new().unwrap();
+        let _ = init_repo_with_commit(tmp.path());
+
+        let repo = Repo::open(tmp.path()).unwrap();
+        assert!(!repo.has_remote("origin"));
+        assert!(!repo.has_remote("upstream"));
+    }
+
+    #[test]
+    fn find_valid_start_point_no_head_fallback() {
+        let tmp = TempDir::new().unwrap();
+        let _ = init_repo_with_commit(tmp.path());
+
+        let repo = Repo::open(tmp.path()).unwrap();
+        // "origin/main" doesn't exist, no remote configured, no HEAD fallback
+        let result = repo.find_valid_start_point("origin/main");
+        assert!(
+            matches!(result, Err(GitError::BranchNotFound(ref s)) if s == "origin/main"),
+            "expected BranchNotFound, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn find_valid_start_point_resolves_local_branch() {
+        let tmp = TempDir::new().unwrap();
+        let _ = init_repo_with_commit(tmp.path());
+
+        let repo = Repo::open(tmp.path()).unwrap();
+        let result = repo.find_valid_start_point("main");
+        assert!(result.is_ok(), "expected Ok for existing local branch");
     }
 }
 
