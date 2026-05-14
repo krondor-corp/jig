@@ -41,11 +41,7 @@ impl Op for Resume {
 
     fn run(&self) -> Result<Self::Output, Self::Error> {
         let cfg = RepoConfig::from_cwd()?;
-        let repo_name = cfg
-            .repo_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let repo_name = cfg.name();
         let mux = TmuxMux::for_repo(&repo_name);
 
         // Open existing worktree

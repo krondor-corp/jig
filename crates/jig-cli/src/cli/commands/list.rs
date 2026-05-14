@@ -83,7 +83,7 @@ impl Op for List {
 
         let base_branch = repo.base_branch(&cfg.config);
         let table =
-            build_worktree_table(&names, &repo.worktrees_path, &base_branch, &repo.repo_root);
+            build_worktree_table(&names, &repo.worktrees_path, &base_branch, &repo.name());
         eprintln!("{table}");
         Ok(ListOutput(String::new()))
     }
@@ -116,11 +116,7 @@ impl List {
             if worktrees.is_empty() {
                 continue;
             }
-            let repo_name = cfg
-                .repo_root
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
+            let repo_name = cfg.name();
             if !first {
                 out.push('\n');
             }
@@ -147,11 +143,7 @@ impl List {
             }
             let worktrees: Vec<String> =
                 wts.iter().map(|wt| wt.branch_name().to_string()).collect();
-            let repo_name = cfg
-                .repo_root
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
+            let repo_name = cfg.name();
             if !first {
                 eprintln!();
             }
@@ -162,7 +154,7 @@ impl List {
                 &worktrees,
                 &cfg.worktrees_path,
                 &base_branch,
-                &cfg.repo_root,
+                &cfg.name(),
             );
             eprintln!("{table}");
         }
@@ -171,12 +163,8 @@ impl List {
 }
 
 /// Get worker status from event log for a worktree.
-fn worktree_event_status(repo_root: &Path, name: &str) -> Option<WorkerStatus> {
-    let repo_name = repo_root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    let event_log = events::event_log_for_worker(&repo_name, name).ok()?;
+fn worktree_event_status(repo_name: &str, name: &str) -> Option<WorkerStatus> {
+    let event_log = events::event_log_for_worker(repo_name, name).ok()?;
     if !event_log.exists() {
         return None;
     }
@@ -190,7 +178,7 @@ fn build_worktree_table(
     names: &[String],
     worktrees_path: &Path,
     base_branch: &Branch,
-    repo_root: &Path,
+    repo_name: &str,
 ) -> comfy_table::Table {
     let mut table = ui::new_table(&["NAME", "BRANCH", "COMMITS"]);
 
@@ -198,7 +186,7 @@ fn build_worktree_table(
         let wt_path = worktrees_path.join(name);
 
         // Check if worker is initializing or failed
-        let worker_status = worktree_event_status(repo_root, name);
+        let worker_status = worktree_event_status(repo_name, name);
 
         let branch = Repo::open(&wt_path)
             .and_then(|r| r.current_branch())

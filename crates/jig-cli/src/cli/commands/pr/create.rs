@@ -35,7 +35,7 @@ impl Op for Create {
         let git_repo = Repo::discover()?;
         let branch = git_repo.current_branch().map_err(|_| PrError::NoBranch)?;
 
-        let base = resolve_base(&repo.repo_root, repo, &cfg.config)?;
+        let base = resolve_base(repo, &cfg.config)?;
         let base_str: &str = &base;
         let base_for_gh = base_str.strip_prefix("origin/").unwrap_or(base_str);
 
@@ -64,7 +64,6 @@ impl Op for Create {
 }
 
 fn resolve_base(
-    repo_root: &std::path::Path,
     repo: &RepoConfig,
     global: &crate::context::Config,
 ) -> Result<Branch, PrError> {
@@ -73,10 +72,7 @@ fn resolve_base(
         Err(_) => return Ok(repo.base_branch(global)),
     };
 
-    let repo_name = repo_root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let repo_name = repo.name();
 
     let issue_ref = match events::event_log_for_worker(&repo_name, &worktree_name) {
         Ok(log) => {

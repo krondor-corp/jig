@@ -87,11 +87,7 @@ impl Op for Create {
         });
         let wt = Worktree::create(&git_repo, &branch, &base_branch, &copy_files, on_create)?;
 
-        let repo_name = repo
-            .repo_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
+        let repo_name = repo.name();
         if let Ok(event_log) = events::event_log_for_worker(&repo_name, &self.branch) {
             if let Err(e) = event_log.append(&Event::now(EventKind::Create {
                 branch: branch.to_string(),

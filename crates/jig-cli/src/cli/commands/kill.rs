@@ -58,11 +58,7 @@ impl Op for Kill {
             let name = self.branch.as_deref().ok_or(KillError::NoTarget)?;
             for repo in &cfg.repos {
                 let git_repo = jig_core::git::Repo::open(&repo.repo_root).unwrap();
-                let repo_name = repo
-                    .repo_root
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
+                let repo_name = repo.name();
                 let mux = TmuxMux::for_repo(&repo_name);
                 let workers = Worker::discover(&git_repo);
                 if let Some(worker) = workers.iter().find(|w| w.branch() == name) {
@@ -77,11 +73,7 @@ impl Op for Kill {
 
         let cfg = Context::from_cwd()?;
         let repo = cfg.repo()?;
-        let repo_name = repo
-            .repo_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let repo_name = repo.name();
         let mux = TmuxMux::for_repo(&repo_name);
 
         if self.all {
@@ -106,11 +98,7 @@ impl Op for Kill {
 }
 
 fn kill_all_in_repo(repo: &RepoConfig) -> Result<usize, KillError> {
-    let repo_name = repo
-        .repo_root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let repo_name = repo.name();
     let mux = TmuxMux::for_repo(&repo_name);
     let workers = Worker::discover(&jig_core::git::Repo::open(&repo.repo_root).unwrap());
     for worker in &workers {

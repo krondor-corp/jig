@@ -95,11 +95,7 @@ impl Op for Health {
         let repo = cfg.as_ref().and_then(|c| c.repo().ok());
         match repo {
             Some(repo) => {
-                let repo_name = repo
-                    .repo_root
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
+                let repo_name = repo.name();
                 ui::header(&format!("Repository: {}", repo_name));
 
                 if JigToml::exists(&repo.repo_root) {

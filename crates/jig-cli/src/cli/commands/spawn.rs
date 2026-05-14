@@ -149,11 +149,7 @@ impl Op for Spawn {
         });
 
         let issue_ref = self.issue.as_deref().map(jig_core::IssueRef::new);
-        let repo_name = repo
-            .repo_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let repo_name = repo.name();
         let mux = TmuxMux::for_repo(&repo_name);
         let _worker = Worker::spawn(
             &git_repo,

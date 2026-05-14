@@ -60,11 +60,7 @@ impl Op for Nuke {
 }
 
 fn nuke_repo(cfg: &RepoConfig) -> Result<(), NukeError> {
-    let repo_name = cfg
-        .repo_root
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let repo_name = cfg.name();
 
     // 1. Kill mux session for this repo (takes out all windows at once)
     let session_name = cfg.session_name();

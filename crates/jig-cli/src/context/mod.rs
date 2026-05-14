@@ -115,6 +115,14 @@ impl RepoConfig {
         Branch::new(name)
     }
 
+    /// Display name derived from the repo root directory.
+    pub fn name(&self) -> String {
+        self.repo_root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
     /// Tmux session name for this repo.
     pub fn session_name(&self) -> String {
         let repo_name = self
