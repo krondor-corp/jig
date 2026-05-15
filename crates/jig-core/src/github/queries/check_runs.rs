@@ -1,33 +1,42 @@
+use serde::Deserialize;
+
 use super::super::client::GitHubClient;
 use super::super::error::Result;
 use super::super::types::{CheckRun, CheckStatus};
 
+#[derive(Deserialize)]
+struct RawCheckRunsResponse {
+    check_runs: Vec<RawCheckRun>,
+}
+
+#[derive(Deserialize)]
+struct RawCheckRun {
+    name: String,
+    status: String,
+    conclusion: Option<String>,
+    details_url: Option<String>,
+}
+
 impl GitHubClient {
     /// Get check runs for a git ref (branch name or SHA).
     pub fn get_check_runs(&self, git_ref: &str) -> Result<Vec<CheckRun>> {
-        let output = self.gh_api(&format!(
+        let response: RawCheckRunsResponse = self.gh_api_json(&format!(
             "repos/{}/commits/{}/check-runs",
             self.repo, git_ref
         ))?;
 
-        let parsed: serde_json::Value = serde_json::from_str(&output)?;
-        let runs = parsed["check_runs"].as_array();
-
-        let Some(runs) = runs else {
-            return Ok(vec![]);
-        };
-
-        Ok(runs
-            .iter()
+        Ok(response
+            .check_runs
+            .into_iter()
             .map(|r| CheckRun {
-                name: r["name"].as_str().unwrap_or("").to_string(),
-                status: match r["status"].as_str() {
-                    Some("completed") => CheckStatus::Completed,
-                    Some("in_progress") => CheckStatus::InProgress,
+                name: r.name,
+                status: match r.status.as_str() {
+                    "completed" => CheckStatus::Completed,
+                    "in_progress" => CheckStatus::InProgress,
                     _ => CheckStatus::Queued,
                 },
-                conclusion: r["conclusion"].as_str().map(|s| s.to_string()),
-                details_url: r["details_url"].as_str().map(|s| s.to_string()),
+                conclusion: r.conclusion,
+                details_url: r.details_url,
             })
             .collect())
     }

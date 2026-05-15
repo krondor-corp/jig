@@ -1,6 +1,82 @@
+use serde::Deserialize;
+
 use super::super::client::GitHubClient;
 use super::super::error::{GitHubError, Result};
 use super::super::types::{ReviewComment, ReviewState};
+
+#[derive(Deserialize)]
+struct RawReview {
+    state: String,
+    body: String,
+    user: RawUser,
+}
+
+#[derive(Deserialize)]
+struct RawUser {
+    login: String,
+}
+
+#[derive(Deserialize)]
+struct RawReviewComment {
+    body: String,
+    path: Option<String>,
+    line: Option<u64>,
+    original_line: Option<u64>,
+    user: RawUser,
+    in_reply_to_id: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct GraphQlResponse<T> {
+    data: T,
+}
+
+#[derive(Deserialize)]
+struct RepositoryQuery {
+    repository: RepositoryData,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RepositoryData {
+    pull_request: PullRequestData,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PullRequestData {
+    review_threads: ReviewThreadsConnection,
+}
+
+#[derive(Deserialize)]
+struct ReviewThreadsConnection {
+    nodes: Vec<RawReviewThread>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawReviewThread {
+    is_resolved: bool,
+    comments: CommentsConnection,
+}
+
+#[derive(Deserialize)]
+struct CommentsConnection {
+    nodes: Vec<RawThreadComment>,
+}
+
+#[derive(Deserialize)]
+struct RawThreadComment {
+    body: String,
+    path: Option<String>,
+    line: Option<u64>,
+    author: RawAuthor,
+}
+
+#[derive(Deserialize)]
+struct RawAuthor {
+    login: String,
+}
 
 impl GitHubClient {
     /// Get review comments on a PR.
@@ -8,14 +84,13 @@ impl GitHubClient {
     /// Excludes `PENDING` reviews — those are in-progress drafts that the
     /// reviewer hasn't submitted yet.
     pub fn get_reviews(&self, pr_number: u64) -> Result<Vec<ReviewComment>> {
-        let output = self.gh_api(&format!("repos/{}/pulls/{}/reviews", self.repo, pr_number))?;
-
-        let reviews: Vec<serde_json::Value> = serde_json::from_str(&output)?;
+        let reviews: Vec<RawReview> =
+            self.gh_api_json(&format!("repos/{}/pulls/{}/reviews", self.repo, pr_number))?;
 
         Ok(reviews
-            .iter()
+            .into_iter()
             .filter_map(|r| {
-                let state = match r["state"].as_str()? {
+                let state = match r.state.as_str() {
                     "APPROVED" => ReviewState::Approved,
                     "CHANGES_REQUESTED" => ReviewState::ChangesRequested,
                     "COMMENTED" => ReviewState::Commented,
@@ -25,11 +100,11 @@ impl GitHubClient {
                 };
 
                 Some(ReviewComment {
-                    body: r["body"].as_str().unwrap_or("").to_string(),
+                    body: r.body,
                     path: None,
                     line: None,
                     state,
-                    author: r["user"]["login"].as_str().unwrap_or("").to_string(),
+                    author: r.user.login,
                 })
             })
             .collect())
@@ -41,23 +116,27 @@ impl GitHubClient {
     /// resolved conversations don't trigger review nudges. Falls back to
     /// the REST endpoint (all comments, replies excluded) if GraphQL fails.
     pub fn get_review_comments(&self, pr_number: u64) -> Result<Vec<ReviewComment>> {
-        if let Ok(comments) = self.get_unresolved_review_comments_graphql(pr_number) {
-            return Ok(comments);
+        match self.get_unresolved_review_comments_graphql(pr_number) {
+            Ok(comments) => return Ok(comments),
+            Err(e) => tracing::debug!(
+                pr_number,
+                error = %e,
+                "graphql review threads failed; falling back to REST"
+            ),
         }
 
-        let output = self.gh_api(&format!("repos/{}/pulls/{}/comments", self.repo, pr_number))?;
-
-        let comments: Vec<serde_json::Value> = serde_json::from_str(&output)?;
+        let comments: Vec<RawReviewComment> =
+            self.gh_api_json(&format!("repos/{}/pulls/{}/comments", self.repo, pr_number))?;
 
         Ok(comments
-            .iter()
-            .filter(|c| c.get("in_reply_to_id").and_then(|v| v.as_u64()).is_none())
+            .into_iter()
+            .filter(|c| c.in_reply_to_id.is_none())
             .map(|c| ReviewComment {
-                body: c["body"].as_str().unwrap_or("").to_string(),
-                path: c["path"].as_str().map(|s| s.to_string()),
-                line: c["line"].as_u64().or_else(|| c["original_line"].as_u64()),
+                body: c.body,
+                path: c.path,
+                line: c.line.or(c.original_line),
                 state: ReviewState::Commented,
-                author: c["user"]["login"].as_str().unwrap_or("").to_string(),
+                author: c.user.login,
             })
             .collect())
     }
@@ -91,27 +170,22 @@ impl GitHubClient {
             }}"#,
         );
 
-        let data = self.gh_graphql(&query)?;
+        let response: GraphQlResponse<RepositoryQuery> = self.gh_graphql_typed(&query)?;
 
-        let threads = data["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
-            .as_array()
-            .ok_or_else(|| GitHubError::Other("unexpected graphql response shape".to_string()))?;
+        let threads = response.data.repository.pull_request.review_threads.nodes;
 
         let mut comments = Vec::new();
         for thread in threads {
-            if thread["isResolved"].as_bool() == Some(true) {
+            if thread.is_resolved {
                 continue;
             }
-            if let Some(first) = thread["comments"]["nodes"]
-                .as_array()
-                .and_then(|a| a.first())
-            {
+            if let Some(first) = thread.comments.nodes.into_iter().next() {
                 comments.push(ReviewComment {
-                    body: first["body"].as_str().unwrap_or("").to_string(),
-                    path: first["path"].as_str().map(|s| s.to_string()),
-                    line: first["line"].as_u64(),
+                    body: first.body,
+                    path: first.path,
+                    line: first.line,
                     state: ReviewState::Commented,
-                    author: first["author"]["login"].as_str().unwrap_or("").to_string(),
+                    author: first.author.login,
                 });
             }
         }

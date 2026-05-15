@@ -1,51 +1,65 @@
+use serde::Deserialize;
+
 use super::super::client::GitHubClient;
 use super::super::error::Result;
 use super::super::types::{PrInfo, PrState};
+
+#[derive(Deserialize)]
+struct RawPrSummary {
+    number: u64,
+    title: String,
+    state: String,
+    merged_at: Option<String>,
+    mergeable_state: Option<String>,
+    html_url: String,
+}
 
 impl GitHubClient {
     /// Get PR info for a branch (any state: open, closed, or merged).
     pub fn get_pr_for_branch(&self, branch: &str) -> Result<Option<PrInfo>> {
         let encoded_branch = urlencoding::encode(branch);
-        let output = self.gh_api(&format!(
+        let prs: Vec<RawPrSummary> = self.gh_api_json(&format!(
             "repos/{}/pulls?head={}:{}&state=all",
             self.repo,
             self.repo.split('/').next().unwrap_or(""),
             encoded_branch
         ))?;
 
-        let prs: Vec<serde_json::Value> = serde_json::from_str(&output)?;
-        let Some(pr) = prs.first() else {
+        let Some(pr) = prs.into_iter().next() else {
             return Ok(None);
         };
 
-        Ok(Some(parse_pr_json(pr, branch)))
+        Ok(Some(parse_pr_summary(pr, branch)))
     }
 }
 
-pub(crate) fn parse_pr_json(pr: &serde_json::Value, branch: &str) -> PrInfo {
-    let merged = pr["merged_at"].is_string();
-    let state_str = pr["state"].as_str().unwrap_or("open");
+fn parse_pr_summary(pr: RawPrSummary, branch: &str) -> PrInfo {
+    let merged = pr.merged_at.is_some();
     let state = if merged {
         PrState::Merged
-    } else if state_str == "closed" {
+    } else if pr.state == "closed" {
         PrState::Closed
     } else {
         PrState::Open
     };
 
     PrInfo {
-        number: pr["number"].as_u64().unwrap_or(0),
-        title: pr["title"].as_str().unwrap_or("").to_string(),
+        number: pr.number,
+        title: pr.title,
         state,
-        mergeable: pr["mergeable_state"].as_str().map(|s| s.to_uppercase()),
+        mergeable: pr.mergeable_state.map(|s| s.to_uppercase()),
         head_branch: branch.to_string(),
-        url: pr["html_url"].as_str().unwrap_or("").to_string(),
+        url: pr.html_url,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_raw(json: serde_json::Value) -> RawPrSummary {
+        serde_json::from_value(json).expect("test json must match RawPrSummary shape")
+    }
 
     #[test]
     fn parses_open_pr() {
@@ -54,7 +68,7 @@ mod tests {
             "merged_at": null, "mergeable_state": "clean",
             "html_url": "https://github.com/org/repo/pull/17",
         });
-        let info = parse_pr_json(&json, "feature/test");
+        let info = parse_pr_summary(make_raw(json), "feature/test");
         assert_eq!(info.state, PrState::Open);
         assert_eq!(info.number, 17);
     }
@@ -66,7 +80,7 @@ mod tests {
             "merged_at": null, "mergeable_state": null,
             "html_url": "https://github.com/org/repo/pull/17",
         });
-        let info = parse_pr_json(&json, "feature/test");
+        let info = parse_pr_summary(make_raw(json), "feature/test");
         assert_eq!(info.state, PrState::Closed);
     }
 
@@ -77,7 +91,7 @@ mod tests {
             "merged_at": "2026-05-10T22:33:59Z", "mergeable_state": null,
             "html_url": "https://github.com/org/repo/pull/18",
         });
-        let info = parse_pr_json(&json, "feature/test");
+        let info = parse_pr_summary(make_raw(json), "feature/test");
         assert_eq!(info.state, PrState::Merged);
     }
 
@@ -90,8 +104,9 @@ mod tests {
             "merged_at": "2026-05-10T22:33:59Z",
             "mergeable_state": null, "html_url": "https://github.com/org/repo/pull/18",
         });
-        assert_eq!(json["state"].as_str().unwrap(), "closed");
-        let info = parse_pr_json(&json, "feature/test");
+        let raw = make_raw(json);
+        assert_eq!(raw.state, "closed");
+        let info = parse_pr_summary(raw, "feature/test");
         assert_eq!(info.state, PrState::Merged);
     }
 

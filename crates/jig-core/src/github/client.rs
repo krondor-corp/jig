@@ -3,6 +3,8 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use serde::de::DeserializeOwned;
+
 use super::error::{GitHubError, Result};
 
 /// GitHub API client using `gh` CLI.
@@ -165,8 +167,14 @@ impl GitHubClient {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    /// Execute a `gh api graphql` call and return the parsed JSON response.
-    pub(crate) fn gh_graphql(&self, query: &str) -> Result<serde_json::Value> {
+    /// Execute a `gh api` call and deserialize the response into `T`.
+    pub(crate) fn gh_api_json<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
+        let body = self.gh_api(endpoint)?;
+        serde_json::from_str(&body).map_err(GitHubError::from)
+    }
+
+    /// Execute a `gh api graphql` call and return the raw response body.
+    pub(crate) fn gh_graphql_raw(&self, query: &str) -> Result<String> {
         let output = Command::new("gh")
             .args([
                 "api",
@@ -184,9 +192,13 @@ impl GitHubClient {
             return Err(GitHubError::Cli(format!("gh graphql failed: {}", stderr)));
         }
 
-        let body = String::from_utf8_lossy(&output.stdout);
-        let parsed: serde_json::Value = serde_json::from_str(&body)?;
-        Ok(parsed)
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// Execute a `gh api graphql` call and deserialize the response into `T`.
+    pub(crate) fn gh_graphql_typed<T: DeserializeOwned>(&self, query: &str) -> Result<T> {
+        let body = self.gh_graphql_raw(query)?;
+        serde_json::from_str(&body).map_err(GitHubError::from)
     }
 }
 

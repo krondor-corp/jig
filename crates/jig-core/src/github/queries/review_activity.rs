@@ -1,4 +1,32 @@
+use serde::Deserialize;
+
 use super::super::client::GitHubClient;
+
+#[derive(Deserialize)]
+struct RawPrCommit {
+    commit: RawCommitActivity,
+}
+
+#[derive(Deserialize)]
+struct RawCommitActivity {
+    committer: RawCommitter,
+}
+
+#[derive(Deserialize)]
+struct RawCommitter {
+    date: String,
+}
+
+#[derive(Deserialize)]
+struct RawReview {
+    state: String,
+    submitted_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawCommentTimestamp {
+    created_at: String,
+}
 
 impl GitHubClient {
     /// Check whether the latest commit on a PR is newer than the latest review activity.
@@ -9,25 +37,18 @@ impl GitHubClient {
     ///
     /// Returns `false` (= should nudge) on any API error or if there are no commits.
     pub fn dev_pushed_after_reviews(&self, pr_number: u64) -> bool {
-        let commits_json = match self
-            .gh_api(&format!("repos/{}/pulls/{}/commits", self.repo, pr_number))
+        let commits: Vec<RawPrCommit> = match self
+            .gh_api_json(&format!("repos/{}/pulls/{}/commits", self.repo, pr_number))
         {
-            Ok(j) => j,
+            Ok(c) => c,
             Err(e) => {
                 tracing::debug!(pr_number, error = %e, "dev_pushed_after_reviews: commits API failed");
                 return false;
             }
         };
-        let commits: Vec<serde_json::Value> = match serde_json::from_str(&commits_json) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::debug!(pr_number, error = %e, "dev_pushed_after_reviews: commits parse failed");
-                return false;
-            }
-        };
         let latest_commit_date = commits
             .last()
-            .and_then(|c| c["commit"]["committer"]["date"].as_str())
+            .map(|c| c.commit.committer.date.as_str())
             .unwrap_or("");
 
         if latest_commit_date.is_empty() {
@@ -35,48 +56,34 @@ impl GitHubClient {
             return false;
         }
 
-        let reviews_json = match self
-            .gh_api(&format!("repos/{}/pulls/{}/reviews", self.repo, pr_number))
+        let reviews: Vec<RawReview> = match self
+            .gh_api_json(&format!("repos/{}/pulls/{}/reviews", self.repo, pr_number))
         {
-            Ok(j) => j,
+            Ok(r) => r,
             Err(e) => {
                 tracing::debug!(pr_number, error = %e, "dev_pushed_after_reviews: reviews API failed");
                 return false;
             }
         };
-        let reviews: Vec<serde_json::Value> = match serde_json::from_str(&reviews_json) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::debug!(pr_number, error = %e, "dev_pushed_after_reviews: reviews parse failed");
-                return false;
-            }
-        };
         let latest_review_date = reviews
             .iter()
-            .filter(|r| r["state"].as_str() != Some("PENDING"))
-            .filter_map(|r| r["submitted_at"].as_str())
+            .filter(|r| r.state != "PENDING")
+            .filter_map(|r| r.submitted_at.as_deref())
             .max()
             .unwrap_or("");
 
-        let comments_json = match self
-            .gh_api(&format!("repos/{}/pulls/{}/comments", self.repo, pr_number))
+        let comments: Vec<RawCommentTimestamp> = match self
+            .gh_api_json(&format!("repos/{}/pulls/{}/comments", self.repo, pr_number))
         {
-            Ok(j) => j,
+            Ok(c) => c,
             Err(e) => {
                 tracing::debug!(pr_number, error = %e, "dev_pushed_after_reviews: comments API failed");
                 return false;
             }
         };
-        let comments: Vec<serde_json::Value> = match serde_json::from_str(&comments_json) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::debug!(pr_number, error = %e, "dev_pushed_after_reviews: comments parse failed");
-                return false;
-            }
-        };
         let latest_comment_date = comments
             .iter()
-            .filter_map(|c| c["created_at"].as_str())
+            .map(|c| c.created_at.as_str())
             .max()
             .unwrap_or("");
 
