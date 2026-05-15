@@ -1,22 +1,20 @@
 use serde::Deserialize;
 
-use super::super::client::GitHubClient;
-use super::super::error::Result;
 use super::super::rest::RestRequest;
 use super::super::types::{PrInfo, PrState};
 
 #[derive(Deserialize)]
-struct RawPrSummary {
-    number: u64,
-    title: String,
-    state: String,
-    merged_at: Option<String>,
-    mergeable_state: Option<String>,
-    html_url: String,
+pub(crate) struct RawPrSummary {
+    pub(crate) number: u64,
+    pub(crate) title: String,
+    pub(crate) state: String,
+    pub(crate) merged_at: Option<String>,
+    pub(crate) mergeable_state: Option<String>,
+    pub(crate) html_url: String,
 }
 
-struct GetPrsForBranch {
-    branch: String,
+pub(crate) struct GetPrsForBranch {
+    pub(crate) branch: String,
 }
 
 impl RestRequest for GetPrsForBranch {
@@ -28,25 +26,7 @@ impl RestRequest for GetPrsForBranch {
     }
 }
 
-impl GitHubClient {
-    /// Get PR info for a branch (any state: open, closed, or merged).
-    pub fn get_pr_for_branch(&self, branch: &str) -> Result<Option<PrInfo>> {
-        let prs = self.rest.call(
-            &GetPrsForBranch {
-                branch: branch.to_string(),
-            },
-            &self.repo,
-        )?;
-
-        let Some(pr) = prs.into_iter().next() else {
-            return Ok(None);
-        };
-
-        Ok(Some(parse_pr_summary(pr, branch)))
-    }
-}
-
-fn parse_pr_summary(pr: RawPrSummary, branch: &str) -> PrInfo {
+pub(crate) fn parse_pr_summary(pr: RawPrSummary, branch: &str) -> PrInfo {
     let merged = pr.merged_at.is_some();
     let state = if merged {
         PrState::Merged
