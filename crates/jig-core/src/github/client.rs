@@ -3,9 +3,9 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use serde::de::DeserializeOwned;
-
 use super::error::{GitHubError, Result};
+use super::graphql::GraphQlClient;
+use super::rest::RestClient;
 
 /// GitHub API client using `gh` CLI.
 ///
@@ -14,12 +14,18 @@ use super::error::{GitHubError, Result};
 pub struct GitHubClient {
     /// Repository in `owner/repo` format.
     pub(crate) repo: String,
+    pub(crate) rest: RestClient,
+    pub(crate) graphql: GraphQlClient,
 }
 
 impl GitHubClient {
     /// Create a client for the given repository.
     pub fn new(repo: impl Into<String>) -> Self {
-        Self { repo: repo.into() }
+        Self {
+            repo: repo.into(),
+            rest: RestClient,
+            graphql: GraphQlClient,
+        }
     }
 
     /// Detect the repository from the current git remote.
@@ -49,7 +55,7 @@ impl GitHubClient {
             ));
         }
 
-        Ok(Self { repo })
+        Ok(Self::new(repo))
     }
 
     /// Detect the repository from a specific repo path (runs `gh` in that directory).
@@ -88,7 +94,7 @@ impl GitHubClient {
             "created GitHub client from repo path"
         );
 
-        Ok(Self { repo })
+        Ok(Self::new(repo))
     }
 
     /// Check if `gh` CLI is available and authenticated.
@@ -150,45 +156,6 @@ impl GitHubClient {
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    }
-
-    /// Execute a `gh api` call and deserialize the response into `T`.
-    pub(crate) fn gh_api<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
-        let output = Command::new("gh")
-            .args(["api", endpoint, "--cache", "60s"])
-            .stdin(Stdio::null())
-            .output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(GitHubError::Cli(format!("gh api failed: {}", stderr)));
-        }
-
-        let body = String::from_utf8_lossy(&output.stdout);
-        serde_json::from_str(&body).map_err(GitHubError::from)
-    }
-
-    /// Execute a `gh api graphql` call and deserialize the response into `T`.
-    pub(crate) fn gh_graphql<T: DeserializeOwned>(&self, query: &str) -> Result<T> {
-        let output = Command::new("gh")
-            .args([
-                "api",
-                "graphql",
-                "--cache",
-                "60s",
-                "-f",
-                &format!("query={}", query),
-            ])
-            .stdin(Stdio::null())
-            .output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(GitHubError::Cli(format!("gh graphql failed: {}", stderr)));
-        }
-
-        let body = String::from_utf8_lossy(&output.stdout);
-        serde_json::from_str(&body).map_err(GitHubError::from)
     }
 }
 

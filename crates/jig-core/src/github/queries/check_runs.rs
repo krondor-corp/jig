@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 use super::super::client::GitHubClient;
 use super::super::error::Result;
+use super::super::rest::RestRequest;
 use super::super::types::{CheckRun, CheckStatus};
 
 #[derive(Deserialize)]
@@ -17,13 +18,26 @@ struct RawCheckRun {
     details_url: Option<String>,
 }
 
+struct GetCheckRuns {
+    git_ref: String,
+}
+
+impl RestRequest for GetCheckRuns {
+    type Response = RawCheckRunsResponse;
+    fn endpoint(&self, repo: &str) -> String {
+        format!("repos/{}/commits/{}/check-runs", repo, self.git_ref)
+    }
+}
+
 impl GitHubClient {
     /// Get check runs for a git ref (branch name or SHA).
     pub fn get_check_runs(&self, git_ref: &str) -> Result<Vec<CheckRun>> {
-        let response: RawCheckRunsResponse = self.gh_api(&format!(
-            "repos/{}/commits/{}/check-runs",
-            self.repo, git_ref
-        ))?;
+        let response = self.rest.call(
+            &GetCheckRuns {
+                git_ref: git_ref.to_string(),
+            },
+            &self.repo,
+        )?;
 
         Ok(response
             .check_runs

@@ -1,6 +1,9 @@
 use serde::Deserialize;
 
 use super::super::client::GitHubClient;
+use super::super::rest::RestRequest;
+
+// ── REST primitives ───────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct RawPrCommit {
@@ -28,6 +31,41 @@ struct RawCommentTimestamp {
     created_at: String,
 }
 
+struct GetPrCommitsActivity {
+    pr_number: u64,
+}
+
+impl RestRequest for GetPrCommitsActivity {
+    type Response = Vec<RawPrCommit>;
+    fn endpoint(&self, repo: &str) -> String {
+        format!("repos/{}/pulls/{}/commits", repo, self.pr_number)
+    }
+}
+
+struct GetPrReviewsActivity {
+    pr_number: u64,
+}
+
+impl RestRequest for GetPrReviewsActivity {
+    type Response = Vec<RawReview>;
+    fn endpoint(&self, repo: &str) -> String {
+        format!("repos/{}/pulls/{}/reviews", repo, self.pr_number)
+    }
+}
+
+struct GetPrCommentsTimestamps {
+    pr_number: u64,
+}
+
+impl RestRequest for GetPrCommentsTimestamps {
+    type Response = Vec<RawCommentTimestamp>;
+    fn endpoint(&self, repo: &str) -> String {
+        format!("repos/{}/pulls/{}/comments", repo, self.pr_number)
+    }
+}
+
+// ── Orchestration ─────────────────────────────────────────────────────────────
+
 impl GitHubClient {
     /// Check whether the latest commit on a PR is newer than the latest review activity.
     ///
@@ -38,7 +76,8 @@ impl GitHubClient {
     /// Returns `false` (= should nudge) on any API error or if there are no commits.
     pub fn dev_pushed_after_reviews(&self, pr_number: u64) -> bool {
         let commits: Vec<RawPrCommit> = match self
-            .gh_api(&format!("repos/{}/pulls/{}/commits", self.repo, pr_number))
+            .rest
+            .call(&GetPrCommitsActivity { pr_number }, &self.repo)
         {
             Ok(c) => c,
             Err(e) => {
@@ -57,7 +96,8 @@ impl GitHubClient {
         }
 
         let reviews: Vec<RawReview> = match self
-            .gh_api(&format!("repos/{}/pulls/{}/reviews", self.repo, pr_number))
+            .rest
+            .call(&GetPrReviewsActivity { pr_number }, &self.repo)
         {
             Ok(r) => r,
             Err(e) => {
@@ -73,7 +113,8 @@ impl GitHubClient {
             .unwrap_or("");
 
         let comments: Vec<RawCommentTimestamp> = match self
-            .gh_api(&format!("repos/{}/pulls/{}/comments", self.repo, pr_number))
+            .rest
+            .call(&GetPrCommentsTimestamps { pr_number }, &self.repo)
         {
             Ok(c) => c,
             Err(e) => {

@@ -2,7 +2,11 @@ use serde::Deserialize;
 
 use super::super::client::GitHubClient;
 use super::super::error::{GitHubError, Result};
+use super::super::graphql::GraphQlRequest;
+use super::super::rest::RestRequest;
 use super::super::types::{ReviewComment, ReviewState};
+
+// ── REST primitives ───────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct RawReview {
@@ -25,6 +29,30 @@ struct RawReviewComment {
     user: RawUser,
     in_reply_to_id: Option<u64>,
 }
+
+struct GetReviews {
+    pr_number: u64,
+}
+
+impl RestRequest for GetReviews {
+    type Response = Vec<RawReview>;
+    fn endpoint(&self, repo: &str) -> String {
+        format!("repos/{}/pulls/{}/reviews", repo, self.pr_number)
+    }
+}
+
+struct GetReviewComments {
+    pr_number: u64,
+}
+
+impl RestRequest for GetReviewComments {
+    type Response = Vec<RawReviewComment>;
+    fn endpoint(&self, repo: &str) -> String {
+        format!("repos/{}/pulls/{}/comments", repo, self.pr_number)
+    }
+}
+
+// ── GraphQL primitive ─────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct GraphQlResponse<T> {
@@ -78,14 +106,51 @@ struct RawAuthor {
     login: String,
 }
 
+struct GetUnresolvedThreads {
+    owner: String,
+    name: String,
+    pr_number: u64,
+}
+
+impl GraphQlRequest for GetUnresolvedThreads {
+    type Response = GraphQlResponse<RepositoryQuery>;
+    fn query(&self) -> String {
+        let owner = &self.owner;
+        let name = &self.name;
+        let pr_number = self.pr_number;
+        format!(
+            r#"{{
+              repository(owner: "{owner}", name: "{name}") {{
+                pullRequest(number: {pr_number}) {{
+                  reviewThreads(first: 100) {{
+                    nodes {{
+                      isResolved
+                      comments(first: 1) {{
+                        nodes {{
+                          body
+                          path
+                          line: originalLine
+                          author {{ login }}
+                        }}
+                      }}
+                    }}
+                  }}
+                }}
+              }}
+            }}"#,
+        )
+    }
+}
+
+// ── Orchestration ─────────────────────────────────────────────────────────────
+
 impl GitHubClient {
     /// Get review comments on a PR.
     ///
     /// Excludes `PENDING` reviews — those are in-progress drafts that the
     /// reviewer hasn't submitted yet.
     pub fn get_reviews(&self, pr_number: u64) -> Result<Vec<ReviewComment>> {
-        let reviews: Vec<RawReview> =
-            self.gh_api(&format!("repos/{}/pulls/{}/reviews", self.repo, pr_number))?;
+        let reviews = self.rest.call(&GetReviews { pr_number }, &self.repo)?;
 
         Ok(reviews
             .into_iter()
@@ -125,8 +190,9 @@ impl GitHubClient {
             ),
         }
 
-        let comments: Vec<RawReviewComment> =
-            self.gh_api(&format!("repos/{}/pulls/{}/comments", self.repo, pr_number))?;
+        let comments = self
+            .rest
+            .call(&GetReviewComments { pr_number }, &self.repo)?;
 
         Ok(comments
             .into_iter()
@@ -141,36 +207,17 @@ impl GitHubClient {
             .collect())
     }
 
-    /// Fetch review comments from unresolved threads only (via GraphQL).
     fn get_unresolved_review_comments_graphql(&self, pr_number: u64) -> Result<Vec<ReviewComment>> {
         let (owner, name) = self
             .repo
             .split_once('/')
             .ok_or_else(|| GitHubError::Other("invalid repo format".to_string()))?;
 
-        let query = format!(
-            r#"{{
-              repository(owner: "{owner}", name: "{name}") {{
-                pullRequest(number: {pr_number}) {{
-                  reviewThreads(first: 100) {{
-                    nodes {{
-                      isResolved
-                      comments(first: 1) {{
-                        nodes {{
-                          body
-                          path
-                          line: originalLine
-                          author {{ login }}
-                        }}
-                      }}
-                    }}
-                  }}
-                }}
-              }}
-            }}"#,
-        );
-
-        let response: GraphQlResponse<RepositoryQuery> = self.gh_graphql(&query)?;
+        let response = self.graphql.call(&GetUnresolvedThreads {
+            owner: owner.to_string(),
+            name: name.to_string(),
+            pr_number,
+        })?;
 
         let threads = response.data.repository.pull_request.review_threads.nodes;
 

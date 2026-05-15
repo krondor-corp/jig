@@ -5,7 +5,9 @@
 
 mod client;
 pub mod error;
+mod graphql;
 mod queries;
+mod rest;
 mod types;
 
 pub use client::GitHubClient;

@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 use super::super::client::GitHubClient;
 use super::super::error::Result;
+use super::super::rest::RestRequest;
 use super::super::types::{PrInfo, PrState};
 
 #[derive(Deserialize)]
@@ -14,16 +15,28 @@ struct RawPrSummary {
     html_url: String,
 }
 
+struct GetPrsForBranch {
+    branch: String,
+}
+
+impl RestRequest for GetPrsForBranch {
+    type Response = Vec<RawPrSummary>;
+    fn endpoint(&self, repo: &str) -> String {
+        let encoded = urlencoding::encode(&self.branch);
+        let owner = repo.split('/').next().unwrap_or("");
+        format!("repos/{}/pulls?head={}:{}&state=all", repo, owner, encoded)
+    }
+}
+
 impl GitHubClient {
     /// Get PR info for a branch (any state: open, closed, or merged).
     pub fn get_pr_for_branch(&self, branch: &str) -> Result<Option<PrInfo>> {
-        let encoded_branch = urlencoding::encode(branch);
-        let prs: Vec<RawPrSummary> = self.gh_api(&format!(
-            "repos/{}/pulls?head={}:{}&state=all",
-            self.repo,
-            self.repo.split('/').next().unwrap_or(""),
-            encoded_branch
-        ))?;
+        let prs = self.rest.call(
+            &GetPrsForBranch {
+                branch: branch.to_string(),
+            },
+            &self.repo,
+        )?;
 
         let Some(pr) = prs.into_iter().next() else {
             return Ok(None);
