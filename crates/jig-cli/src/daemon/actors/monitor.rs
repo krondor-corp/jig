@@ -634,7 +634,7 @@ fn try_resume_worker(
     let jig_config = JigToml::load(repo_root)?.unwrap_or_default();
     let agent = jig_core::agents::Agent::from_config(
         &jig_config.agent.agent_type,
-        Some(&jig_config.agent.model),
+        jig_config.agent.model.as_deref(),
         &jig_config.agent.disallowed_tools,
     )
     .unwrap_or_else(|| jig_core::agents::Agent::from_config("claude", None, &[]).unwrap());

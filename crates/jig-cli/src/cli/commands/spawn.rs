@@ -127,7 +127,7 @@ impl Op for Spawn {
         let jig_config = context::JigToml::load(&repo.repo_root)?.unwrap_or_default();
         let agent = agents::Agent::from_config(
             &jig_config.agent.agent_type,
-            Some(&jig_config.agent.model),
+            jig_config.agent.model.as_deref(),
             &jig_config.agent.disallowed_tools,
         )
         .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());

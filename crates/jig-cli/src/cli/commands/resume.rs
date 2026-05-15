@@ -79,7 +79,7 @@ impl Op for Resume {
         let jig_config = ctx.jig_toml;
         let agent = agents::Agent::from_config(
             &jig_config.agent.agent_type,
-            Some(&jig_config.agent.model),
+            jig_config.agent.model.as_deref(),
             &jig_config.agent.disallowed_tools,
         )
         .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());

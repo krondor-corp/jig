@@ -137,7 +137,7 @@ impl Op for Health {
                     .unwrap_or_default();
                 let agent = jig_core::agents::Agent::from_config(
                     &jig_config.agent.agent_type,
-                    Some(&jig_config.agent.model),
+                    jig_config.agent.model.as_deref(),
                     &jig_config.agent.disallowed_tools,
                 );
 
