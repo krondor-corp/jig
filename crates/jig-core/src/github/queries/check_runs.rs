@@ -1,40 +1,27 @@
-use super::super::client::GitHubClient;
-use super::super::error::Result;
-use super::super::types::{CheckRun, CheckStatus};
+use serde::Deserialize;
 
-impl GitHubClient {
-    /// Get check runs for a git ref (branch name or SHA).
-    pub fn get_check_runs(&self, git_ref: &str) -> Result<Vec<CheckRun>> {
-        let output = self.gh_api(&format!(
-            "repos/{}/commits/{}/check-runs",
-            self.repo, git_ref
-        ))?;
+use super::super::rest::RestRequest;
 
-        let parsed: serde_json::Value = serde_json::from_str(&output)?;
-        let runs = parsed["check_runs"].as_array();
+#[derive(Deserialize)]
+pub(crate) struct RawCheckRunsResponse {
+    pub(crate) check_runs: Vec<RawCheckRun>,
+}
 
-        let Some(runs) = runs else {
-            return Ok(vec![]);
-        };
+#[derive(Deserialize)]
+pub(crate) struct RawCheckRun {
+    pub(crate) name: String,
+    pub(crate) status: String,
+    pub(crate) conclusion: Option<String>,
+    pub(crate) details_url: Option<String>,
+}
 
-        Ok(runs
-            .iter()
-            .map(|r| CheckRun {
-                name: r["name"].as_str().unwrap_or("").to_string(),
-                status: match r["status"].as_str() {
-                    Some("completed") => CheckStatus::Completed,
-                    Some("in_progress") => CheckStatus::InProgress,
-                    _ => CheckStatus::Queued,
-                },
-                conclusion: r["conclusion"].as_str().map(|s| s.to_string()),
-                details_url: r["details_url"].as_str().map(|s| s.to_string()),
-            })
-            .collect())
-    }
+pub(crate) struct GetCheckRuns {
+    pub(crate) git_ref: String,
+}
 
-    /// Get failed check runs for a ref.
-    pub fn get_failed_checks(&self, git_ref: &str) -> Result<Vec<CheckRun>> {
-        let all = self.get_check_runs(git_ref)?;
-        Ok(all.into_iter().filter(|r| r.is_failure()).collect())
+impl RestRequest for GetCheckRuns {
+    type Response = RawCheckRunsResponse;
+    fn endpoint(&self, repo: &str) -> String {
+        format!("repos/{}/commits/{}/check-runs", repo, self.git_ref)
     }
 }

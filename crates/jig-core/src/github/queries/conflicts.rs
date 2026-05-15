@@ -1,13 +1,20 @@
-use super::super::client::GitHubClient;
-use super::super::error::Result;
+use serde::Deserialize;
 
-impl GitHubClient {
-    /// Check if a PR has merge conflicts.
-    pub fn has_conflicts(&self, pr_number: u64) -> Result<bool> {
-        let output = self.gh_api(&format!("repos/{}/pulls/{}", self.repo, pr_number))?;
+use super::super::rest::RestRequest;
 
-        let pr: serde_json::Value = serde_json::from_str(&output)?;
-        let mergeable_state = pr["mergeable_state"].as_str().unwrap_or("");
-        Ok(mergeable_state == "dirty" || pr["mergeable"].as_bool() == Some(false))
+#[derive(Deserialize)]
+pub(crate) struct RawPrMergeable {
+    pub(crate) mergeable: Option<bool>,
+    pub(crate) mergeable_state: Option<String>,
+}
+
+pub(crate) struct GetPrMergeable {
+    pub(crate) pr_number: u64,
+}
+
+impl RestRequest for GetPrMergeable {
+    type Response = RawPrMergeable;
+    fn endpoint(&self, repo: &str) -> String {
+        format!("repos/{}/pulls/{}", repo, self.pr_number)
     }
 }
