@@ -20,8 +20,7 @@ struct RawPrHead {
 impl GitHubClient {
     /// Get the current state of a PR (open, closed, or merged) and whether it's a draft.
     pub fn get_pr_state(&self, pr_number: u64) -> Result<PrStateInfo> {
-        let pr: RawPrState =
-            self.gh_api_json(&format!("repos/{}/pulls/{}", self.repo, pr_number))?;
+        let pr: RawPrState = self.gh_api(&format!("repos/{}/pulls/{}", self.repo, pr_number))?;
 
         let state = if pr.merged {
             PrState::Merged

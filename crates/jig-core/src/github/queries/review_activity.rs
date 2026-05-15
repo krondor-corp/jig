@@ -38,7 +38,7 @@ impl GitHubClient {
     /// Returns `false` (= should nudge) on any API error or if there are no commits.
     pub fn dev_pushed_after_reviews(&self, pr_number: u64) -> bool {
         let commits: Vec<RawPrCommit> = match self
-            .gh_api_json(&format!("repos/{}/pulls/{}/commits", self.repo, pr_number))
+            .gh_api(&format!("repos/{}/pulls/{}/commits", self.repo, pr_number))
         {
             Ok(c) => c,
             Err(e) => {
@@ -57,7 +57,7 @@ impl GitHubClient {
         }
 
         let reviews: Vec<RawReview> = match self
-            .gh_api_json(&format!("repos/{}/pulls/{}/reviews", self.repo, pr_number))
+            .gh_api(&format!("repos/{}/pulls/{}/reviews", self.repo, pr_number))
         {
             Ok(r) => r,
             Err(e) => {
@@ -73,7 +73,7 @@ impl GitHubClient {
             .unwrap_or("");
 
         let comments: Vec<RawCommentTimestamp> = match self
-            .gh_api_json(&format!("repos/{}/pulls/{}/comments", self.repo, pr_number))
+            .gh_api(&format!("repos/{}/pulls/{}/comments", self.repo, pr_number))
         {
             Ok(c) => c,
             Err(e) => {

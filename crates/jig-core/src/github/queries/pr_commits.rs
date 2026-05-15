@@ -19,7 +19,7 @@ impl GitHubClient {
     /// Get commits on a PR.
     pub fn get_pr_commits(&self, pr_number: u64) -> Result<Vec<PrCommit>> {
         let commits: Vec<RawPrCommit> =
-            self.gh_api_json(&format!("repos/{}/pulls/{}/commits", self.repo, pr_number))?;
+            self.gh_api(&format!("repos/{}/pulls/{}/commits", self.repo, pr_number))?;
 
         Ok(commits
             .into_iter()

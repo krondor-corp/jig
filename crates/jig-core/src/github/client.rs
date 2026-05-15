@@ -152,8 +152,8 @@ impl GitHubClient {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    /// Execute a `gh api` call and return the response body.
-    pub(crate) fn gh_api(&self, endpoint: &str) -> Result<String> {
+    /// Execute a `gh api` call and deserialize the response into `T`.
+    pub(crate) fn gh_api<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
         let output = Command::new("gh")
             .args(["api", endpoint, "--cache", "60s"])
             .stdin(Stdio::null())
@@ -164,17 +164,12 @@ impl GitHubClient {
             return Err(GitHubError::Cli(format!("gh api failed: {}", stderr)));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    }
-
-    /// Execute a `gh api` call and deserialize the response into `T`.
-    pub(crate) fn gh_api_json<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
-        let body = self.gh_api(endpoint)?;
+        let body = String::from_utf8_lossy(&output.stdout);
         serde_json::from_str(&body).map_err(GitHubError::from)
     }
 
-    /// Execute a `gh api graphql` call and return the raw response body.
-    pub(crate) fn gh_graphql_raw(&self, query: &str) -> Result<String> {
+    /// Execute a `gh api graphql` call and deserialize the response into `T`.
+    pub(crate) fn gh_graphql<T: DeserializeOwned>(&self, query: &str) -> Result<T> {
         let output = Command::new("gh")
             .args([
                 "api",
@@ -192,12 +187,7 @@ impl GitHubClient {
             return Err(GitHubError::Cli(format!("gh graphql failed: {}", stderr)));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    }
-
-    /// Execute a `gh api graphql` call and deserialize the response into `T`.
-    pub(crate) fn gh_graphql_typed<T: DeserializeOwned>(&self, query: &str) -> Result<T> {
-        let body = self.gh_graphql_raw(query)?;
+        let body = String::from_utf8_lossy(&output.stdout);
         serde_json::from_str(&body).map_err(GitHubError::from)
     }
 }

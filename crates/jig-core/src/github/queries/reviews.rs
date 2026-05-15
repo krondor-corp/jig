@@ -85,7 +85,7 @@ impl GitHubClient {
     /// reviewer hasn't submitted yet.
     pub fn get_reviews(&self, pr_number: u64) -> Result<Vec<ReviewComment>> {
         let reviews: Vec<RawReview> =
-            self.gh_api_json(&format!("repos/{}/pulls/{}/reviews", self.repo, pr_number))?;
+            self.gh_api(&format!("repos/{}/pulls/{}/reviews", self.repo, pr_number))?;
 
         Ok(reviews
             .into_iter()
@@ -126,7 +126,7 @@ impl GitHubClient {
         }
 
         let comments: Vec<RawReviewComment> =
-            self.gh_api_json(&format!("repos/{}/pulls/{}/comments", self.repo, pr_number))?;
+            self.gh_api(&format!("repos/{}/pulls/{}/comments", self.repo, pr_number))?;
 
         Ok(comments
             .into_iter()
@@ -170,7 +170,7 @@ impl GitHubClient {
             }}"#,
         );
 
-        let response: GraphQlResponse<RepositoryQuery> = self.gh_graphql_typed(&query)?;
+        let response: GraphQlResponse<RepositoryQuery> = self.gh_graphql(&query)?;
 
         let threads = response.data.repository.pull_request.review_threads.nodes;
 

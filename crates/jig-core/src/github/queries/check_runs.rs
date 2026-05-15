@@ -20,7 +20,7 @@ struct RawCheckRun {
 impl GitHubClient {
     /// Get check runs for a git ref (branch name or SHA).
     pub fn get_check_runs(&self, git_ref: &str) -> Result<Vec<CheckRun>> {
-        let response: RawCheckRunsResponse = self.gh_api_json(&format!(
+        let response: RawCheckRunsResponse = self.gh_api(&format!(
             "repos/{}/commits/{}/check-runs",
             self.repo, git_ref
         ))?;

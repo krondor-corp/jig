@@ -18,7 +18,7 @@ impl GitHubClient {
     /// Get PR info for a branch (any state: open, closed, or merged).
     pub fn get_pr_for_branch(&self, branch: &str) -> Result<Option<PrInfo>> {
         let encoded_branch = urlencoding::encode(branch);
-        let prs: Vec<RawPrSummary> = self.gh_api_json(&format!(
+        let prs: Vec<RawPrSummary> = self.gh_api(&format!(
             "repos/{}/pulls?head={}:{}&state=all",
             self.repo,
             self.repo.split('/').next().unwrap_or(""),
