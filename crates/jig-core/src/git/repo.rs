@@ -594,6 +594,13 @@ impl Repo {
                 .to_string();
         } else if let Ok(remote_commit) = self.resolve_to_commit(&format!("origin/{}", local)) {
             // Case 2: branch exists on origin — check it out and track it.
+            // The configured base is intentionally ignored here; the remote
+            // branch is the authoritative starting point.
+            tracing::info!(
+                branch = local,
+                base = %base,
+                "branch found on origin; ignoring configured base"
+            );
             let new_branch = self.inner.branch(local, &remote_commit, false)?;
             let reference = new_branch.into_reference();
             let mut opts = git2::WorktreeAddOptions::new();
