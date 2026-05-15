@@ -25,13 +25,7 @@ impl GitHubClient {
             .into_iter()
             .map(|c| PrCommit {
                 sha: c.sha.chars().take(7).collect(),
-                message: c
-                    .commit
-                    .message
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .to_string(),
+                message: c.commit.message.lines().next().unwrap_or("").to_string(),
             })
             .collect())
     }
