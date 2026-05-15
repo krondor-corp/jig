@@ -64,6 +64,27 @@ jig create feature/auth/oauth -o
 # Creates .jig/feature/auth/oauth/
 ```
 
+## Branch resolution
+
+`jig create <branch>` resolves the starting commit in this order:
+
+1. **Local branch exists** — checks it out as-is.
+2. **`origin/<branch>` exists** — creates a local branch from the remote and tracks it. The configured base is ignored. This is the common case when an agent already pushed the branch (e.g. via `jig spawn`).
+3. **Neither** — forks a new branch from the configured base (`[worktree] base` in `jig.toml`, or `--base`).
+
+So `jig create feat/xyz` will automatically check out a daemon-created branch if it exists on origin, rather than creating a disconnected fork.
+
+```bash
+# Agent pushed feat/xyz — you get the real branch, not a fork
+jig create feat/xyz -o
+
+# Branch doesn't exist anywhere — forks from origin/main (default base)
+jig create my-new-feature -o
+
+# Override base for a genuinely new branch
+jig create my-feature --base origin/develop -o
+```
+
 ## How it works
 
 Worktrees are stored in `.jig/` inside your repo (auto-added to `.git/info/exclude`):

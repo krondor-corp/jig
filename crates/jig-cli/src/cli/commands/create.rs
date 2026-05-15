@@ -11,7 +11,12 @@ use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::RepoCtx;
 
-/// Create a new worktree
+/// Create a new worktree.
+///
+/// Branch resolution order:
+///   1. Local branch `<branch>` already exists → check it out.
+///   2. `origin/<branch>` exists on the remote → check it out (base is ignored).
+///   3. Neither → fork a new branch from `--base` (or the jig.toml default).
 #[derive(Args, Debug, Clone)]
 pub struct Create {
     /// Branch name
@@ -21,7 +26,8 @@ pub struct Create {
     #[arg(short = 'o')]
     pub open: bool,
 
-    /// Base branch to create worktree from (overrides jig.toml default)
+    /// Base branch to fork from when creating a new branch (overrides jig.toml default).
+    /// Ignored if the branch already exists locally or on origin.
     #[arg(long, short = 'b')]
     pub base: Option<String>,
 
