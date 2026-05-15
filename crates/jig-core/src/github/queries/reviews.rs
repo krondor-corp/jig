@@ -1,9 +1,7 @@
 use serde::Deserialize;
 
-use super::super::error::{GitHubError, Result};
-use super::super::graphql::{GraphQlClient, GraphQlRequest};
+use super::super::graphql::GraphQlRequest;
 use super::super::rest::RestRequest;
-use super::super::types::{ReviewComment, ReviewState};
 
 // ── REST primitives ───────────────────────────────────────────────────────────
 
@@ -51,64 +49,64 @@ impl RestRequest for GetReviewComments {
     }
 }
 
-// ── GraphQL primitive ─────────────────────────────────────────────────────────
+// ── GraphQL primitives ────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
-struct GraphQlResponse<T> {
-    data: T,
+pub(crate) struct GraphQlResponse<T> {
+    pub(crate) data: T,
 }
 
 #[derive(Deserialize)]
-struct RepositoryQuery {
-    repository: RepositoryData,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RepositoryData {
-    pull_request: PullRequestData,
+pub(crate) struct RepositoryQuery {
+    pub(crate) repository: RepositoryData,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PullRequestData {
-    review_threads: ReviewThreadsConnection,
-}
-
-#[derive(Deserialize)]
-struct ReviewThreadsConnection {
-    nodes: Vec<RawReviewThread>,
+pub(crate) struct RepositoryData {
+    pub(crate) pull_request: PullRequestData,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RawReviewThread {
-    is_resolved: bool,
-    comments: CommentsConnection,
+pub(crate) struct PullRequestData {
+    pub(crate) review_threads: ReviewThreadsConnection,
 }
 
 #[derive(Deserialize)]
-struct CommentsConnection {
-    nodes: Vec<RawThreadComment>,
+pub(crate) struct ReviewThreadsConnection {
+    pub(crate) nodes: Vec<RawReviewThread>,
 }
 
 #[derive(Deserialize)]
-struct RawThreadComment {
-    body: String,
-    path: Option<String>,
-    line: Option<u64>,
-    author: RawAuthor,
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RawReviewThread {
+    pub(crate) is_resolved: bool,
+    pub(crate) comments: CommentsConnection,
 }
 
 #[derive(Deserialize)]
-struct RawAuthor {
-    login: String,
+pub(crate) struct CommentsConnection {
+    pub(crate) nodes: Vec<RawThreadComment>,
 }
 
-struct GetUnresolvedThreads {
-    owner: String,
-    name: String,
-    pr_number: u64,
+#[derive(Deserialize)]
+pub(crate) struct RawThreadComment {
+    pub(crate) body: String,
+    pub(crate) path: Option<String>,
+    pub(crate) line: Option<u64>,
+    pub(crate) author: RawAuthor,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RawAuthor {
+    pub(crate) login: String,
+}
+
+pub(crate) struct GetUnresolvedThreads {
+    pub(crate) owner: String,
+    pub(crate) name: String,
+    pub(crate) pr_number: u64,
 }
 
 impl GraphQlRequest for GetUnresolvedThreads {
@@ -139,45 +137,4 @@ impl GraphQlRequest for GetUnresolvedThreads {
             }}"#,
         )
     }
-}
-
-// ── GraphQL helper ────────────────────────────────────────────────────────────
-
-/// Fetch unresolved review thread comments via GraphQL.
-///
-/// Keeps the GraphQL schema types private to this module.
-pub(crate) fn fetch_unresolved_threads(
-    graphql: &GraphQlClient,
-    repo: &str,
-    pr_number: u64,
-) -> Result<Vec<ReviewComment>> {
-    let (owner, name) = repo
-        .split_once('/')
-        .ok_or_else(|| GitHubError::Other("invalid repo format".to_string()))?;
-
-    let response = graphql.call(&GetUnresolvedThreads {
-        owner: owner.to_string(),
-        name: name.to_string(),
-        pr_number,
-    })?;
-
-    let threads = response.data.repository.pull_request.review_threads.nodes;
-
-    let mut comments = Vec::new();
-    for thread in threads {
-        if thread.is_resolved {
-            continue;
-        }
-        if let Some(first) = thread.comments.nodes.into_iter().next() {
-            comments.push(ReviewComment {
-                body: first.body,
-                path: first.path,
-                line: first.line,
-                state: ReviewState::Commented,
-                author: first.author.login,
-            });
-        }
-    }
-
-    Ok(comments)
 }

@@ -13,7 +13,7 @@ use super::queries::pr_state::GetPrState;
 use super::queries::review_activity::{
     GetPrCommentsTimestamps, GetPrCommitsActivity, GetPrReviewsActivity,
 };
-use super::queries::reviews::{fetch_unresolved_threads, GetReviewComments, GetReviews};
+use super::queries::reviews::{GetReviewComments, GetReviews, GetUnresolvedThreads};
 use super::rest::RestClient;
 use super::types::{
     CheckRun, CheckStatus, PrCommit, PrInfo, PrState, PrStateInfo, ReviewComment, ReviewState,
@@ -293,13 +293,33 @@ impl GitHubClient {
     /// resolved conversations don't trigger review nudges. Falls back to
     /// the REST endpoint (all comments, replies excluded) if GraphQL fails.
     pub fn get_review_comments(&self, pr_number: u64) -> Result<Vec<ReviewComment>> {
-        match fetch_unresolved_threads(&self.graphql, &self.repo, pr_number) {
-            Ok(comments) => return Ok(comments),
-            Err(e) => tracing::debug!(
+        if let Some((owner, name)) = self.repo.split_once('/') {
+            match self.graphql.call(&GetUnresolvedThreads {
+                owner: owner.to_string(),
+                name: name.to_string(),
                 pr_number,
-                error = %e,
-                "graphql review threads failed; falling back to REST"
-            ),
+            }) {
+                Ok(response) => {
+                    let threads = response.data.repository.pull_request.review_threads.nodes;
+                    return Ok(threads
+                        .into_iter()
+                        .filter(|t| !t.is_resolved)
+                        .filter_map(|t| t.comments.nodes.into_iter().next())
+                        .map(|c| ReviewComment {
+                            body: c.body,
+                            path: c.path,
+                            line: c.line,
+                            state: ReviewState::Commented,
+                            author: c.author.login,
+                        })
+                        .collect());
+                }
+                Err(e) => tracing::debug!(
+                    pr_number,
+                    error = %e,
+                    "graphql review threads failed; falling back to REST"
+                ),
+            }
         }
 
         let comments = self
