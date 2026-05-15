@@ -562,6 +562,12 @@ impl Repo {
 
     /// Low-level: create a git2 worktree at `path` for `branch`, forking
     /// from `base` if the branch doesn't exist yet. Creates parent dirs.
+    ///
+    /// Resolution order for the starting commit:
+    /// 1. Local branch `<branch>` exists → use it as-is.
+    /// 2. Remote branch `origin/<branch>` exists → create local from it and
+    ///    set upstream to `origin/<branch>`.
+    /// 3. Neither → fork from `base` (errors if `base` can't be resolved).
     fn add_worktree(&self, path: &Path, branch: &Branch, base: &Branch) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -573,12 +579,33 @@ impl Repo {
         // in the name create nested dirs that don't exist. Use a flat name.
         let wt_name = local.replace('/', "-");
 
+        let upstream: String;
+
         if let Ok(branch_ref) = self.inner.find_branch(local, git2::BranchType::Local) {
+            // Case 1: branch already exists locally.
             let reference = branch_ref.into_reference();
             let mut opts = git2::WorktreeAddOptions::new();
             opts.reference(Some(&reference));
             self.inner.worktree(&wt_name, path, Some(&opts))?;
+            let base_str: &str = base;
+            upstream = base_str
+                .strip_prefix("origin/")
+                .unwrap_or(base_str)
+                .to_string();
+        } else if let Ok(remote_commit) = self.resolve_to_commit(&format!("origin/{}", local)) {
+            // Case 2: branch exists on origin — check it out and track it.
+            let new_branch = self.inner.branch(local, &remote_commit, false)?;
+            let reference = new_branch.into_reference();
+            let mut opts = git2::WorktreeAddOptions::new();
+            opts.reference(Some(&reference));
+            self.inner.worktree(&wt_name, path, Some(&opts))?;
+            let wt_repo = Self::open(path)?;
+            if let Ok(mut config) = wt_repo.inner.config() {
+                let _ = config.set_bool("push.autoSetupRemote", true);
+            }
+            upstream = format!("origin/{}", local);
         } else {
+            // Case 3: branch is new — fork from base.
             let base_str: &str = base;
             let start_commit = self.find_valid_start_point(base_str)?;
             let new_branch = self.inner.branch(local, &start_commit, false)?;
@@ -586,18 +613,20 @@ impl Repo {
             let mut opts = git2::WorktreeAddOptions::new();
             opts.reference(Some(&reference));
             self.inner.worktree(&wt_name, path, Some(&opts))?;
-
             let wt_repo = Self::open(path)?;
             if let Ok(mut config) = wt_repo.inner.config() {
                 let _ = config.set_bool("push.autoSetupRemote", true);
             }
+            let base_str: &str = base;
+            upstream = base_str
+                .strip_prefix("origin/")
+                .unwrap_or(base_str)
+                .to_string();
         }
 
-        let base_str: &str = base;
-        let base_local = base_str.strip_prefix("origin/").unwrap_or(base_str);
         let wt_repo = Self::open(path)?;
         if let Ok(mut local_branch) = wt_repo.inner.find_branch(local, git2::BranchType::Local) {
-            let _ = local_branch.set_upstream(Some(base_local));
+            let _ = local_branch.set_upstream(Some(&upstream));
         }
 
         Ok(())
@@ -730,6 +759,58 @@ mod remote_tests {
         let repo = Repo::open(tmp.path()).unwrap();
         let result = repo.find_valid_start_point("main");
         assert!(result.is_ok(), "expected Ok for existing local branch");
+    }
+
+    #[test]
+    fn create_worktree_uses_remote_branch_when_exists() {
+        let tmp = TempDir::new().unwrap();
+        let git = init_repo_with_commit(tmp.path());
+
+        // Create feat/xyz locally, then expose it via self-remote
+        let head = git.head().unwrap().peel_to_commit().unwrap();
+        git.branch("feat/xyz", &head, false).unwrap();
+        let remote_url = tmp.path().to_str().unwrap();
+        git.remote("origin", remote_url).unwrap();
+        git.find_remote("origin")
+            .unwrap()
+            .fetch(&[] as &[&str], None, None)
+            .unwrap();
+
+        // Delete local feat/xyz so only origin/feat/xyz remains
+        git.find_branch("feat/xyz", git2::BranchType::Local)
+            .unwrap()
+            .delete()
+            .unwrap();
+
+        let repo = Repo::open(tmp.path()).unwrap();
+        let branch: Branch = "feat/xyz".into();
+        let base: Branch = "origin/main".into();
+        let path = repo.create_worktree(&branch, &base).unwrap();
+
+        // The worktree should exist and be on feat/xyz
+        let wt_repo = Repo::open(&path).unwrap();
+        let current = wt_repo.current_branch().unwrap();
+        assert_eq!(&*current, "feat/xyz");
+
+        // The local branch should be at the same commit as origin/feat/xyz
+        let local_oid = wt_repo
+            .inner()
+            .find_branch("feat/xyz", git2::BranchType::Local)
+            .unwrap()
+            .get()
+            .target()
+            .unwrap();
+        let remote_oid = repo
+            .inner()
+            .find_branch("origin/feat/xyz", git2::BranchType::Remote)
+            .unwrap()
+            .get()
+            .target()
+            .unwrap();
+        assert_eq!(
+            local_oid, remote_oid,
+            "local branch should track origin/feat/xyz"
+        );
     }
 }
 

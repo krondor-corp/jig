@@ -56,8 +56,6 @@ pub enum CreateError {
     Git(#[from] jig_core::GitError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error("configured base branch `{base}` requires a remote named `{remote}`, but no such remote is configured in this repository\n  help: add a remote (`git remote add {remote} <url>`) or set `[worktree] base = \"main\"` in jig.toml")]
-    MissingRemote { remote: String, base: String },
 }
 
 impl Op for Create {
@@ -77,16 +75,6 @@ impl Op for Create {
         };
 
         let git_repo = jig_core::Repo::open(&repo.repo_root)?;
-
-        if let Some(remote) = base_branch.remote_prefix() {
-            if !git_repo.has_remote(remote) {
-                return Err(CreateError::MissingRemote {
-                    remote: remote.to_string(),
-                    base: base_branch.to_string(),
-                });
-            }
-        }
-
         let branch = Branch::new(&self.branch);
         let copy_files: Vec<std::path::PathBuf> = repo
             .repo
