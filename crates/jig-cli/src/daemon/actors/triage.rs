@@ -231,7 +231,7 @@ pub(crate) fn run_triage_subprocess(
         .unwrap_or_default();
     let agent = agents::Agent::from_config(
         &jig_toml.agent.agent_type,
-        Some(&jig_toml.triage.model),
+        jig_toml.triage.model.as_deref(),
         &[],
     )
     .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());

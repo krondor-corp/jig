@@ -83,7 +83,7 @@ impl Default for SpawnConfig {
 pub struct AgentConfig {
     #[serde(rename = "type")]
     pub agent_type: String,
-    pub model: String,
+    pub model: Option<String>,
     pub disallowed_tools: Vec<String>,
 }
 
@@ -91,7 +91,7 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             agent_type: "claude".to_string(),
-            model: "sonnet".to_string(),
+            model: None,
             disallowed_tools: Vec::new(),
         }
     }
@@ -102,7 +102,7 @@ impl Default for AgentConfig {
 #[serde(default)]
 pub struct TriageConfig {
     pub enabled: bool,
-    pub model: String,
+    pub model: Option<String>,
     pub timeout_seconds: i64,
 }
 
@@ -110,7 +110,7 @@ impl Default for TriageConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            model: "sonnet".to_string(),
+            model: None,
             timeout_seconds: 600,
         }
     }
@@ -354,7 +354,7 @@ base = "origin/main"
     fn triage_config_defaults() {
         let config = TriageConfig::default();
         assert!(!config.enabled);
-        assert_eq!(config.model, "sonnet");
+        assert_eq!(config.model, None);
         assert_eq!(config.timeout_seconds, 600);
     }
 }

@@ -242,7 +242,7 @@ fn spawn_worker_for_issue(
 
     let agent = agents::Agent::from_config(
         &cfg.repo.agent.agent_type,
-        Some(&cfg.repo.agent.model),
+        cfg.repo.agent.model.as_deref(),
         &cfg.repo.agent.disallowed_tools,
     )
     .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
