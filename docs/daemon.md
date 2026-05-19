@@ -296,7 +296,7 @@ No auto-retry on failure. Failed triage requires human attention.
 
 ### Persistence
 
-The tracker is in-memory only. On daemon restart, active triage entries are not restored — any in-flight triages at shutdown are simply re-discovered on the next issue poll if still in Triage status.
+The tracker persists to disk (`~/.config/jig/state/triages.json`). On daemon startup, `TriageTracker::load()` restores the active entries so in-flight triages from a prior run aren't re-dispatched as duplicates. If the file is missing or corrupt, it falls back to an empty tracker.
 
 ## Parent branch auto-update
 
