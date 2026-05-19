@@ -178,7 +178,7 @@ impl DaemonRuntime {
             triage_pending: false,
 
             config,
-            triage_tracker: TriageTracker::new(),
+            triage_tracker: TriageTracker::load(),
             first_poll_done: false,
             _handles: vec![
                 sync_handle,
