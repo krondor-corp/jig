@@ -262,7 +262,7 @@ Additional tools can be blocked per-repo:
 disallowed_tools = ["Bash(gh issue create:*)"]
 ```
 
-Triage workers use a stricter allowlist: `Read`, `Glob`, `Grep`, and `Bash(jig *)` only — no code modification, no general shell access.
+Triage subprocesses use a stricter allowlist: `Read`, `Glob`, `Grep`, and `Bash(jig *)` only — no code modification, no general shell access.
 
 ## Triage
 
