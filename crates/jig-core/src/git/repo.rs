@@ -587,11 +587,26 @@ impl Repo {
             let mut opts = git2::WorktreeAddOptions::new();
             opts.reference(Some(&reference));
             self.inner.worktree(&wt_name, path, Some(&opts))?;
-            let base_str: &str = base;
-            upstream = base_str
-                .strip_prefix("origin/")
-                .unwrap_or(base_str)
-                .to_string();
+            let wt_repo = Self::open(path)?;
+            if let Ok(mut config) = wt_repo.inner.config() {
+                let _ = config.set_bool("push.autoSetupRemote", true);
+            }
+            // If origin/<branch> exists (e.g. the daemon pushed it via
+            // create_and_push_branch), track it so `git push` works.
+            // Otherwise fall back to the configured base.
+            if self
+                .inner
+                .find_branch(&format!("origin/{}", local), git2::BranchType::Remote)
+                .is_ok()
+            {
+                upstream = format!("origin/{}", local);
+            } else {
+                let base_str: &str = base;
+                upstream = base_str
+                    .strip_prefix("origin/")
+                    .unwrap_or(base_str)
+                    .to_string();
+            }
         } else if let Ok(remote_commit) = self.resolve_to_commit(&format!("origin/{}", local)) {
             // Case 2: branch exists on origin — check it out and track it.
             // The configured base is intentionally ignored here; the remote
@@ -817,6 +832,55 @@ mod remote_tests {
         assert_eq!(
             local_oid, remote_oid,
             "local branch should track origin/feat/xyz"
+        );
+    }
+
+    /// When the branch was created by jig (local + origin exist, e.g. via
+    /// `create_and_push_branch`), `create_worktree` must set
+    /// `push.autoSetupRemote = true` and track `origin/<branch>` — not the
+    /// configured base — so that `git push` works from the new worktree.
+    #[test]
+    fn create_worktree_case1_local_and_remote_sets_auto_push_and_upstream() {
+        let tmp = TempDir::new().unwrap();
+        let git = init_repo_with_commit(tmp.path());
+
+        // Simulate create_and_push_branch: local branch + push to self-remote.
+        let head = git.head().unwrap().peel_to_commit().unwrap();
+        git.branch("feature/integration", &head, false).unwrap();
+        let remote_url = tmp.path().to_str().unwrap();
+        git.remote("origin", remote_url).unwrap();
+        git.find_remote("origin")
+            .unwrap()
+            .fetch(&[] as &[&str], None, None)
+            .unwrap();
+
+        // Both local and origin/feature/integration now exist — Case 1.
+        let repo = Repo::open(tmp.path()).unwrap();
+        let branch: Branch = "feature/integration".into();
+        let base: Branch = "origin/main".into();
+        let path = repo.create_worktree(&branch, &base).unwrap();
+
+        let wt_repo = Repo::open(&path).unwrap();
+
+        // push.autoSetupRemote must be set so raw `git push` works.
+        let config = wt_repo.inner().config().unwrap();
+        assert!(
+            config.get_bool("push.autoSetupRemote").unwrap_or(false),
+            "push.autoSetupRemote must be true in Case 1 worktree"
+        );
+
+        // Upstream must point at origin/feature/integration, not the base branch.
+        let local_branch = wt_repo
+            .inner()
+            .find_branch("feature/integration", git2::BranchType::Local)
+            .unwrap();
+        let upstream = local_branch
+            .upstream()
+            .expect("upstream must be configured");
+        let upstream_name = upstream.name().unwrap().unwrap();
+        assert_eq!(
+            upstream_name, "origin/feature/integration",
+            "upstream should track origin/feature/integration, not the base branch"
         );
     }
 }
