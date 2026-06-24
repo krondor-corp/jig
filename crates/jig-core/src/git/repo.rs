@@ -659,8 +659,7 @@ impl Repo {
         // otherwise leave it unset and let push.autoSetupRemote configure it
         // on the first push.
         if self.resolve_to_commit(&format!("origin/{local}")).is_ok() {
-            if let Ok(mut local_branch) =
-                wt_repo.inner.find_branch(local, git2::BranchType::Local)
+            if let Ok(mut local_branch) = wt_repo.inner.find_branch(local, git2::BranchType::Local)
             {
                 let _ = local_branch.set_upstream(Some(&format!("origin/{local}")));
             }
