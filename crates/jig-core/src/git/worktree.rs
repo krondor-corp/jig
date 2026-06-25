@@ -140,7 +140,7 @@ impl Worktree {
     }
 
     pub fn base_branch(&self) -> Result<Branch> {
-        self.repo.upstream_branch()
+        self.repo.base_branch()
     }
 
     pub fn repo_name(&self) -> String {

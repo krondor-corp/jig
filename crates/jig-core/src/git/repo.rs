@@ -168,12 +168,27 @@ impl Repo {
             .ok_or_else(|| GitError::BranchNotFound("HEAD".to_string()))
     }
 
-    /// Get the upstream (tracking) branch for the current HEAD.
-    pub fn upstream_branch(&self) -> Result<Branch> {
+    /// Get the base branch (what to diff/rebase against) for the current HEAD.
+    ///
+    /// jig stores this in the dedicated `branch.<name>.jigBase` config key.
+    /// Falls back to git's upstream tracking ref for worktrees created before
+    /// that key existed.
+    pub fn base_branch(&self) -> Result<Branch> {
         let head = self.inner.head()?;
         let branch_name = head
             .shorthand()
             .ok_or_else(|| GitError::BranchNotFound("HEAD".to_string()))?;
+
+        // Preferred: jig's own base-branch key.
+        if let Ok(config) = self.inner.config() {
+            if let Ok(base) = config.get_string(&format!("branch.{branch_name}.jigBase")) {
+                if !base.is_empty() {
+                    return Ok(Branch::new(base));
+                }
+            }
+        }
+
+        // Legacy fallback: git's upstream tracking ref.
         let local = self
             .inner
             .find_branch(branch_name, git2::BranchType::Local)?;
@@ -579,7 +594,9 @@ impl Repo {
         // in the name create nested dirs that don't exist. Use a flat name.
         let wt_name = local.replace('/', "-");
 
-        let upstream: String;
+        // The base branch jig diffs/rebases against, stored separately from
+        // git's upstream tracking (see the jigBase note below).
+        let jig_base: String;
 
         if let Ok(branch_ref) = self.inner.find_branch(local, git2::BranchType::Local) {
             // Case 1: branch already exists locally.
@@ -587,26 +604,11 @@ impl Repo {
             let mut opts = git2::WorktreeAddOptions::new();
             opts.reference(Some(&reference));
             self.inner.worktree(&wt_name, path, Some(&opts))?;
-            let wt_repo = Self::open(path)?;
-            if let Ok(mut config) = wt_repo.inner.config() {
-                let _ = config.set_bool("push.autoSetupRemote", true);
-            }
-            // If origin/<branch> exists (e.g. the daemon pushed it via
-            // create_and_push_branch), track it so `git push` works.
-            // Otherwise fall back to the configured base.
-            if self
-                .inner
-                .find_branch(&format!("origin/{}", local), git2::BranchType::Remote)
-                .is_ok()
-            {
-                upstream = format!("origin/{}", local);
-            } else {
-                let base_str: &str = base;
-                upstream = base_str
-                    .strip_prefix("origin/")
-                    .unwrap_or(base_str)
-                    .to_string();
-            }
+            let base_str: &str = base;
+            jig_base = base_str
+                .strip_prefix("origin/")
+                .unwrap_or(base_str)
+                .to_string();
         } else if let Ok(remote_commit) = self.resolve_to_commit(&format!("origin/{}", local)) {
             // Case 2: branch exists on origin — check it out and track it.
             // The configured base is intentionally ignored here; the remote
@@ -621,11 +623,7 @@ impl Repo {
             let mut opts = git2::WorktreeAddOptions::new();
             opts.reference(Some(&reference));
             self.inner.worktree(&wt_name, path, Some(&opts))?;
-            let wt_repo = Self::open(path)?;
-            if let Ok(mut config) = wt_repo.inner.config() {
-                let _ = config.set_bool("push.autoSetupRemote", true);
-            }
-            upstream = format!("origin/{}", local);
+            jig_base = format!("origin/{}", local);
         } else {
             // Case 3: branch is new — fork from base.
             let base_str: &str = base;
@@ -635,20 +633,36 @@ impl Repo {
             let mut opts = git2::WorktreeAddOptions::new();
             opts.reference(Some(&reference));
             self.inner.worktree(&wt_name, path, Some(&opts))?;
-            let wt_repo = Self::open(path)?;
-            if let Ok(mut config) = wt_repo.inner.config() {
-                let _ = config.set_bool("push.autoSetupRemote", true);
-            }
-            let base_str: &str = base;
-            upstream = base_str
+            jig_base = base_str
                 .strip_prefix("origin/")
                 .unwrap_or(base_str)
                 .to_string();
         }
 
         let wt_repo = Self::open(path)?;
-        if let Ok(mut local_branch) = wt_repo.inner.find_branch(local, git2::BranchType::Local) {
-            let _ = local_branch.set_upstream(Some(&upstream));
+
+        // jig tracks the *base* branch (what to diff/rebase against) in its
+        // own config key rather than overloading git's upstream tracking.
+        // Overloading upstream breaks a plain `git push` under
+        // push.default=simple: when the base name (e.g. `dev`) differs from
+        // the branch name (e.g. `feature/x`), git refuses with "upstream
+        // branch ... does not match the name of your current branch". The
+        // base is read back by `base_branch()`.
+        if let Ok(mut config) = wt_repo.inner.config() {
+            let _ = config.set_str(&format!("branch.{local}.jigBase"), &jig_base);
+            // Let `git push` create and track origin/<branch> on first push.
+            let _ = config.set_bool("push.autoSetupRemote", true);
+        }
+
+        // Point git's real upstream at the branch's own remote-tracking ref
+        // when it already exists (so `git pull`/`git push` behave normally);
+        // otherwise leave it unset and let push.autoSetupRemote configure it
+        // on the first push.
+        if self.resolve_to_commit(&format!("origin/{local}")).is_ok() {
+            if let Ok(mut local_branch) = wt_repo.inner.find_branch(local, git2::BranchType::Local)
+            {
+                let _ = local_branch.set_upstream(Some(&format!("origin/{local}")));
+            }
         }
 
         Ok(())
@@ -882,6 +896,42 @@ mod remote_tests {
             upstream_name, "origin/feature/integration",
             "upstream should track origin/feature/integration, not the base branch"
         );
+    }
+
+    #[test]
+    fn new_branch_does_not_set_base_as_git_upstream() {
+        let tmp = TempDir::new().unwrap();
+        let _ = init_repo_with_commit(tmp.path());
+
+        let repo = Repo::open(tmp.path()).unwrap();
+        let branch: Branch = "feature/x".into();
+        let base: Branch = "main".into();
+        let path = repo.create_worktree(&branch, &base).unwrap();
+
+        let wt_repo = Repo::open(&path).unwrap();
+
+        // The base must NOT be wired into git's upstream tracking — doing so
+        // breaks `git push` under push.default=simple (the original bug).
+        let local = wt_repo
+            .inner()
+            .find_branch("feature/x", git2::BranchType::Local)
+            .unwrap();
+        assert!(
+            local.upstream().is_err(),
+            "new branch must not have a git upstream pointing at the base"
+        );
+
+        // But jig must still resolve the base for diff/rebase purposes.
+        assert_eq!(&*wt_repo.base_branch().unwrap(), "main");
+
+        // And first-push must auto-create origin/<branch>.
+        let auto = wt_repo
+            .inner()
+            .config()
+            .unwrap()
+            .get_bool("push.autoSetupRemote")
+            .unwrap();
+        assert!(auto, "push.autoSetupRemote should be enabled");
     }
 }
 
