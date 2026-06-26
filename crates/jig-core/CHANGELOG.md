@@ -5,10 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.4.1 (2026-06-25)
+## v0.4.2 (2026-06-26)
 
 ### Chore
 
+ - <csr-id-98c8e19c13fc7ebe5b6431315429ae9e9989dc74/> bump version to 0.4.2
  - <csr-id-f8611b447922fa23c3bb0768fffe06731d6362c1/> bump version to 0.4.1
  - <csr-id-18caace98edbe08f90d82f1362ece217f5c791ab/> bump version to 0.4.0
  - <csr-id-020bac48693bb36b95913cae6dc4cb5746ecc132/> bump default claude model from sonnet to opus
@@ -212,8 +213,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <csr-read-only-do-not-edit/>
 
- - 46 commits contributed to the release.
- - 30 commits were understood as [conventional](https://www.conventionalcommits.org).
+ - 49 commits contributed to the release.
+ - 31 commits were understood as [conventional](https://www.conventionalcommits.org).
  - 0 issues like '(#ID)' were seen in commit messages
 
 ### Commit Details
@@ -223,6 +224,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <details><summary>view details</summary>
 
  * **Uncategorized**
+    - Bump version to 0.4.2 ([`98c8e19`](https://github.com/krondor-corp/jig/commit/98c8e19c13fc7ebe5b6431315429ae9e9989dc74))
+    - Merge pull request #44 from krondor-corp/release-automation ([`8ff5299`](https://github.com/krondor-corp/jig/commit/8ff5299e584fcce071962c642703589f245b2657))
+    - Bump jig-core v0.4.1, jig-cli v0.4.1 ([`4b70692`](https://github.com/krondor-corp/jig/commit/4b70692db64962f13fd61ae08b0af1b390d99d50))
     - Bump version to 0.4.1 ([`f8611b4`](https://github.com/krondor-corp/jig/commit/f8611b447922fa23c3bb0768fffe06731d6362c1))
     - Merge pull request #43 from krondor-corp/fix/worktree-upstream-push-mismatch ([`f48fcbb`](https://github.com/krondor-corp/jig/commit/f48fcbb6b15f07f73fed8dacf1abe909aeef27c3))
     - Rustfmt ([`50f2b63`](https://github.com/krondor-corp/jig/commit/50f2b63f693a50e5e3db5a2260f40f38ff2297ac))
@@ -270,6 +274,228 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Cargo fmt ([`54d326b`](https://github.com/krondor-corp/jig/commit/54d326b275eebbc3ff783d8ecbabb0b2bb28a3db))
     - Jig — git worktree manager for parallel Claude Code sessions ([`5cff652`](https://github.com/krondor-corp/jig/commit/5cff652c9698daa6a067086234c50c6abd884517))
 </details>
+
+## v0.4.1 (2026-06-25)
+
+<csr-id-f8611b447922fa23c3bb0768fffe06731d6362c1/>
+<csr-id-18caace98edbe08f90d82f1362ece217f5c791ab/>
+<csr-id-020bac48693bb36b95913cae6dc4cb5746ecc132/>
+<csr-id-e1dfd6b90ac3e80c6af9fd46fd1e19fd0207b3f5/>
+<csr-id-6bd4cd521f95bfd6fbd8fdba97a0a642e1725a02/>
+<csr-id-9f12c306cfcfb1eea60707d32360eb89479993a9/>
+<csr-id-2dd16b99874d330417c4e02ef76832b4459924ad/>
+<csr-id-d5fab69c3b3d019a86e7fe271df6534eddf5ab56/>
+<csr-id-7068b4dc6156a2355e6610a08451d47357d6567c/>
+<csr-id-0065d257bd9ed5d87af267966eeb944c1aab9792/>
+<csr-id-528fb2e0674d4932e6ffe0c9d7bc60e8a73b7ee3/>
+<csr-id-0a996ced56110b176b3de348cbbd0f510b4873ac/>
+<csr-id-2393dc403a09b4991400aa5bbeabd50bc96b95d3/>
+<csr-id-50f2b63f693a50e5e3db5a2260f40f38ff2297ac/>
+<csr-id-ae47c203b4bf3ecba1f9a2e52e3c89432e817d88/>
+<csr-id-e7152ee81cd6d10e480735b1f263943db5a7bde9/>
+<csr-id-6f958a8c78b08a0374f80d5d2ecd868e3bed8c68/>
+<csr-id-54d326b275eebbc3ff783d8ecbabb0b2bb28a3db/>
+
+### Chore
+
+ - <csr-id-f8611b447922fa23c3bb0768fffe06731d6362c1/> bump version to 0.4.1
+ - <csr-id-18caace98edbe08f90d82f1362ece217f5c791ab/> bump version to 0.4.0
+ - <csr-id-020bac48693bb36b95913cae6dc4cb5746ecc132/> bump default claude model from sonnet to opus
+   Backend default at `Model::DEFAULT` is dead code in practice today (the
+   jig.toml defaults at `context/repo.rs:94,113` shadow it on every real
+   call site), so this has no runtime effect until KRO-152 consolidates
+   those duplicates. Lands the intent now; behavior shift happens when the
+   consolidation lands.
+ - <csr-id-e1dfd6b90ac3e80c6af9fd46fd1e19fd0207b3f5/> bump version to 0.3.1
+ - <csr-id-6bd4cd521f95bfd6fbd8fdba97a0a642e1725a02/> bump version to 0.3.0
+ - <csr-id-9f12c306cfcfb1eea60707d32360eb89479993a9/> bump version to 0.2.0
+
+### Documentation
+
+ - <csr-id-a359f75431686c36f688a905ec9c353c50bf2929/> document branch resolution order; log when base is ignored
+   Add tracing::info! in the remote-branch case of add_worktree so that the
+   "ignoring configured base in favor of origin/<branch>" decision is
+   observable in logs.
+   
+   Update the create command's --help text to describe the three-way resolution
+   order (local → remote → fork from base), and note that --base is ignored
+   when the branch already exists.
+
+### New Features
+
+ - <csr-id-5cff652c9698daa6a067086234c50c6abd884517/> jig — git worktree manager for parallel Claude Code sessions
+
+### Bug Fixes
+
+ - <csr-id-850ae1a37f381c60ff0c339bd0592430912a5469/> stop overloading git upstream to store worktree base branch
+   add_worktree wired the base branch (e.g. `dev`) into git's upstream
+   tracking config via set_upstream. Under push.default=simple a plain
+   `git push` then refused, since the upstream name didn't match the
+   branch name (`feature/x`):
+   
+   fatal: The upstream branch of your current branch does not match
+   the name of your current branch.
+   
+   Decouple the two concepts:
+   
+   - Store the base branch in a dedicated `branch.<name>.jigBase` config
+   key. base_branch() (renamed from upstream_branch) reads it, falling
+   back to git's upstream for pre-existing worktrees.
+   - Set git's real upstream to origin/<branch> only when it already
+   exists; otherwise leave it unset and enable push.autoSetupRemote so
+   the first push creates and tracks origin/<branch> correctly.
+   
+   commits_ahead/diff are unaffected — they resolve the stored base
+   string exactly as before. Adds a regression test.
+ - <csr-id-fedfc674353b097707c4ff16f89d7702b3d69a8a/> set push.autoSetupRemote and correct upstream in Case 1 of add_worktree
+   When `jig create` is called for a branch that already exists locally (e.g.
+   after the daemon ran `create_and_push_branch` to push an integration branch),
+   the worktree was missing `push.autoSetupRemote = true` and the upstream was
+   set to the base branch name instead of `origin/<branch>`.
+   
+   This made raw `git push` fail inside the new worktree because there was no
+   configured upstream. Now Case 1 behaves consistently with Cases 2 and 3:
+   it sets `push.autoSetupRemote = true` and tracks `origin/<branch>` when
+   that remote ref exists.
+ - <csr-id-28aca7958072029c21c92bd8782e6dc51a01b7fe/> check out remote branch when origin/<branch> already exists
+   When `jig create <branch>` is called and `origin/<branch>` exists (e.g.
+   a daemon spawned `feat/xyz` with a PR), the worktree now checks out that
+   remote branch rather than forking a new branch from base. This means
+   `jig create feat/xyz` gives you the real branch the daemon created, not a
+   disconnected fork.
+   
+   Resolution order in add_worktree:
+   1. Local branch exists → use it (unchanged)
+   2. origin/<branch> exists → create local from remote, set upstream to origin/<branch>
+   3. Neither → fork from base (unchanged)
+   
+   Also reverts the MissingRemote error variant added in the previous commit —
+   the real fix is smarter resolution, not louder errors on missing remotes.
+ - <csr-id-e732f6773fa0575835719ea68aeaac8219db33b8/> validate remote exists before creating worktree; drop HEAD fallback
+   Add up-front remote validation in `jig create` so that a base branch like
+   `origin/main` fails fast with a clear error message when the `origin` remote
+   is not configured, rather than silently forking from HEAD.
+   
+   Also removes the silent HEAD fallback from `find_valid_start_point`: if
+   neither the literal base branch nor its `origin/`-stripped variant resolves,
+   the function now returns `BranchNotFound` instead of falling back to HEAD.
+   This surfaces typos and missing remote refs that were previously invisible.
+   
+   New `Branch::remote_prefix()` returns the first `/`-delimited segment (or
+   `None` for plain branch names). New `Repo::has_remote()` checks whether a
+   named remote is configured.
+ - <csr-id-595ecea0aeed045cb76d1ff5f0b93bdf0978ec24/> work around libgit2 ENOENT on missing .git/shallow
+   libgit2 1.9.2 (via git2 0.20.4) surfaces a fatal "could not find
+   .git/shallow to stat" error during worktree iteration on macOS even
+   though file-absent is supposed to mean "not a shallow clone." Hit
+   reproducibly via `jig rm` on non-shallow repos.
+   
+   We're already on the latest git2/libgit2-sys, so the fix is on our
+   side: after Repo::open / Repo::discover, proactively create an empty
+   .git/shallow in the common dir if missing. Per git's own semantics,
+   an empty shallow file means "no shallow refs" — no behavior change
+   for git itself, only avoids the libgit2 internal stat from blowing
+   up downstream.
+ - <csr-id-a6a59f1aad09365f570b64c283e11a0f4b281667/> query all PR states and add integration tests (KRO-143)
+   get_pr_for_branch used state=open, making closed/merged PRs invisible
+   and preventing cleanup. Changed to state=all and parse actual state from
+   the response instead of hardcoding Open. Added integration tests against
+   real closed PR #17 and merged PR #18 on krondor-corp/jig (gated behind
+   #[ignore], run with cargo test -p jig-core -- --ignored).
+ - <csr-id-50c054d030c0d8a42fa6f105c4771c606c94810d/> pass prompt via --allowed-tools= form and clear tracker after run
+   Two related bugs in the triage path:
+   
+   1. `Agent::once` builds argv with `--allowed-tools <tools...>` (variadic),
+   which swallows the prompt as another tool name. Claude exits with
+   "Input must be provided either through stdin or as a prompt argument".
+   Switch to the `--allowed-tools=value` form so the prompt remains a
+   separate positional.
+   
+   2. `TriageActor::register` adds an entry to the tracker but no path
+   removes it on success — only the stuck-timeout sweep (default 600s)
+   clears completed triages. The `jig ps -gw` display surface keeps
+   showing finished triages for up to 10 minutes. Remove the tracker
+   entry immediately after the synchronous `run_single` returns.
+ - <csr-id-cc11b783045bb5d4d897e5e7660557ced9c41cc5/> resolve clippy warnings in issues list and format pr create
+ - <csr-id-9e3deddc1a6070d619d13874f63a6343b7e6ab02/> pass --head flag to gh pr create for git worktree compatibility
+ - <csr-id-ba3ee31ba372af56cf1ed953128792b433deaf8c/> resolve clippy warnings for CI
+
+### Refactor
+
+ - <csr-id-2dd16b99874d330417c4e02ef76832b4459924ad/> inline GraphQL thread logic into client.rs; no helper shim
+   Make all GraphQL types in reviews.rs pub(crate) and expose GetUnresolvedThreads
+   as a first-class request builder. Move the thread-mapping logic (filter resolved,
+   take first comment, build ReviewComment) directly into client.rs where all
+   coordination lives. Removes the fetch_unresolved_threads dep-injected helper.
+ - <csr-id-d5fab69c3b3d019a86e7fe271df6534eddf5ab56/> move all impl GitHubClient coordination into client.rs
+   Query files are now pure primitives: Raw* serde structs + typed request
+   builders implementing RestRequest/GraphQlRequest. All orchestration
+   methods (get_check_runs, has_conflicts, get_pr_commits, get_pr_for_branch,
+   get_pr_state, get_reviews, get_review_comments, dev_pushed_after_reviews)
+   live in client.rs. GraphQL schema internals stay private to reviews.rs
+   behind a pub(crate) fetch_unresolved_threads helper.
+ - <csr-id-7068b4dc6156a2355e6610a08451d47357d6567c/> introduce RestClient/GraphQlClient with request traits
+   Split the GitHub client layer into three concerns:
+   - `rest.rs`: `RestRequest` trait + `RestClient` — each query is a typed
+     struct implementing `RestRequest`, `RestClient::call` dispatches it
+   - `graphql.rs`: `GraphQlRequest` trait + `GraphQlClient` — same shape
+     for GraphQL queries
+   - `GitHubClient`: owns both sub-clients and orchestrates the complex
+     routines (GraphQL→REST fallback, multi-call soft-failure sequences)
+   
+   Per review: building typed primitives at the request level and keeping
+   orchestration complexity in one place.
+ - <csr-id-0065d257bd9ed5d87af267966eeb944c1aab9792/> collapse to single generic gh_api<T> and gh_graphql<T>
+   Per review: since String: DeserializeOwned, maintain one generic method
+   per entrypoint rather than paired raw+typed variants. Callers get String
+   or a typed struct based on the inferred return type.
+ - <csr-id-528fb2e0674d4932e6ffe0c9d7bc60e8a73b7ee3/> type query responses with serde structs; fail loudly on schema drift
+   Add gh_api_json<T> and gh_graphql_typed<T> helpers to GitHubClient;
+   rename gh_graphql → gh_graphql_raw (returns raw String). Convert all 7
+   GitHub query files from serde_json::Value indexing with unwrap_or
+   defaults to typed Raw* structs with #[derive(Deserialize)], so missing
+   required fields produce a loud GitHubError::Json rather than silently
+   returning wrong data. Also log GraphQL errors before REST fallback in
+   get_review_comments.
+ - <csr-id-0a996ced56110b176b3de348cbbd0f510b4873ac/> add generic Event<K> and consolidate event scaffolds
+   Add `jig_core::Event<K>` (with `now()` constructor and flatten-roundtrip
+   test) as the shared timestamped-event wrapper.  Add `ReducibleKind` trait
+   with a blanket `impl<K: ReducibleKind> Reducible for Event<K>` so that
+   type-aliased event types in jig-cli can satisfy `EventLog::reduce()` without
+   violating Rust's orphan rules.
+   
+   Collapse the three independent concrete structs in jig-cli to type aliases:
+   
+     worker/events/schema.rs  →  pub type Event = jig_core::Event<EventKind>;
+     daemon/events/schema.rs  →  pub type Event = jig_core::Event<EventKind>;
+     notify/events.rs         →  pub type Notification = jig_core::Event<NotificationEvent>;
+   
+   Follow-on fixups:
+   - Worker reducer: impl ReducibleKind for EventKind (receives ts + kind);
+     replace five test-only Event::at(ts, kind) calls with Event { ts, kind }
+     struct literals; drop the Event::event_type() / Event::at() wrappers.
+   - Daemon reducer: impl ReducibleKind for EventKind; move started()/stopped()
+     to free functions re-exported from events::mod; update two call sites in
+     daemon/mod.rs.
+   - Notify: drop the id UUID field and its generation in queue::emit(); remove
+     Notification::to_json() wrapper, inline serde_json::to_string at the two
+     call sites; add backward-compat roundtrip test for old JSONL lines with id.
+   
+   On-disk format is unchanged for worker/daemon.  Notify JSONL gains no id
+   field on new writes; old lines with id deserialise cleanly (serde default).
+ - <csr-id-2393dc403a09b4991400aa5bbeabd50bc96b95d3/> collapse GetIssue into ListIssues; document single source of truth
+   Delete get_issue.rs and update the three call sites in the Linear client
+   to use ListIssues { filter, first: 1 }.into_iter().next() instead.
+   Add a canonical doc comment on ListIssues that enforces the one-query
+   invariant for all issue field selection.
+
+### Style
+
+ - <csr-id-50f2b63f693a50e5e3db5a2260f40f38ff2297ac/> rustfmt
+ - <csr-id-ae47c203b4bf3ecba1f9a2e52e3c89432e817d88/> cargo fmt
+ - <csr-id-e7152ee81cd6d10e480735b1f263943db5a7bde9/> cargo fmt
+ - <csr-id-6f958a8c78b08a0374f80d5d2ecd868e3bed8c68/> cargo fmt
+ - <csr-id-54d326b275eebbc3ff783d8ecbabb0b2bb28a3db/> cargo fmt
 
 ## v0.4.0 (2026-05-15)
 
