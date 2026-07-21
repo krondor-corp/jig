@@ -46,21 +46,19 @@ pub fn spawn_task(issue: &Issue, provider: &IssueProvider) -> Prompt {
         issue.body(),
     );
 
-    wrap_preamble(Prompt::new(&task_context))
+    wrap_preamble(&task_context)
 }
 
 /// Build a fully composed spawn prompt from raw task context.
 pub fn spawn_task_raw(task_context: &str) -> Prompt {
-    let task = Prompt::new(task_context);
-    wrap_preamble(task)
+    wrap_preamble(task_context)
 }
 
 /// Build a resume prompt (reuses the spawn preamble with the given context).
 pub fn resume_task(task_context: &str) -> Prompt {
-    wrap_preamble(Prompt::new(task_context))
+    wrap_preamble(task_context)
 }
 
-fn wrap_preamble(task: Prompt) -> Prompt {
-    let task_context = task.render().unwrap_or_default();
-    Prompt::new(SPAWN_PREAMBLE).var("task_context", &task_context)
+fn wrap_preamble(task_context: &str) -> Prompt {
+    Prompt::new(SPAWN_PREAMBLE).var("task_context", task_context)
 }
