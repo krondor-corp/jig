@@ -2,6 +2,10 @@
 
 Turn the in-process daemon into a persistent background service with IPC, managed via `service-manager`.
 
+> This plan is Phase 3 of [herdr-spec.md](./herdr-spec.md), which adds herdr-specific
+> amendments (snapshot batching before daemonizing, `agent_state` in IPC status, paired
+> herdr + jig service install on worker boxes). Read the spec first.
+
 ## Design Decisions
 
 - **IPC**: JSON-over-Unix-domain-socket, newline-delimited (matches existing JSONL event log pattern, stdlib only)
