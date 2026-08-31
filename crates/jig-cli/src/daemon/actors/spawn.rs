@@ -189,7 +189,7 @@ impl Actor for SpawnActor {
                 let worker_name = issue.branch().to_string();
                 spawning.push(worker_name.clone());
 
-                let mux = jig_core::mux::TmuxMux::for_repo(&repo_name);
+                let mux = jig_core::mux::for_repo(global.mux, &repo_name);
                 match spawn_worker_for_issue(
                     &repo_root,
                     &issue,

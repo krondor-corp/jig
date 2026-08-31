@@ -49,6 +49,12 @@ pub enum ConfigCommands {
         unset: bool,
     },
 
+    /// Get or set the mux backend hosting worker terminals
+    Mux {
+        /// Backend to set (tmux or herdr)
+        backend: Option<jig_core::mux::MuxKind>,
+    },
+
     /// Show current configuration (default)
     Show,
 }
@@ -99,6 +105,26 @@ impl Op for Config {
             Some(ConfigCommands::OnCreate { command, unset }) => {
                 handle_on_create(command.as_deref(), *unset)
             }
+            Some(ConfigCommands::Mux { backend }) => handle_mux(*backend),
+        }
+    }
+}
+
+fn handle_mux(backend: Option<jig_core::mux::MuxKind>) -> Result<ConfigOutput, ConfigError> {
+    match backend {
+        Some(kind) => {
+            let mut global_cfg = GlobalConfig::load()?;
+            global_cfg.mux = kind;
+            global_cfg.save()?;
+            ui::success(&format!(
+                "Set mux backend to '{}'",
+                ui::highlight(&kind.to_string())
+            ));
+            Ok(ConfigOutput(None))
+        }
+        None => {
+            let global = GlobalConfig::load()?;
+            Ok(ConfigOutput(Some(global.mux.to_string())))
         }
     }
 }
@@ -202,6 +228,11 @@ fn show_global_config() -> Result<ConfigOutput, ConfigError> {
         "  {} {}",
         ui::dim("Session prefix:"),
         ui::highlight(&global.session_prefix)
+    );
+    eprintln!(
+        "  {} {}",
+        ui::dim("Mux backend:"),
+        ui::highlight(&global.mux.to_string())
     );
 
     Ok(ConfigOutput(None))

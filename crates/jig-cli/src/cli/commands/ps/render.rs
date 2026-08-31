@@ -78,10 +78,16 @@ fn worker_row(w: &WorkerState) -> Vec<Cell> {
         MuxStatus::Exited => "○",
         MuxStatus::NotFound => "✗",
     };
-    let mux_color = match w.mux_status {
-        MuxStatus::Running => Color::Green,
-        MuxStatus::Exited => Color::Yellow,
-        MuxStatus::NotFound => Color::DarkGrey,
+    // When the backend recognizes the agent (herdr), its live read wins:
+    // blocked (needs a human) and working are states the event log can't see.
+    let mux_color = match (w.mux_status, w.mux_agent_state) {
+        (MuxStatus::Running, Some(jig_core::mux::AgentState::Blocked)) => Color::Red,
+        (MuxStatus::Running, Some(jig_core::mux::AgentState::Working)) => Color::Green,
+        (MuxStatus::Running, Some(jig_core::mux::AgentState::Idle))
+        | (MuxStatus::Running, Some(jig_core::mux::AgentState::Done)) => Color::Yellow,
+        (MuxStatus::Running, _) => Color::Green,
+        (MuxStatus::Exited, _) => Color::Yellow,
+        (MuxStatus::NotFound, _) => Color::DarkGrey,
     };
 
     let (state_text, state_color) = if w.status == WorkerStatus::WaitingReview && w.is_draft {

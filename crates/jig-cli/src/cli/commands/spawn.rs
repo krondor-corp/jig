@@ -8,7 +8,6 @@ use crate::terminal;
 use crate::worker::Worker;
 use jig_core::agents;
 use jig_core::git::Branch;
-use jig_core::mux::TmuxMux;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
@@ -154,7 +153,7 @@ impl Op for Spawn {
 
         let issue_ref = self.issue.as_deref().map(jig_core::IssueRef::new);
         let repo_name = repo.name();
-        let mux = TmuxMux::for_repo(&repo_name);
+        let mux = jig_core::mux::for_repo(ctx.config.mux, &repo_name);
         let _worker = Worker::spawn(
             &git_repo,
             &branch,

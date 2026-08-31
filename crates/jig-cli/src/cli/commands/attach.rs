@@ -6,7 +6,7 @@ use crate::context::RepoConfig;
 use crate::context::RepoRegistry;
 use crate::worker::Worker;
 use jig_core::git::Branch;
-use jig_core::mux::{Mux, TmuxMux};
+use jig_core::mux::Mux;
 
 use crate::cli::op::{NoOutput, Op};
 
@@ -41,7 +41,11 @@ impl Op for Attach {
     fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match RepoConfig::from_cwd() {
             Ok(cfg) => {
-                attach(&cfg, self.branch.as_deref().map(Branch::new).as_ref())?;
+                attach(
+                    &cfg,
+                    mux_kind(),
+                    self.branch.as_deref().map(Branch::new).as_ref(),
+                )?;
                 Ok(NoOutput)
             }
             Err(_) => {
@@ -62,15 +66,25 @@ impl Op for Attach {
                     .ok_or(AttachError::Worker(crate::worker::WorkerError::NotFound(
                         branch.to_string(),
                     )))?;
-                attach(cfg, Some(&Branch::new(branch)))?;
+                attach(cfg, mux_kind(), Some(&Branch::new(branch)))?;
                 Ok(NoOutput)
             }
         }
     }
 }
 
-fn attach(cfg: &RepoConfig, branch: Option<&Branch>) -> Result<(), AttachError> {
-    let mux = TmuxMux::new(cfg.session_name());
+/// Attach has no Op context (it resolves the repo itself), so the mux
+/// choice comes straight from global config.
+fn mux_kind() -> jig_core::mux::MuxKind {
+    crate::context::Config::load().unwrap_or_default().mux
+}
+
+fn attach(
+    cfg: &RepoConfig,
+    kind: jig_core::mux::MuxKind,
+    branch: Option<&Branch>,
+) -> Result<(), AttachError> {
+    let mux = jig_core::mux::from_group_name(kind, cfg.session_name());
     match branch {
         Some(branch) => {
             let workers = Worker::discover(&jig_core::git::Repo::open(&cfg.repo_root).unwrap());

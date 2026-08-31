@@ -4,7 +4,6 @@ use clap::Args;
 
 use crate::worker::Worker;
 use jig_core::agents;
-use jig_core::mux::TmuxMux;
 use jig_core::Worktree;
 
 use crate::cli::op::{NoOutput, Op};
@@ -45,7 +44,7 @@ impl Op for Resume {
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
         let repo_name = ctx.repo.name();
-        let mux = TmuxMux::for_repo(&repo_name);
+        let mux = jig_core::mux::for_repo(ctx.config.mux, &repo_name);
 
         // Open existing worktree
         let wt_path = ctx.repo.worktrees_path.join(&self.branch);

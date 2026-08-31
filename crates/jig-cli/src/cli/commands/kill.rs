@@ -4,7 +4,6 @@ use clap::Args;
 
 use crate::context::{RepoConfig, ScopedCtx};
 use crate::worker::Worker;
-use jig_core::mux::TmuxMux;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
@@ -51,7 +50,7 @@ impl Op for Kill {
                 if self.all {
                     let mut killed = 0;
                     for repo in &g.repos {
-                        killed += kill_all_in_repo(repo)?;
+                        killed += kill_all_in_repo(repo, g.config.mux)?;
                     }
                     if killed == 0 {
                         eprintln!("{}", ui::dim("No workers to kill."));
@@ -63,7 +62,7 @@ impl Op for Kill {
                 for repo in &g.repos {
                     let git_repo = jig_core::git::Repo::open(&repo.repo_root).unwrap();
                     let repo_name = repo.name();
-                    let mux = TmuxMux::for_repo(&repo_name);
+                    let mux = jig_core::mux::for_repo(g.config.mux, &repo_name);
                     let workers = Worker::discover(&git_repo);
                     if let Some(worker) = workers.iter().find(|w| w.branch() == name) {
                         let _ = worker.kill(&mux);
@@ -76,10 +75,10 @@ impl Op for Kill {
             }
             ScopedCtx::Repo(r) => {
                 let repo_name = r.repo.name();
-                let mux = TmuxMux::for_repo(&repo_name);
+                let mux = jig_core::mux::for_repo(r.config.mux, &repo_name);
 
                 if self.all {
-                    let killed = kill_all_in_repo(&r.repo)?;
+                    let killed = kill_all_in_repo(&r.repo, r.config.mux)?;
                     if killed == 0 {
                         eprintln!("{}", ui::dim("No workers to kill."));
                     }
@@ -102,9 +101,9 @@ impl Op for Kill {
     }
 }
 
-fn kill_all_in_repo(repo: &RepoConfig) -> Result<usize, KillError> {
+fn kill_all_in_repo(repo: &RepoConfig, kind: jig_core::mux::MuxKind) -> Result<usize, KillError> {
     let repo_name = repo.name();
-    let mux = TmuxMux::for_repo(&repo_name);
+    let mux = jig_core::mux::for_repo(kind, &repo_name);
     let workers = Worker::discover(&jig_core::git::Repo::open(&repo.repo_root).unwrap());
     for worker in &workers {
         let _ = worker.kill(&mux);

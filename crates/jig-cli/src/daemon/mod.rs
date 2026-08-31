@@ -236,7 +236,7 @@ fn startup_recovery(global_config: &Config, registry: &RepoRegistry) {
                 Ok(r) => r,
                 Err(_) => continue,
             };
-            let mux = jig_core::mux::TmuxMux::for_repo(&repo_name);
+            let mux = jig_core::mux::for_repo(global_config.mux, &repo_name);
             for worker in Worker::discover(&repo) {
                 if worker.is_orphaned(&mux) {
                     let branch = worker.branch().to_string();

@@ -2,7 +2,7 @@
 
 use crate::context::{RepoConfig, ScopedCtx};
 use jig_core::git::Repo;
-use jig_core::mux::{Mux, TmuxMux};
+use jig_core::mux::Mux;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
@@ -41,11 +41,11 @@ impl Op for Nuke {
                     return Err(crate::context::ContextError::NotInGitRepo.into());
                 }
                 for repo in &g.repos {
-                    nuke_repo(repo)?;
+                    nuke_repo(repo, g.config.mux)?;
                 }
             }
             ScopedCtx::Repo(r) => {
-                nuke_repo(&r.repo)?;
+                nuke_repo(&r.repo, r.config.mux)?;
             }
         }
 
@@ -64,12 +64,12 @@ impl Op for Nuke {
     }
 }
 
-fn nuke_repo(cfg: &RepoConfig) -> Result<(), NukeError> {
+fn nuke_repo(cfg: &RepoConfig, kind: jig_core::mux::MuxKind) -> Result<(), NukeError> {
     let repo_name = cfg.name();
 
     // 1. Kill mux session for this repo (takes out all windows at once)
     let session_name = cfg.session_name();
-    let mux = TmuxMux::new(&session_name);
+    let mux = jig_core::mux::from_group_name(kind, session_name.clone());
     mux.kill_all()?;
     ui::success(&format!(
         "Killed session '{}'",

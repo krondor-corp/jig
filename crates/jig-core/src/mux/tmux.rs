@@ -511,7 +511,7 @@ impl Mux for TmuxMux {
     }
 }
 
-fn collapse_to_single_line(message: &str) -> String {
+pub(crate) fn collapse_to_single_line(message: &str) -> String {
     message
         .lines()
         .map(|l| l.trim())
