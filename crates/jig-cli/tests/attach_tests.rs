@@ -19,7 +19,7 @@ fn test_attach_outside_repo_requires_branch() {
     cmd.args(["attach"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("branch is required"));
+        .stderr(predicate::str::contains("nothing to target"));
 }
 
 #[test]

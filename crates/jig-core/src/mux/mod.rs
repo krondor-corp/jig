@@ -28,6 +28,15 @@ impl<M: Mux + ?Sized> Mux for Box<M> {
     fn is_running(&self, name: &str) -> bool {
         (**self).is_running(name)
     }
+    fn focus_window(&self, name: &str) -> Result<(), MuxError> {
+        (**self).focus_window(name)
+    }
+    fn focus(&self) -> Result<(), MuxError> {
+        (**self).focus()
+    }
+    fn connect(&self) -> Result<(), MuxError> {
+        (**self).connect()
+    }
     fn attach_window(&self, name: &str) -> Result<(), MuxError> {
         (**self).attach_window(name)
     }
@@ -161,8 +170,27 @@ pub trait Mux: Send + Sync {
     fn send_keys(&self, name: &str, keys: &[&str]) -> Result<(), MuxError>;
     fn send_message(&self, name: &str, message: &str) -> Result<(), MuxError>;
     fn is_running(&self, name: &str) -> bool;
-    fn attach_window(&self, name: &str) -> Result<(), MuxError>;
-    fn attach(&self) -> Result<(), MuxError>;
+
+    /// Point the backend at a window — no client involvement.
+    fn focus_window(&self, name: &str) -> Result<(), MuxError>;
+
+    /// Point the backend at this group (its last active window).
+    fn focus(&self) -> Result<(), MuxError>;
+
+    /// Bring a client in front of the user. May exec-replace the current
+    /// process; must be a cheap redirect (or no-op) when the caller is
+    /// already inside this mux.
+    fn connect(&self) -> Result<(), MuxError>;
+
+    fn attach_window(&self, name: &str) -> Result<(), MuxError> {
+        self.focus_window(name)?;
+        self.connect()
+    }
+
+    fn attach(&self) -> Result<(), MuxError> {
+        self.focus()?;
+        self.connect()
+    }
 
     /// The backend's own read of the agent in a window, if it has one.
     fn agent_state(&self, _name: &str) -> Option<AgentState> {

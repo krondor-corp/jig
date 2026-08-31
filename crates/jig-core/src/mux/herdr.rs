@@ -58,6 +58,11 @@ struct Tab {
 }
 
 #[derive(Deserialize)]
+struct TabCreated {
+    root_pane: Pane,
+}
+
+#[derive(Deserialize)]
 struct PaneList {
     panes: Vec<Pane>,
 }
@@ -233,8 +238,7 @@ impl Mux for HerdrMux {
             return Ok(());
         }
         let dir_str = dir.to_string_lossy();
-        // Response parsed only to confirm shape; the tab is found by label afterwards.
-        let _: serde_json::Value = self.run_json(&[
+        let created: TabCreated = self.run_json(&[
             "tab",
             "create",
             "--workspace",
@@ -245,6 +249,9 @@ impl Mux for HerdrMux {
             &dir_str,
             "--no-focus",
         ])?;
+        // Label the pane after the branch too — the sidebar and agent list
+        // show pane labels, and the default is a generic shell title.
+        self.run(&["pane", "rename", &created.root_pane.pane_id, name])?;
         Ok(())
     }
 
@@ -307,7 +314,7 @@ impl Mux for HerdrMux {
             .any(|p| !KNOWN_SHELLS.contains(&p.argv0.as_str()))
     }
 
-    fn attach_window(&self, name: &str) -> Result<(), MuxError> {
+    fn focus_window(&self, name: &str) -> Result<(), MuxError> {
         let Some(tab) = self.find_tab(name)? else {
             return Err(MuxError::SessionNotFound(format!(
                 "{}:{}",
@@ -315,14 +322,24 @@ impl Mux for HerdrMux {
             )));
         };
         self.run(&["tab", "focus", &tab.tab_id])?;
-        self.attach_client()
+        Ok(())
     }
 
-    fn attach(&self) -> Result<(), MuxError> {
+    fn focus(&self) -> Result<(), MuxError> {
         let Some(ws) = self.find_workspace()? else {
             return Err(MuxError::SessionNotFound(self.workspace_label.clone()));
         };
         self.run(&["workspace", "focus", &ws.workspace_id])?;
+        Ok(())
+    }
+
+    /// Inside a herdr-managed pane the user's TUI already followed the
+    /// focus calls — there is nothing to connect. Outside, exec-replace
+    /// into the herdr client.
+    fn connect(&self) -> Result<(), MuxError> {
+        if std::env::var("HERDR_ENV").as_deref() == Ok("1") {
+            return Ok(());
+        }
         self.attach_client()
     }
 
