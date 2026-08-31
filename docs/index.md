@@ -22,8 +22,8 @@ Find the right doc by what you're working on. The **Sources** column tells you w
 |----------|---------|---------|
 | [daemon.md](./daemon.md) | Tick loop, actor threads, nudging, auto-spawn, auto-prune, PR monitoring | `crates/jig-cli/src/daemon/` |
 | [STDOUT-FORMATTING.md](./STDOUT-FORMATTING.md) | Op trait pattern, Display impls, comfy-table usage, color conventions | `crates/jig-cli/src/cli/op.rs`, `crates/jig-cli/src/cli/ui/`, `crates/jig-cli/src/cli/commands/*.rs` |
-| [herdr-spec.md](./herdr-spec.md) | Decision: herdr is the primary mux backend (tmux frozen fallback). Live agent state, state fusion, daemon service, remote hosts | `crates/jig-core/src/mux/` |
-| [daemon-service-plan.md](./daemon-service-plan.md) | Daemon-to-service refactor: IPC over unix socket, `jig daemon` subcommands, `service-manager` OS integration (Phase 3 of the herdr spec) | `crates/jig-cli/src/daemon/`, `crates/jig-cli/src/cli/commands/ps/` |
+| [fleet-spec.md](./fleet-spec.md) | jig's identity + fleet direction: delivery loop across machines, hub + daemons over iroh, mux-agnostic (tmux/herdr per device), model switching, `ps --fleet` | `crates/jig-core/src/mux/`, `crates/jig-cli/src/daemon/` |
+| [daemon-service-plan.md](./daemon-service-plan.md) | Daemon-to-service refactor: IPC over unix socket, `jig daemon` subcommands, `service-manager` OS integration (Phase 1 of the fleet spec) | `crates/jig-cli/src/daemon/`, `crates/jig-cli/src/cli/commands/ps/` |
 
 ### Operations
 
