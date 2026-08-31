@@ -182,7 +182,7 @@ timeout_seconds = 600
 ### How it works
 
 1. Issue enters Triage status in Linear
-2. Daemon spawns a one-shot subprocess agent (no worktree, no tmux)
+2. Daemon spawns a one-shot subprocess agent (no worktree, no mux session)
 3. Agent reads the codebase with restricted tools (`Read`, `Glob`, `Grep`, `Bash(jig *)`)
 4. Agent appends structured findings to the issue description
 5. Agent transitions the issue to **Backlog**
@@ -195,7 +195,7 @@ The triage agent produces a structured analysis: affected files, proposed approa
 | | Triage | Spawn |
 |---|--------|-------|
 | **Trigger** | Issue in Triage status | Issue in Planned status |
-| **Execution** | One-shot subprocess | Persistent tmux session |
+| **Execution** | One-shot subprocess | Persistent mux session (tmux or herdr) |
 | **Worktree** | None | Dedicated git worktree |
 | **Tools** | Read-only | Full access |
 | **Output** | Updates issue description | Commits code, opens PR |

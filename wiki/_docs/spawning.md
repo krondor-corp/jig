@@ -4,7 +4,7 @@ slug: spawning
 date: 2025-05-09
 ---
 
-`jig spawn` creates a worktree, opens a tmux window, and starts an agent session — all in one command. Unlike `jig create`, spawned workers are tracked by the daemon for monitoring, nudging, and cleanup.
+`jig spawn` creates a worktree, opens a window in your configured mux backend (tmux by default, or [herdr](https://herdr.dev) — see [Attaching to workers](#attaching-to-workers)), and starts an agent session — all in one command. Unlike `jig create`, spawned workers are tracked by the daemon for monitoring, nudging, and cleanup.
 
 ## Basic usage
 
@@ -23,7 +23,7 @@ When you spawn a worker:
 1. Creates the worktree and branch
 2. Records the worker in orchestrator state
 3. Emits a `Spawn` event to the worker's event log
-4. Opens a tmux window in a `jig-<repo>` session
+4. Opens a window for the branch in a `jig-<repo>` group (a tmux session, or a herdr workspace — see [Configuration](#mux-backend))
 5. Sends the agent command with a structured preamble
 
 The preamble tells the agent it's autonomous, that a daemon is watching, and what its goal is. It's a Handlebars template (`spawn-preamble`) that can be customized per-repo.
@@ -88,11 +88,29 @@ State is derived by replaying the event stream — there's no mutable state data
 ## Attaching to workers
 
 ```bash
-jig attach jwt-auth          # Attach to a specific worker's tmux session
-jig attach                   # Attach to the tmux session group
+jig attach jwt-auth          # Attach to a specific worker
+jig attach                   # Attach to the repo's session/workspace
+jig attach jwt-auth -g       # Search all registered repos, not just this one
+jig attach jwt-auth --repo other-repo   # Target a specific repo by name
 ```
 
-You're watching the agent work in real time. Read its output, see its tool calls, intervene if needed. Detach with `Ctrl-b d`.
+You're watching the agent work in real time. Read its output, see its tool calls, intervene if needed.
+
+Detach with `Ctrl-b d` on tmux, or `Ctrl-b q` on herdr. Closing the terminal window works too — the session survives either way.
+
+### Mux backend
+
+Which backend hosts these sessions is a global setting:
+
+```bash
+jig config mux           # show current backend
+jig config mux herdr     # switch to herdr
+jig config mux tmux      # switch back to tmux (default)
+```
+
+[herdr](https://herdr.dev) runs worker terminals in a persistent daemon instead of tmux — they survive your terminal closing or the machine sleeping, and can be reattached from another machine over SSH (`herdr --remote <host>`). It also classifies each agent pane as `idle` / `working` / `blocked` / `done`; `jig ps` uses this to color a worker's status dot red when the agent is sitting at an approval or trust dialog the event log alone can't see. tmux workers don't report this and always show the plain running/exited indicator.
+
+`JIG_MUX=tmux` or `JIG_MUX=herdr` overrides the configured backend for a single command.
 
 ## Managing workers
 

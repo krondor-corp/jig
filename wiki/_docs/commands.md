@@ -25,8 +25,8 @@ Quick reference for all jig commands.
 | `jig ps` | Show worker status dashboard |
 | `jig ps -w` | Watch mode with live updates |
 | `jig ps -gw` | Global watch — all repos, live updates, runs daemon lifecycle |
-| `jig attach <name>` | Attach to agent's tmux session |
-| `jig kill <name>` | Kill a worker's tmux session (`-a` for all) |
+| `jig attach <name>` | Attach to a worker's agent session (`-g` to search all repos, `--repo` to target one) |
+| `jig kill <name>` | Kill a worker's agent session (`-a` for all) |
 | `jig nuke` | Kill all workers and clear state (keeps config/hooks) |
 
 ## Issues
@@ -66,7 +66,7 @@ jig issues --label backend --label bug
 | Command | Description |
 |---------|-------------|
 | `jig init` | Initialize jig in a repository (`--audit`, `--force`, `--backup`) |
-| `jig config` | View/edit configuration (`base`, `on-create`, `--list`) |
+| `jig config` | View/edit configuration (`base`, `on-create`, `mux`, `--list`) |
 
 ## System
 
