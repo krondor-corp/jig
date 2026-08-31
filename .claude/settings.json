@@ -4,7 +4,7 @@
     "allow": [
       "WebFetch",
       "WebSearch",
-      "mcp__*",
+      "mcp__libre",
       "Bash(git status:*)",
       "Bash(git log:*)",
       "Bash(git diff:*)",
