@@ -9,10 +9,14 @@ use clap::Args;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{self, disable_raw_mode};
 
-use jig_core::config::JigToml;
-use jig_core::daemon::{DaemonConfig, RuntimeConfig, TickResult, TimerInfo};
+use comfy_table::{Attribute, Cell, CellAlignment, Color, Table};
 
-use crate::op::{GlobalCtx, NoOutput, Op, RepoCtx};
+use jig_core::config::JigToml;
+use jig_core::daemon::{
+    DaemonConfig, RuntimeConfig, TickResult, TimerInfo, TriageDisplayInfo, WorkerDisplayInfo,
+};
+
+use crate::op::{GlobalCtx, Op, RepoCtx};
 use crate::ui;
 
 /// Show status of spawned sessions
@@ -33,9 +37,156 @@ pub enum PsError {
     ListTasks(#[from] jig_core::Error),
 }
 
+// ---------------------------------------------------------------------------
+// Triage rendering
+// ---------------------------------------------------------------------------
+//
+// Triage tables are domain presentation, so they live with the command that
+// owns them rather than in `ui`, which holds only generic primitives. See
+// docs/cli/ui/STDOUT-FORMATTING.md.
+
+/// Standard triage table header cells.
+fn triage_header() -> Vec<Cell> {
+    vec![
+        Cell::new("ISSUE").add_attribute(Attribute::Bold),
+        Cell::new("MODEL").add_attribute(Attribute::Bold),
+        Cell::new("ELAPSED").add_attribute(Attribute::Bold),
+        Cell::new("REPO").add_attribute(Attribute::Bold),
+    ]
+}
+
+/// Build a row of cells for a single triage entry.
+///
+/// Colors are applied unconditionally; suppression is handled by the table
+/// itself (see `ui::new_domain_table`), which strips styling in plain mode and
+/// when the stream is not a TTY.
+fn triage_row(t: &TriageDisplayInfo) -> Vec<Cell> {
+    let elapsed = ui::format_duration_short(t.elapsed_secs);
+    vec![
+        Cell::new(&t.issue_id).fg(Color::Cyan),
+        Cell::new(&t.model).fg(Color::White),
+        Cell::new(&elapsed)
+            .fg(Color::White)
+            .set_alignment(CellAlignment::Right),
+        Cell::new(&t.repo_name).fg(Color::DarkGrey),
+    ]
+}
+
+/// Render a triage table from display info.
+fn render_triage_table(triages: &[TriageDisplayInfo], borders: bool, force_style: bool) -> Table {
+    let mut table = ui::new_domain_table(triage_header(), borders, force_style);
+    for t in triages {
+        table.add_row(triage_row(t));
+    }
+    table
+}
+
+/// Render the full triage section with header. Empty string if no triages.
+fn render_triage_section(
+    triages: &[TriageDisplayInfo],
+    borders: bool,
+    force_style: bool,
+) -> String {
+    if triages.is_empty() {
+        return String::new();
+    }
+    let table = render_triage_table(triages, borders, force_style);
+    format!("{}\n{}", ui::bold("TRIAGES"), table)
+}
+
+/// Render triage section grouped by repo, with bold repo headers.
+fn render_triage_section_grouped(
+    triages: &[TriageDisplayInfo],
+    borders: bool,
+    force_style: bool,
+) -> String {
+    if triages.is_empty() {
+        return String::new();
+    }
+
+    // Collect unique repos in order of appearance
+    let mut repos: Vec<String> = Vec::new();
+    for t in triages {
+        if !repos.contains(&t.repo_name) {
+            repos.push(t.repo_name.clone());
+        }
+    }
+
+    let mut sections: Vec<String> = Vec::new();
+    for repo in &repos {
+        let repo_triages: Vec<&TriageDisplayInfo> =
+            triages.iter().filter(|t| &t.repo_name == repo).collect();
+
+        let mut table = ui::new_domain_table(triage_header(), borders, force_style);
+        for t in &repo_triages {
+            table.add_row(triage_row(t));
+        }
+
+        sections.push(format!(
+            "{}\n{}",
+            ui::bold(repo),
+            ui::indent_lines(&table.to_string())
+        ));
+    }
+
+    format!("{}\n{}", ui::bold("TRIAGES"), sections.join("\n\n"))
+}
+
+// ---------------------------------------------------------------------------
+// Output
+// ---------------------------------------------------------------------------
+
+/// Typed result of a non-watch `jig ps` run.
+#[derive(Debug, Default)]
+pub struct PsOutput {
+    /// Workers to display.
+    pub workers: Vec<WorkerDisplayInfo>,
+    /// In-flight triage subprocesses to display.
+    pub triages: Vec<TriageDisplayInfo>,
+    /// Whether this was a `-g/--global` run (groups tables by repo).
+    pub global: bool,
+}
+
+impl PsOutput {
+    /// True when there is nothing at all to show.
+    pub fn is_empty(&self) -> bool {
+        self.workers.is_empty() && self.triages.is_empty()
+    }
+}
+
+impl std::fmt::Display for PsOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Non-watch output is printed to stdout by the command boundary, so
+        // styling is left to comfy-table's TTY detection: piped output carries
+        // no escape codes.
+        let force_style = false;
+
+        let workers = if self.workers.is_empty() {
+            String::new()
+        } else if self.global {
+            ui::render_worker_table_grouped(&self.workers, false, force_style)
+        } else {
+            ui::render_worker_table(&self.workers, false, force_style).to_string()
+        };
+
+        let triages = if self.global {
+            render_triage_section_grouped(&self.triages, false, force_style)
+        } else {
+            render_triage_section(&self.triages, false, force_style)
+        };
+
+        match (workers.is_empty(), triages.is_empty()) {
+            (true, true) => Ok(()),
+            (false, true) => write!(f, "{workers}"),
+            (true, false) => write!(f, "{triages}"),
+            (false, false) => write!(f, "{workers}\n\n{triages}"),
+        }
+    }
+}
+
 impl Op for Ps {
     type Error = PsError;
-    type Output = NoOutput;
+    type Output = PsOutput;
 
     fn run(&self, ctx: &RepoCtx) -> Result<Self::Output, Self::Error> {
         let repo = ctx.repo()?;
@@ -58,11 +209,11 @@ impl Ps {
         repo_filter: Option<String>,
         runtime_config: RuntimeConfig,
         global: bool,
-    ) -> Result<NoOutput, PsError> {
+    ) -> Result<PsOutput, PsError> {
         if let Some(interval) = self.watch {
             let interval = if interval == 0 { 2 } else { interval };
             run_watch(interval, runtime_config, repo_filter, global);
-            return Ok(NoOutput);
+            return Ok(PsOutput::default());
         }
 
         let daemon_config = DaemonConfig {
@@ -72,43 +223,27 @@ impl Ps {
             ..Default::default()
         };
 
-        let mut display = vec![];
-        let mut triage_display = vec![];
+        let mut workers = vec![];
+        let mut triages = vec![];
         jig_core::daemon::run_with(&daemon_config, runtime_config, |tick, _| {
-            display.clone_from(&tick.worker_display);
-            triage_display.clone_from(&tick.triage_display);
+            workers.clone_from(&tick.worker_display);
+            triages.clone_from(&tick.triage_display);
             false
         })?;
 
-        if display.is_empty() && triage_display.is_empty() {
+        let output = PsOutput {
+            workers,
+            triages,
+            global,
+        };
+
+        // "No spawned sessions" is a status message, not data, so it stays on
+        // stderr per CLAUDE.md while stdout is reserved for the tables.
+        if output.is_empty() {
             eprintln!("No spawned sessions");
-        } else if global {
-            if !display.is_empty() {
-                let output = ui::render_worker_table_grouped(&display, false);
-                eprintln!("{output}");
-            }
-            let triage_section = ui::render_triage_section_grouped(&triage_display, false);
-            if !triage_section.is_empty() {
-                if !display.is_empty() {
-                    eprintln!();
-                }
-                eprintln!("{triage_section}");
-            }
-        } else {
-            if !display.is_empty() {
-                let table = ui::render_worker_table(&display, false);
-                eprintln!("{table}");
-            }
-            let triage_section = ui::render_triage_section(&triage_display, false);
-            if !triage_section.is_empty() {
-                if !display.is_empty() {
-                    eprintln!();
-                }
-                eprintln!("{triage_section}");
-            }
         }
 
-        Ok(NoOutput)
+        Ok(output)
     }
 
     /// Build RuntimeConfig from CLI flags + jig.toml + global config.
@@ -286,14 +421,14 @@ fn run_watch(
             match view {
                 ViewMode::Table => {
                     let table_output = if global {
-                        ui::render_worker_table_grouped(&tick.worker_display, true)
+                        ui::render_worker_table_grouped(&tick.worker_display, true, true)
                     } else {
-                        ui::render_worker_table(&tick.worker_display, true).to_string()
+                        ui::render_worker_table(&tick.worker_display, true, true).to_string()
                     };
                     let triage_output = if global {
-                        ui::render_triage_section_grouped(&tick.triage_display, true)
+                        render_triage_section_grouped(&tick.triage_display, true, true)
                     } else {
-                        ui::render_triage_section(&tick.triage_display, true)
+                        render_triage_section(&tick.triage_display, true, true)
                     };
                     let status_line = format_tick_status(&Some(tick));
                     let triage_count = if tick.triage_display.is_empty() {
@@ -442,4 +577,146 @@ fn format_timer_info(timer: &Option<TimerInfo>) -> String {
         parts.push(format!("poll: {}", ui::format_duration_short(poll)));
     }
     format!("  {}", parts.join("  "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::set_plain;
+
+    #[test]
+    fn render_triage_section_empty_returns_empty() {
+        let section = render_triage_section(&[], false, false);
+        assert!(section.is_empty());
+    }
+
+    #[test]
+    fn render_triage_section_shows_header_and_entries() {
+        set_plain(true);
+        let triages = vec![
+            TriageDisplayInfo {
+                issue_id: "JIG-77".to_string(),
+                model: "sonnet".to_string(),
+                elapsed_secs: 134,
+                repo_name: "my-repo".to_string(),
+            },
+            TriageDisplayInfo {
+                issue_id: "JIG-81".to_string(),
+                model: "sonnet".to_string(),
+                elapsed_secs: 45,
+                repo_name: "my-repo".to_string(),
+            },
+        ];
+        let section = render_triage_section(&triages, false, false);
+        assert!(section.contains("TRIAGES"));
+        assert!(section.contains("JIG-77"));
+        assert!(section.contains("JIG-81"));
+        assert!(section.contains("sonnet"));
+        assert!(section.contains("2m14s"));
+        assert!(section.contains("45s"));
+        set_plain(false);
+    }
+
+    #[test]
+    fn render_triage_table_has_correct_columns() {
+        set_plain(true);
+        let triages = vec![TriageDisplayInfo {
+            issue_id: "JIG-99".to_string(),
+            model: "haiku".to_string(),
+            elapsed_secs: 3661,
+            repo_name: "test-repo".to_string(),
+        }];
+        let table = render_triage_table(&triages, false, false).to_string();
+        assert!(table.contains("ISSUE"));
+        assert!(table.contains("MODEL"));
+        assert!(table.contains("ELAPSED"));
+        assert!(table.contains("REPO"));
+        assert!(table.contains("JIG-99"));
+        assert!(table.contains("haiku"));
+        assert!(table.contains("1h1m"));
+        assert!(table.contains("test-repo"));
+        set_plain(false);
+    }
+
+    #[test]
+    fn render_triage_section_grouped_empty_returns_empty() {
+        let section = render_triage_section_grouped(&[], false, false);
+        assert!(section.is_empty());
+    }
+
+    #[test]
+    fn render_triage_section_grouped_shows_repo_headers() {
+        set_plain(true);
+        let triages = vec![
+            TriageDisplayInfo {
+                issue_id: "JIG-1".to_string(),
+                model: "sonnet".to_string(),
+                elapsed_secs: 10,
+                repo_name: "repo-a".to_string(),
+            },
+            TriageDisplayInfo {
+                issue_id: "JIG-2".to_string(),
+                model: "sonnet".to_string(),
+                elapsed_secs: 20,
+                repo_name: "repo-b".to_string(),
+            },
+        ];
+        let section = render_triage_section_grouped(&triages, false, false);
+        assert!(section.contains("TRIAGES"));
+        assert!(section.contains("repo-a"));
+        assert!(section.contains("repo-b"));
+        assert!(section.contains("JIG-1"));
+        assert!(section.contains("JIG-2"));
+        set_plain(false);
+    }
+
+    #[test]
+    fn plain_mode_triage_output_has_no_ansi_escapes() {
+        set_plain(true);
+        let triages = vec![TriageDisplayInfo {
+            issue_id: "JIG-7".to_string(),
+            model: "sonnet".to_string(),
+            elapsed_secs: 30,
+            repo_name: "repo-a".to_string(),
+        }];
+        let section = render_triage_section(&triages, false, false);
+        let grouped = render_triage_section_grouped(&triages, false, false);
+        set_plain(false);
+        assert!(
+            !section.contains('\x1B'),
+            "plain section leaked ANSI: {section:?}"
+        );
+        assert!(
+            !grouped.contains('\x1B'),
+            "plain grouped leaked ANSI: {grouped:?}"
+        );
+    }
+
+    #[test]
+    fn ps_output_empty_renders_nothing() {
+        let out = PsOutput::default();
+        assert!(out.is_empty());
+        assert_eq!(out.to_string(), "");
+    }
+
+    #[test]
+    fn ps_output_renders_triages_without_workers() {
+        set_plain(true);
+        let out = PsOutput {
+            workers: vec![],
+            triages: vec![TriageDisplayInfo {
+                issue_id: "JIG-42".to_string(),
+                model: "haiku".to_string(),
+                elapsed_secs: 5,
+                repo_name: "repo-a".to_string(),
+            }],
+            global: false,
+        };
+        let rendered = out.to_string();
+        set_plain(false);
+        assert!(!out.is_empty());
+        assert!(rendered.contains("TRIAGES"));
+        assert!(rendered.contains("JIG-42"));
+        assert!(!rendered.contains('\x1B'));
+    }
 }
