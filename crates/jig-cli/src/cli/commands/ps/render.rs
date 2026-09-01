@@ -12,6 +12,45 @@ use crate::worker::WorkerStatus;
 /// Maximum display width for worker names.
 pub const NAME_MAX: usize = 36;
 
+/// Build a ps table with the shared preset and styling policy.
+///
+/// borders: true uses UTF8_BORDERS_ONLY (watch mode), false uses NOTHING.
+///
+/// Styling is decided here, in one place, rather than at each call site. ps
+/// writes to stderr, so comfy-table's TTY auto-detection (which inspects
+/// stdout) would suppress color in normal use; styling is therefore forced on.
+/// In plain mode it is disabled outright so --plain output is free of escape
+/// codes for scripting, per docs/cli/ui/STDOUT-FORMATTING.md.
+fn ps_table(header: Vec<Cell>, borders: bool) -> Table {
+    let mut table = Table::new();
+    let preset = if borders {
+        presets::UTF8_BORDERS_ONLY
+    } else {
+        presets::NOTHING
+    };
+    table
+        .load_preset(preset)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(header);
+
+    if ui::is_plain() {
+        table.force_no_tty();
+    } else {
+        table.enforce_styling();
+    }
+
+    table
+}
+
+/// Indent every line of a rendered table by two spaces (grouped repo output).
+fn indent_lines(block: &str) -> String {
+    block
+        .lines()
+        .map(|line| format!("  {}", line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Single source of truth: WorkerStatus → comfy_table color.
 pub fn worker_state_color(status: &WorkerStatus) -> Color {
     match status {
@@ -192,17 +231,7 @@ fn table_header() -> Vec<Cell> {
 ///
 /// `borders`: true uses UTF8_BORDERS_ONLY (watch mode), false uses NOTHING (non-watch).
 pub fn render_worker_table(workers: &[WorkerState], borders: bool) -> Table {
-    let mut table = Table::new();
-    let preset = if borders {
-        presets::UTF8_BORDERS_ONLY
-    } else {
-        presets::NOTHING
-    };
-    table
-        .load_preset(preset)
-        .enforce_styling()
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(table_header());
+    let mut table = ps_table(table_header(), borders);
 
     for w in workers {
         table.add_row(worker_row(w));
@@ -223,36 +252,23 @@ pub fn render_worker_table_grouped(workers: &[WorkerState], borders: bool) -> St
         }
     }
 
-    let preset = if borders {
-        presets::UTF8_BORDERS_ONLY
-    } else {
-        presets::NOTHING
-    };
-
     let mut sections: Vec<String> = Vec::new();
 
     for repo in &repos {
         let repo_workers: Vec<&WorkerState> =
             workers.iter().filter(|w| w.repo_name() == *repo).collect();
 
-        let mut table = Table::new();
-        table
-            .load_preset(preset)
-            .enforce_styling()
-            .set_content_arrangement(ContentArrangement::Dynamic)
-            .set_header(table_header());
+        let mut table = ps_table(table_header(), borders);
 
         for w in &repo_workers {
             table.add_row(worker_row(w));
         }
 
-        let table_str = table.to_string();
-        let indented: String = table_str
-            .lines()
-            .map(|line| format!("  {}", line))
-            .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!("\x1B[1m{}\x1B[0m\n{}", repo, indented));
+        sections.push(format!(
+            "{}\n{}",
+            ui::bold(repo),
+            indent_lines(&table.to_string())
+        ));
     }
 
     sections.join("\n\n")
@@ -266,7 +282,7 @@ pub fn render_worker_table_grouped(workers: &[WorkerState], borders: bool) -> St
 fn triage_header() -> Vec<Cell> {
     vec![
         Cell::new("ISSUE").add_attribute(Attribute::Bold),
-        Cell::new("WORKER").add_attribute(Attribute::Bold),
+        Cell::new("MODEL").add_attribute(Attribute::Bold),
         Cell::new("ELAPSED").add_attribute(Attribute::Bold),
         Cell::new("REPO").add_attribute(Attribute::Bold),
     ]
@@ -278,7 +294,7 @@ fn triage_row(t: &TriageEntry) -> Vec<Cell> {
     let elapsed = (now - t.spawned_at).max(0) as u64;
     vec![
         Cell::new(&t.issue_id).fg(Color::Cyan),
-        Cell::new(&t.worker_name).fg(Color::White),
+        Cell::new(&t.model).fg(Color::White),
         Cell::new(ui::format_duration_short(elapsed))
             .fg(Color::White)
             .set_alignment(CellAlignment::Right),
@@ -290,17 +306,7 @@ fn triage_row(t: &TriageEntry) -> Vec<Cell> {
 ///
 /// `borders`: true uses UTF8_BORDERS_ONLY (watch mode), false uses NOTHING.
 pub fn render_triage_table(triages: &[TriageEntry], borders: bool) -> Table {
-    let mut table = Table::new();
-    let preset = if borders {
-        presets::UTF8_BORDERS_ONLY
-    } else {
-        presets::NOTHING
-    };
-    table
-        .load_preset(preset)
-        .enforce_styling()
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(triage_header());
+    let mut table = ps_table(triage_header(), borders);
 
     for t in triages {
         table.add_row(triage_row(t));
@@ -315,11 +321,7 @@ pub fn render_triage_section(triages: &[TriageEntry], borders: bool) -> String {
         return String::new();
     }
     let table = render_triage_table(triages, borders);
-    if ui::is_plain() {
-        format!("TRIAGES\n{}", table)
-    } else {
-        format!("\x1B[1mTRIAGES\x1B[0m\n{}", table)
-    }
+    format!("{}\n{}", ui::bold("TRIAGES"), table)
 }
 
 /// Render triage section grouped by repo, with bold repo headers.
@@ -335,43 +337,26 @@ pub fn render_triage_section_grouped(triages: &[TriageEntry], borders: bool) -> 
         }
     }
 
-    let preset = if borders {
-        presets::UTF8_BORDERS_ONLY
-    } else {
-        presets::NOTHING
-    };
-
     let mut sections: Vec<String> = Vec::new();
 
     for repo in &repos {
         let repo_triages: Vec<&TriageEntry> =
             triages.iter().filter(|t| &t.repo_name == repo).collect();
 
-        let mut table = Table::new();
-        table
-            .load_preset(preset)
-            .enforce_styling()
-            .set_content_arrangement(ContentArrangement::Dynamic)
-            .set_header(triage_header());
+        let mut table = ps_table(triage_header(), borders);
 
         for t in &repo_triages {
             table.add_row(triage_row(t));
         }
 
-        let table_str = table.to_string();
-        let indented: String = table_str
-            .lines()
-            .map(|line| format!("  {}", line))
-            .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!("\x1B[1m{}\x1B[0m\n{}", repo, indented));
+        sections.push(format!(
+            "{}\n{}",
+            ui::bold(repo),
+            indent_lines(&table.to_string())
+        ));
     }
 
-    if ui::is_plain() {
-        format!("TRIAGES\n{}", sections.join("\n\n"))
-    } else {
-        format!("\x1B[1mTRIAGES\x1B[0m\n{}", sections.join("\n\n"))
-    }
+    format!("{}\n{}", ui::bold("TRIAGES"), sections.join("\n\n"))
 }
 
 #[cfg(test)]
@@ -379,10 +364,30 @@ mod tests {
     use super::*;
     use crate::cli::ui;
 
-    fn triage_entry(issue_id: &str, worker: &str, ago_secs: i64, repo: &str) -> TriageEntry {
+    /// Serializes the tests that flip the global plain-mode flag and restores
+    /// it on drop, so parallel tests cannot observe each other's setting and a
+    /// panicking test cannot leak it.
+    struct PlainGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+    impl PlainGuard {
+        fn new(plain: bool) -> Self {
+            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            ui::set_plain(plain);
+            Self(guard)
+        }
+    }
+
+    impl Drop for PlainGuard {
+        fn drop(&mut self) {
+            ui::set_plain(false);
+        }
+    }
+
+    fn triage_entry(issue_id: &str, model: &str, ago_secs: i64, repo: &str) -> TriageEntry {
         TriageEntry {
             issue_id: issue_id.to_string(),
-            worker_name: worker.to_string(),
+            model: model.to_string(),
             spawned_at: chrono::Utc::now().timestamp() - ago_secs,
             repo_name: repo.to_string(),
         }
@@ -396,7 +401,7 @@ mod tests {
 
     #[test]
     fn render_triage_section_shows_header_and_entries() {
-        ui::set_plain(true);
+        let _plain = PlainGuard::new(true);
         let triages = vec![
             triage_entry("JIG-77", "triage-77", 134, "my-repo"),
             triage_entry("JIG-81", "triage-81", 45, "my-repo"),
@@ -406,22 +411,20 @@ mod tests {
         assert!(section.contains("JIG-77"));
         assert!(section.contains("JIG-81"));
         assert!(section.contains("triage-77"));
-        ui::set_plain(false);
     }
 
     #[test]
     fn render_triage_table_has_correct_columns() {
-        ui::set_plain(true);
+        let _plain = PlainGuard::new(true);
         let triages = vec![triage_entry("JIG-99", "triage-99", 3661, "test-repo")];
         let table = render_triage_table(&triages, false).to_string();
         assert!(table.contains("ISSUE"));
-        assert!(table.contains("WORKER"));
+        assert!(table.contains("MODEL"));
         assert!(table.contains("ELAPSED"));
         assert!(table.contains("REPO"));
         assert!(table.contains("JIG-99"));
         assert!(table.contains("triage-99"));
         assert!(table.contains("test-repo"));
-        ui::set_plain(false);
     }
 
     #[test]
@@ -432,7 +435,7 @@ mod tests {
 
     #[test]
     fn render_triage_section_grouped_shows_repo_headers() {
-        ui::set_plain(true);
+        let _plain = PlainGuard::new(true);
         let triages = vec![
             triage_entry("JIG-1", "triage-1", 10, "repo-a"),
             triage_entry("JIG-2", "triage-2", 20, "repo-b"),
@@ -443,6 +446,37 @@ mod tests {
         assert!(section.contains("repo-b"));
         assert!(section.contains("JIG-1"));
         assert!(section.contains("JIG-2"));
-        ui::set_plain(false);
+    }
+    #[test]
+    fn plain_mode_ps_tables_have_no_ansi_escapes() {
+        let _plain = PlainGuard::new(true);
+        let triages = vec![triage_entry("KRO-1", "w1", 30, "repo-a")];
+        let section = render_triage_section(&triages, false);
+        let grouped = render_triage_section_grouped(&triages, false);
+        let table = render_triage_table(&triages, false).to_string();
+        assert!(
+            !section.contains(''),
+            "plain triage section leaked ANSI: {section:?}"
+        );
+        assert!(
+            !grouped.contains(''),
+            "plain grouped triage section leaked ANSI: {grouped:?}"
+        );
+        assert!(
+            !table.contains(''),
+            "plain triage table leaked ANSI: {table:?}"
+        );
+    }
+    #[test]
+    fn normal_mode_ps_tables_are_still_styled() {
+        // ps writes to stderr, so comfy-table's stdout TTY check would strip
+        // color under test; styling must be forced on when not in plain mode.
+        let _plain = PlainGuard::new(false);
+        let triages = vec![triage_entry("KRO-1", "w1", 30, "repo-a")];
+        let section = render_triage_section(&triages, false);
+        assert!(
+            section.contains('\x1B'),
+            "normal-mode output lost its styling: {section:?}"
+        );
     }
 }
