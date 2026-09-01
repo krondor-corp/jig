@@ -119,20 +119,13 @@ impl Repo {
 
     /// Check if a branch exists (local or remote).
     pub fn remote_branch_exists(&self, branch: &Branch) -> bool {
-        let name: &str = branch;
-        let remote_ref = if name.starts_with("origin/") {
-            name.to_string()
-        } else {
-            format!("origin/{}", name)
-        };
         self.inner
-            .find_branch(&remote_ref, git2::BranchType::Remote)
+            .find_branch(&branch.remote_ref(), git2::BranchType::Remote)
             .is_ok()
     }
 
     pub fn branch_exists(&self, branch: &Branch) -> Result<bool> {
-        let name: &str = branch;
-        let local = name.strip_prefix("origin/").unwrap_or(name);
+        let local = branch.local();
 
         if self
             .inner
@@ -143,7 +136,7 @@ impl Repo {
         }
         if self
             .inner
-            .find_branch(&format!("origin/{}", local), git2::BranchType::Remote)
+            .find_branch(&branch.remote_ref(), git2::BranchType::Remote)
             .is_ok()
         {
             return Ok(true);
@@ -269,9 +262,7 @@ impl Repo {
 
     /// Prune a worktree by its branch name.
     pub fn prune_worktree(&self, branch: &Branch, force: bool) -> Result<()> {
-        let name: &str = branch;
-        let local = name.strip_prefix("origin/").unwrap_or(name);
-        let wt_name = local.replace('/', "-");
+        let wt_name = branch.local().replace('/', "-");
         self.prune_worktree_named(&wt_name, force)
     }
 
@@ -346,15 +337,14 @@ impl Repo {
 
     /// Merge a branch into the current HEAD.
     pub fn merge_branch(&self, branch: &Branch) -> Result<()> {
-        let name: &str = branch;
-        let local = name.strip_prefix("origin/").unwrap_or(name);
+        let local = branch.local();
 
         let branch_ref = self
             .inner
             .find_branch(local, git2::BranchType::Local)
             .or_else(|_| {
                 self.inner
-                    .find_branch(&format!("origin/{}", local), git2::BranchType::Remote)
+                    .find_branch(&branch.remote_ref(), git2::BranchType::Remote)
             })
             .map_err(|_| GitError::BranchNotFound(branch.to_string()))?;
 
@@ -432,9 +422,8 @@ impl Repo {
     ///
     /// Returns `true` if the ref was advanced, `false` if already up to date.
     pub fn fast_forward_branch(&self, branch: &Branch, checkout: bool) -> Result<bool> {
-        let name: &str = branch;
-        let local = name.strip_prefix("origin/").unwrap_or(name);
-        let remote_ref_name = format!("origin/{}", local);
+        let local = branch.local();
+        let remote_ref_name = branch.remote_ref();
 
         let remote_branch = self
             .inner
@@ -493,8 +482,7 @@ impl Repo {
 
     /// Push a branch to origin.
     pub fn push_branch(&self, branch: &Branch) -> Result<()> {
-        let name: &str = branch;
-        let local = name.strip_prefix("origin/").unwrap_or(name);
+        let local = branch.local();
         let refspec = format!("refs/heads/{local}:refs/heads/{local}");
 
         let mut remote = self
@@ -533,9 +521,7 @@ impl Repo {
     ///
     /// Tolerates a pre-existing local branch (pushes the existing one).
     pub fn create_and_push_branch(&self, branch: &Branch, base: &Branch) -> Result<()> {
-        let base_ref: &str = base;
-        let base_local = base_ref.strip_prefix("origin/").unwrap_or(base_ref);
-        let remote_ref = format!("origin/{}", base_local);
+        let remote_ref = base.remote_ref();
 
         let reference = self
             .inner
@@ -560,8 +546,7 @@ impl Repo {
     /// Check if a branch is checked out in the main workdir or any linked worktree.
     fn is_branch_checked_out(&self, branch: &Branch) -> Result<bool> {
         let clone = self.open_clone()?;
-        let name: &str = branch;
-        let local = name.strip_prefix("origin/").unwrap_or(name);
+        let local = branch.local();
 
         if let Ok(b) = clone.current_branch() {
             if &*b == local {
@@ -588,8 +573,7 @@ impl Repo {
             std::fs::create_dir_all(parent)?;
         }
 
-        let branch_str: &str = branch;
-        let local = branch_str.strip_prefix("origin/").unwrap_or(branch_str);
+        let local = branch.local();
         // git stores worktree metadata in .git/worktrees/<name>/ — slashes
         // in the name create nested dirs that don't exist. Use a flat name.
         let wt_name = local.replace('/', "-");
@@ -604,12 +588,8 @@ impl Repo {
             let mut opts = git2::WorktreeAddOptions::new();
             opts.reference(Some(&reference));
             self.inner.worktree(&wt_name, path, Some(&opts))?;
-            let base_str: &str = base;
-            jig_base = base_str
-                .strip_prefix("origin/")
-                .unwrap_or(base_str)
-                .to_string();
-        } else if let Ok(remote_commit) = self.resolve_to_commit(&format!("origin/{}", local)) {
+            jig_base = base.local().to_string();
+        } else if let Ok(remote_commit) = self.resolve_to_commit(&branch.remote_ref()) {
             // Case 2: branch exists on origin — check it out and track it.
             // The configured base is intentionally ignored here; the remote
             // branch is the authoritative starting point.
@@ -623,7 +603,7 @@ impl Repo {
             let mut opts = git2::WorktreeAddOptions::new();
             opts.reference(Some(&reference));
             self.inner.worktree(&wt_name, path, Some(&opts))?;
-            jig_base = format!("origin/{}", local);
+            jig_base = branch.remote_ref();
         } else {
             // Case 3: branch is new — fork from base.
             let base_str: &str = base;
@@ -633,10 +613,7 @@ impl Repo {
             let mut opts = git2::WorktreeAddOptions::new();
             opts.reference(Some(&reference));
             self.inner.worktree(&wt_name, path, Some(&opts))?;
-            jig_base = base_str
-                .strip_prefix("origin/")
-                .unwrap_or(base_str)
-                .to_string();
+            jig_base = base.local().to_string();
         }
 
         let wt_repo = Self::open(path)?;

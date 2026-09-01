@@ -22,6 +22,18 @@ impl Branch {
     pub fn remote_prefix(&self) -> Option<&str> {
         self.0.split_once('/').map(|(prefix, _)| prefix)
     }
+
+    /// Returns the branch name with any `origin/` remote prefix stripped.
+    /// `origin/main` and `main` both return `"main"`.
+    pub fn local(&self) -> &str {
+        self.0.strip_prefix("origin/").unwrap_or(&self.0)
+    }
+
+    /// Returns the `origin/<local>` remote-tracking ref name, normalizing
+    /// away any existing `origin/` prefix first.
+    pub fn remote_ref(&self) -> String {
+        format!("origin/{}", self.local())
+    }
 }
 
 impl std::fmt::Display for Branch {
@@ -127,5 +139,18 @@ mod tests {
     #[should_panic(expected = "invalid git branch name")]
     fn new_rejects_dot_lock() {
         Branch::new("branch.lock");
+    }
+
+    #[test]
+    fn local_strips_origin_prefix() {
+        assert_eq!(Branch::new("origin/main").local(), "main");
+        assert_eq!(Branch::new("main").local(), "main");
+        assert_eq!(Branch::new("origin/feature/foo").local(), "feature/foo");
+    }
+
+    #[test]
+    fn remote_ref_normalizes_prefix() {
+        assert_eq!(Branch::new("main").remote_ref(), "origin/main");
+        assert_eq!(Branch::new("origin/main").remote_ref(), "origin/main");
     }
 }
