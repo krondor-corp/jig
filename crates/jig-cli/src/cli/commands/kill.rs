@@ -30,6 +30,8 @@ pub enum KillError {
     Context(#[from] crate::context::ContextError),
     #[error(transparent)]
     Worker(#[from] crate::worker::WorkerError),
+    #[error(transparent)]
+    Git(#[from] jig_core::git::GitError),
     #[error("specify a branch or --all")]
     NoTarget,
     #[error("{0}")]
@@ -61,7 +63,7 @@ impl Op for Kill {
 
                 let name = self.branch.as_deref().ok_or(KillError::NoTarget)?;
                 for repo in &g.repos {
-                    let git_repo = jig_core::git::Repo::open(&repo.repo_root).unwrap();
+                    let git_repo = jig_core::git::Repo::open(&repo.repo_root)?;
                     let repo_name = repo.name();
                     let mux = TmuxMux::for_repo(&repo_name);
                     let workers = Worker::discover(&git_repo);
@@ -87,8 +89,7 @@ impl Op for Kill {
                 }
 
                 let name = self.branch.as_deref().ok_or(KillError::NoTarget)?;
-                let workers =
-                    Worker::discover(&jig_core::git::Repo::open(&r.repo.repo_root).unwrap());
+                let workers = Worker::discover(&jig_core::git::Repo::open(&r.repo.repo_root)?);
                 let worker = workers
                     .iter()
                     .find(|w| w.branch() == name)
@@ -105,7 +106,7 @@ impl Op for Kill {
 fn kill_all_in_repo(repo: &RepoConfig) -> Result<usize, KillError> {
     let repo_name = repo.name();
     let mux = TmuxMux::for_repo(&repo_name);
-    let workers = Worker::discover(&jig_core::git::Repo::open(&repo.repo_root).unwrap());
+    let workers = Worker::discover(&jig_core::git::Repo::open(&repo.repo_root)?);
     for worker in &workers {
         let _ = worker.kill(&mux);
         worker.unregister()?;
