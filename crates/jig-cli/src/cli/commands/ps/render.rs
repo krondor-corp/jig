@@ -282,7 +282,7 @@ pub fn render_worker_table_grouped(workers: &[WorkerState], borders: bool) -> St
 fn triage_header() -> Vec<Cell> {
     vec![
         Cell::new("ISSUE").add_attribute(Attribute::Bold),
-        Cell::new("WORKER").add_attribute(Attribute::Bold),
+        Cell::new("MODEL").add_attribute(Attribute::Bold),
         Cell::new("ELAPSED").add_attribute(Attribute::Bold),
         Cell::new("REPO").add_attribute(Attribute::Bold),
     ]
@@ -294,7 +294,7 @@ fn triage_row(t: &TriageEntry) -> Vec<Cell> {
     let elapsed = (now - t.spawned_at).max(0) as u64;
     vec![
         Cell::new(&t.issue_id).fg(Color::Cyan),
-        Cell::new(&t.worker_name).fg(Color::White),
+        Cell::new(&t.model).fg(Color::White),
         Cell::new(ui::format_duration_short(elapsed))
             .fg(Color::White)
             .set_alignment(CellAlignment::Right),
@@ -384,10 +384,10 @@ mod tests {
         }
     }
 
-    fn triage_entry(issue_id: &str, worker: &str, ago_secs: i64, repo: &str) -> TriageEntry {
+    fn triage_entry(issue_id: &str, model: &str, ago_secs: i64, repo: &str) -> TriageEntry {
         TriageEntry {
             issue_id: issue_id.to_string(),
-            worker_name: worker.to_string(),
+            model: model.to_string(),
             spawned_at: chrono::Utc::now().timestamp() - ago_secs,
             repo_name: repo.to_string(),
         }
@@ -419,7 +419,7 @@ mod tests {
         let triages = vec![triage_entry("JIG-99", "triage-99", 3661, "test-repo")];
         let table = render_triage_table(&triages, false).to_string();
         assert!(table.contains("ISSUE"));
-        assert!(table.contains("WORKER"));
+        assert!(table.contains("MODEL"));
         assert!(table.contains("ELAPSED"));
         assert!(table.contains("REPO"));
         assert!(table.contains("JIG-99"));
