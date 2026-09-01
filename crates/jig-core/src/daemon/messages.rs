@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 
 use crate::issues::{Issue, ProviderKind};
-use crate::spawn::SpawnKind;
 
 /// Request sent to the sync actor to fetch repos.
 pub struct SyncRequest {
@@ -91,6 +90,10 @@ pub struct PruneComplete {
 }
 
 /// An issue that is eligible for auto-spawning.
+///
+/// Whether this is a normal spawn or a wrap-up spawn is determined by which
+/// collection it comes from (`IssueResponse.spawnable` vs
+/// `IssueResponse.wrapup`) and which field of [`SpawnRequest`] it's placed in.
 #[derive(Debug, Clone)]
 pub struct SpawnableIssue {
     /// Repo root path for spawning.
@@ -101,8 +104,6 @@ pub struct SpawnableIssue {
     pub worker_name: String,
     /// Provider kind for completion instructions.
     pub provider_kind: ProviderKind,
-    /// Whether this is a normal or triage spawn.
-    pub kind: SpawnKind,
 }
 
 /// Result of creating (or skipping) a parent integration branch.
@@ -129,7 +130,9 @@ pub struct IssueResponse {
     /// Issues eligible for normal auto-spawn (status=Planned).
     pub spawnable: Vec<SpawnableIssue>,
     /// Issues eligible for triage (status=Triage, repo has triage enabled).
-    pub triageable: Vec<SpawnableIssue>,
+    /// Triage issues run as direct subprocesses (no worker/worktree/tmux), so
+    /// they use their own payload type that bypasses the spawn actor entirely.
+    pub triageable: Vec<TriageIssue>,
     /// Parent integration branches created or verified this poll.
     pub parent_branches: Vec<ParentBranchResult>,
     /// Parent issues ready for wrap-up (all children Complete + merged into the
@@ -139,7 +142,11 @@ pub struct IssueResponse {
 
 /// Request sent to the spawn actor to create workers.
 pub struct SpawnRequest {
+    /// Normal (interactive) spawns.
     pub issues: Vec<SpawnableIssue>,
+    /// Wrap-up spawns for parent epics whose children are all complete and
+    /// merged. Dispatched via [`crate::spawn::spawn_wrapup_for_issue`].
+    pub wrapup: Vec<SpawnableIssue>,
 }
 
 /// Result of spawning a single worker.
@@ -164,8 +171,6 @@ pub struct TriageIssue {
     pub repo_root: PathBuf,
     /// The parsed issue.
     pub issue: Issue,
-    /// Derived worker name (e.g., "triage-jig-38").
-    pub worker_name: String,
     /// Provider kind for status updates.
     pub provider_kind: ProviderKind,
 }
@@ -177,11 +182,9 @@ pub struct TriageRequest {
 
 /// Result of a single triage subprocess.
 pub struct TriageResult {
-    /// Worker name (e.g., "triage-jig-38").
-    pub worker_name: String,
     /// Repo name for notifications.
     pub repo_name: String,
-    /// Issue ID for tracker cleanup.
+    /// Issue ID for tracker cleanup and notifications.
     pub issue_id: String,
     /// Error message if the triage failed, None on success.
     pub error: Option<String>,

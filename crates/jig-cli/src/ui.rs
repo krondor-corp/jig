@@ -170,6 +170,47 @@ pub fn new_table(headers: &[&str]) -> Table {
     table
 }
 
+/// Create a table for domain rendering (workers, triages) with explicit
+/// styling control.
+///
+/// `borders`: true uses UTF8_BORDERS_ONLY (watch mode), false uses NOTHING.
+///
+/// `force_style`: force ANSI styling on even when stdout is not a TTY. Only the
+/// full-screen watch view needs this, because it writes to stderr while
+/// comfy-table's auto-detection inspects stdout. Everything else leaves this
+/// false so that piped output stays free of escape codes.
+///
+/// Plain mode always wins and disables styling outright.
+pub fn new_domain_table(header: Vec<Cell>, borders: bool, force_style: bool) -> Table {
+    let mut table = Table::new();
+    let preset = if borders {
+        presets::UTF8_BORDERS_ONLY
+    } else {
+        presets::NOTHING
+    };
+    table
+        .load_preset(preset)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(header);
+
+    if is_plain() {
+        table.force_no_tty();
+    } else if force_style {
+        table.enforce_styling();
+    }
+
+    table
+}
+
+/// Indent every line of a block by two spaces (used for grouped repo tables).
+pub fn indent_lines(block: &str) -> String {
+    block
+        .lines()
+        .map(|line| format!("  {}", line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 // ---------------------------------------------------------------------------
 // Truncation
 // ---------------------------------------------------------------------------
@@ -424,18 +465,12 @@ fn table_header() -> Vec<Cell> {
 /// Render a worker table from display info.
 ///
 /// `borders`: true uses UTF8_BORDERS_ONLY (watch mode), false uses NOTHING (non-watch).
-pub fn render_worker_table(workers: &[WorkerDisplayInfo], borders: bool) -> Table {
-    let mut table = Table::new();
-    let preset = if borders {
-        presets::UTF8_BORDERS_ONLY
-    } else {
-        presets::NOTHING
-    };
-    table
-        .load_preset(preset)
-        .enforce_styling()
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(table_header());
+pub fn render_worker_table(
+    workers: &[WorkerDisplayInfo],
+    borders: bool,
+    force_style: bool,
+) -> Table {
+    let mut table = new_domain_table(table_header(), borders, force_style);
 
     for w in workers {
         table.add_row(worker_row(w));
@@ -447,7 +482,11 @@ pub fn render_worker_table(workers: &[WorkerDisplayInfo], borders: bool) -> Tabl
 /// Render workers grouped by repo, with bold repo headers.
 ///
 /// Returns a formatted string with separate tables per repo.
-pub fn render_worker_table_grouped(workers: &[WorkerDisplayInfo], borders: bool) -> String {
+pub fn render_worker_table_grouped(
+    workers: &[WorkerDisplayInfo],
+    borders: bool,
+    force_style: bool,
+) -> String {
     // Collect unique repos in order of appearance
     let mut repos: Vec<String> = Vec::new();
     for w in workers {
@@ -456,37 +495,24 @@ pub fn render_worker_table_grouped(workers: &[WorkerDisplayInfo], borders: bool)
         }
     }
 
-    let preset = if borders {
-        presets::UTF8_BORDERS_ONLY
-    } else {
-        presets::NOTHING
-    };
-
     let mut sections: Vec<String> = Vec::new();
 
     for repo in &repos {
         let repo_workers: Vec<&WorkerDisplayInfo> =
             workers.iter().filter(|w| &w.repo == repo).collect();
 
-        let mut table = Table::new();
-        table
-            .load_preset(preset)
-            .enforce_styling()
-            .set_content_arrangement(ContentArrangement::Dynamic)
-            .set_header(table_header());
+        let mut table = new_domain_table(table_header(), borders, force_style);
 
         for w in &repo_workers {
             table.add_row(worker_row(w));
         }
 
         // Bold repo name header, then indented table
-        let table_str = table.to_string();
-        let indented: String = table_str
-            .lines()
-            .map(|line| format!("  {}", line))
-            .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!("\x1B[1m{}\x1B[0m\n{}", repo, indented));
+        sections.push(format!(
+            "{}\n{}",
+            bold(repo),
+            indent_lines(&table.to_string())
+        ));
     }
 
     sections.join("\n\n")

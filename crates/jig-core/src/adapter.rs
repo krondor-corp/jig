@@ -106,32 +106,10 @@ pub fn supported_agents() -> &'static [&'static str] {
     &["claude"]
 }
 
-/// Build a triage command for ephemeral execution with `--model` and
-/// `--allowed-tools` restrictions. The prompt is supplied on stdin by
-/// redirecting from `prompt_file` — Claude Code has no file-based prompt
-/// flag, and stdin redirection avoids any shell-escaping pitfalls with
-/// long markdown prompts.
-pub fn build_triage_command(
-    adapter: &AgentAdapter,
-    prompt_file: &std::path::Path,
-    model: &str,
-    allowed_tools: &[&str],
-) -> String {
-    let mut cmd = format!("{} {}", adapter.command, adapter.ephemeral_flags);
-    cmd = format!("{} --model {}", cmd, model);
-    if !allowed_tools.is_empty() {
-        let tools = allowed_tools.join(",");
-        cmd = format!("{} --allowed-tools \"{}\"", cmd, tools);
-    }
-    cmd = format!("{} < {}", cmd, prompt_file.display());
-    cmd
-}
-
 /// Build a triage command as an argv vector for direct subprocess execution.
 ///
-/// Unlike [`build_triage_command`] which returns a shell string for tmux,
-/// this returns a `Vec<String>` suitable for `std::process::Command`. The
-/// prompt is read from `prompt_file` and piped to stdin by the caller.
+/// Returns a `Vec<String>` suitable for `std::process::Command`. The
+/// prompt is piped to stdin by the caller.
 pub fn build_triage_argv(
     adapter: &AgentAdapter,
     model: &str,
@@ -172,8 +150,19 @@ pub fn build_resume_command(adapter: &AgentAdapter) -> String {
     cmd
 }
 
-/// Build the spawn command for an agent (always appends auto_flag)
-pub fn build_spawn_command(adapter: &AgentAdapter, context: Option<&str>) -> String {
+/// Tools that are always blocked for spawned workers.
+/// Workers must use `jig pr` instead of raw `gh` PR commands.
+pub const DEFAULT_DISALLOWED_TOOLS: &[&str] = &["Bash(gh pr create:*)", "Bash(gh pr merge:*)"];
+
+/// Build the spawn command for an agent (always appends auto_flag).
+///
+/// Merges `DEFAULT_DISALLOWED_TOOLS` with any extra `disallowed_tools`
+/// from config, then passes the combined list via `--disallowedTools`.
+pub fn build_spawn_command(
+    adapter: &AgentAdapter,
+    context: Option<&str>,
+    disallowed_tools: &[String],
+) -> String {
     let mut cmd = adapter.command.to_string();
 
     if let Some(ctx) = context {
@@ -185,6 +174,18 @@ pub fn build_spawn_command(adapter: &AgentAdapter, context: Option<&str>) -> Str
     if !adapter.auto_flag.is_empty() {
         cmd.push(' ');
         cmd.push_str(adapter.auto_flag);
+    }
+
+    // Merge hardcoded defaults with config extras
+    let mut all_tools: Vec<&str> = DEFAULT_DISALLOWED_TOOLS.to_vec();
+    for tool in disallowed_tools {
+        if !all_tools.contains(&tool.as_str()) {
+            all_tools.push(tool.as_str());
+        }
+    }
+    if !all_tools.is_empty() {
+        let tools = all_tools.join(",");
+        cmd = format!("{} --disallowedTools \"{}\"", cmd, tools);
     }
 
     cmd
@@ -212,24 +213,58 @@ mod tests {
     #[test]
     fn test_build_spawn_command_no_context() {
         let adapter = &CLAUDE_CODE;
-        let cmd = build_spawn_command(adapter, None);
-        assert_eq!(cmd, "claude --dangerously-skip-permissions");
+        let cmd = build_spawn_command(adapter, None, &[]);
+        assert_eq!(
+            cmd,
+            "claude --dangerously-skip-permissions \
+             --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
+        );
     }
 
     #[test]
     fn test_build_spawn_command_with_context() {
         let adapter = &CLAUDE_CODE;
-        let cmd = build_spawn_command(adapter, Some("hello world"));
-        assert_eq!(cmd, "claude 'hello world' --dangerously-skip-permissions");
+        let cmd = build_spawn_command(adapter, Some("hello world"), &[]);
+        assert_eq!(
+            cmd,
+            "claude 'hello world' --dangerously-skip-permissions \
+             --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
+        );
     }
 
     #[test]
     fn test_build_spawn_command_escapes_quotes() {
         let adapter = &CLAUDE_CODE;
-        let cmd = build_spawn_command(adapter, Some("it's a test"));
+        let cmd = build_spawn_command(adapter, Some("it's a test"), &[]);
         assert_eq!(
             cmd,
-            "claude 'it'\\''s a test' --dangerously-skip-permissions"
+            "claude 'it'\\''s a test' --dangerously-skip-permissions \
+             --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
+        );
+    }
+
+    #[test]
+    fn test_build_spawn_command_with_extra_disallowed_tools() {
+        let adapter = &CLAUDE_CODE;
+        let disallowed = vec!["Bash(rm -rf:*)".to_string()];
+        let cmd = build_spawn_command(adapter, Some("do work"), &disallowed);
+        assert_eq!(
+            cmd,
+            "claude 'do work' --dangerously-skip-permissions \
+             --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*),Bash(rm -rf:*)\""
+        );
+    }
+
+    #[test]
+    fn test_build_spawn_command_deduplicates_disallowed_tools() {
+        let adapter = &CLAUDE_CODE;
+        // Config duplicates a default — should not appear twice
+        let disallowed = vec!["Bash(gh pr create:*)".to_string()];
+        let cmd = build_spawn_command(adapter, Some("work"), &disallowed);
+        assert_eq!(
+            cmd,
+            "claude 'work' --dangerously-skip-permissions \
+             --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
         );
     }
 
@@ -328,29 +363,11 @@ mod tests {
     }
 
     #[test]
-    fn test_build_triage_command() {
-        let prompt_file = std::path::Path::new("/tmp/worktree/.jig/triage-prompt.md");
-        let cmd = build_triage_command(
-            &CLAUDE_CODE,
-            prompt_file,
-            "sonnet",
-            &["Read", "Glob", "Grep", "Bash(jig *)", "mcp__linear*"],
-        );
-        assert_eq!(
-            cmd,
-            "claude --print --no-session-persistence --dangerously-skip-permissions \
-             --model sonnet \
-             --allowed-tools \"Read,Glob,Grep,Bash(jig *),mcp__linear*\" \
-             < /tmp/worktree/.jig/triage-prompt.md"
-        );
-    }
-
-    #[test]
     fn test_build_triage_argv() {
         let argv = build_triage_argv(
             &CLAUDE_CODE,
             "sonnet",
-            &["Read", "Glob", "Grep", "Bash(jig *)", "mcp__linear*"],
+            &["Read", "Glob", "Grep", "Bash(jig *)"],
         );
         assert_eq!(
             argv,
@@ -362,7 +379,7 @@ mod tests {
                 "--model",
                 "sonnet",
                 "--allowed-tools",
-                "Read,Glob,Grep,Bash(jig *),mcp__linear*",
+                "Read,Glob,Grep,Bash(jig *)",
             ]
         );
     }
@@ -380,18 +397,6 @@ mod tests {
                 "--model",
                 "opus",
             ]
-        );
-    }
-
-    #[test]
-    fn test_build_triage_command_custom_model() {
-        let prompt_file = std::path::Path::new("/tmp/triage.md");
-        let cmd = build_triage_command(&CLAUDE_CODE, prompt_file, "opus", &[]);
-        assert_eq!(
-            cmd,
-            "claude --print --no-session-persistence --dangerously-skip-permissions \
-             --model opus \
-             < /tmp/triage.md"
         );
     }
 }
