@@ -502,16 +502,36 @@ impl Mux for TmuxMux {
         self.session.window(name).is_running()
     }
 
-    fn attach_window(&self, name: &str) -> std::result::Result<(), MuxError> {
-        Ok(self.session.window(name).attach()?)
+    fn focus_window(&self, name: &str) -> std::result::Result<(), MuxError> {
+        Ok(self.session.window(name).select()?)
     }
 
-    fn attach(&self) -> std::result::Result<(), MuxError> {
+    fn focus(&self) -> std::result::Result<(), MuxError> {
+        if !self.session.exists() {
+            return Err(MuxError::SessionNotFound(self.session.name().to_string()));
+        }
+        Ok(())
+    }
+
+    /// Inside tmux, `attach` would nest — redirect the current client
+    /// instead. Outside, exec-replace into a fresh attach.
+    fn connect(&self) -> std::result::Result<(), MuxError> {
+        if std::env::var_os("TMUX").is_some() {
+            let output = run_tmux(&["switch-client", "-t", self.session.name()], TMUX_TIMEOUT)
+                .map_err(MuxError::from)?;
+            if !output.status.success() {
+                return Err(MuxError::CommandFailed {
+                    command: "switch-client".to_string(),
+                    detail: String::from_utf8_lossy(&output.stderr).into(),
+                });
+            }
+            return Ok(());
+        }
         Ok(self.session.attach()?)
     }
 }
 
-fn collapse_to_single_line(message: &str) -> String {
+pub(crate) fn collapse_to_single_line(message: &str) -> String {
     message
         .lines()
         .map(|l| l.trim())

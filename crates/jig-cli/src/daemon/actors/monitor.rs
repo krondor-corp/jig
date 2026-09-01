@@ -17,7 +17,7 @@ use crate::worker::events::{self, Event, EventKind, TerminalKind, WorkerState};
 use crate::worker::{MuxStatus, WorkerStatus};
 use jig_core::git::Branch;
 use jig_core::github::GitHubClient;
-use jig_core::mux::{Mux, TmuxMux};
+use jig_core::mux::Mux;
 type Worker = crate::worker::Worker;
 
 use super::prune::PruneTarget;
@@ -101,7 +101,11 @@ impl Actor for MonitorActor {
         for (entry, worker) in &workers {
             let key = worker.worker_key();
             let repo_name = worker.repo_name();
-            let mux = TmuxMux::for_repo_with_prefix(&req.ctx.session_prefix, &repo_name);
+            let mux = jig_core::mux::for_repo_with_prefix(
+                req.ctx.config.mux,
+                &req.ctx.session_prefix,
+                &repo_name,
+            );
 
             match self.process_worker(&mux, entry, worker, &key, global_config, &notifier) {
                 Ok((state, targets)) => {
@@ -207,6 +211,7 @@ impl MonitorActor {
         state.name = worker_name.clone();
         state.resolved_branch = branch;
         state.mux_status = worker.mux_status(mux);
+        state.mux_agent_state = mux.agent_state(&worker_name);
         let (commits_ahead, is_dirty) = git_stats(&repo_entry.path, &worker_name);
         state.commits_ahead = commits_ahead;
         state.is_dirty = is_dirty;

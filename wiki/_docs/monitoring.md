@@ -30,7 +30,7 @@ WORKER              STATE    COMMITS  PR     HEALTH  ISSUE
 
 | Column | Description |
 |--------|-------------|
-| **WORKER** | Name with tmux indicator: `●` running, `○` exited |
+| **WORKER** | Name with a mux status dot: `●` running, `○` exited, `✗` not found — colored red/green/yellow on herdr when it also reports the agent as blocked/working/idle |
 | **STATE** | Derived worker status from the event stream |
 | **COMMITS** | Commits ahead of base branch (`*` = uncommitted changes) |
 | **PR** | PR number if one exists |
@@ -62,11 +62,11 @@ Press `t` or `l` again to switch back. Press `q` to quit.
 
 `jig ps -gw` runs the daemon inline — the live display is a UI layer on top of the daemon's tick loop. Every 30 seconds, the daemon fetches repos, scans event logs to derive worker state, discovers PRs via GitHub, and dispatches actions (nudges, notifications, cleanup).
 
-The daemon uses background actor threads for blocking I/O: syncing repos, querying GitHub, polling for spawnable issues, creating worktrees, pruning merged workers, and delivering nudges via tmux.
+The daemon uses background actor threads for blocking I/O: syncing repos, querying GitHub, polling for spawnable issues, creating worktrees, pruning merged workers, and delivering nudges through the configured mux backend.
 
 ## Nudges
 
-When agents get stuck, the daemon intervenes via `tmux send-keys`. Each nudge type has an independent counter and escalates after `max_nudges` (default 3) to a notification instead.
+When agents get stuck, the daemon intervenes by sending keystrokes through the mux backend (tmux or herdr). Each nudge type has an independent counter and escalates after `max_nudges` (default 3) to a notification instead.
 
 ### Nudge types
 
@@ -91,7 +91,7 @@ Nudges only fire for **draft PRs**. Once a PR is marked ready for review, the da
 
 When a PR is merged or closed, the daemon automatically:
 
-- Kills the tmux window
+- Kills the worker's window (tmux window or herdr tab)
 - Removes the worktree and event logs
 - Emits a `Terminal` event
 

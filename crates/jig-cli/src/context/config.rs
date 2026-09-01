@@ -55,6 +55,10 @@ pub struct Config {
     pub poll_interval: u64,
     pub session_prefix: String,
 
+    // Mux backend hosting worker terminals ("tmux" or "herdr").
+    // JIG_MUX env var overrides for one-off runs.
+    pub mux: jig_core::mux::MuxKind,
+
     // GitHub
     pub auto_cleanup_merged: bool,
     pub auto_cleanup_closed: bool,
@@ -77,6 +81,7 @@ impl Default for Config {
             auto_recover: true,
             tick_interval: 30,
             session_prefix: "jig-".to_string(),
+            mux: jig_core::mux::MuxKind::default(),
             auto_cleanup_merged: true,
             auto_cleanup_closed: false,
             notify: NotifyConfig::default(),

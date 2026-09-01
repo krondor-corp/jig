@@ -22,6 +22,15 @@ Find the right doc by what you're working on. The **Sources** column tells you w
 |----------|---------|---------|
 | [daemon.md](./daemon.md) | Tick loop, actor threads, nudging, auto-spawn, auto-prune, PR monitoring | `crates/jig-cli/src/daemon/` |
 | [STDOUT-FORMATTING.md](./STDOUT-FORMATTING.md) | Op trait pattern, Display impls, comfy-table usage, color conventions | `crates/jig-cli/src/cli/op.rs`, `crates/jig-cli/src/cli/ui/`, `crates/jig-cli/src/cli/commands/*.rs` |
+| [fleet-spec.md](./fleet-spec.md) | jig's identity + fleet direction: delivery loop across machines, hub + daemons over iroh, mux-agnostic (tmux/herdr per device), model switching, `ps --fleet` | `crates/jig-core/src/mux/`, `crates/jig-cli/src/daemon/` |
+| [daemon-service-plan.md](./daemon-service-plan.md) | Daemon-to-service refactor: IPC over unix socket, `jig daemon` subcommands, `service-manager` OS integration (Phase 1 of the fleet spec) | `crates/jig-cli/src/daemon/`, `crates/jig-cli/src/cli/commands/ps/` |
+
+### Product Direction
+
+| Document | Summary | Sources |
+|----------|---------|---------|
+| [knowledge-platform-spec.md](./knowledge-platform-spec.md) | **Primary differentiator.** pack as a curated, cross-repo knowledge base; jig as the always-fresh, human-curated-only sync/install layer, auto-synced at spawn/resume time | `crates/jig-core/src/pack/` (new), `crates/jig-cli/src/cli/commands/init.rs` |
+| [pack-integration-plan.md](./pack-integration-plan.md) | Underlying pack client design (mirrors the Linear provider pattern) — Phase A of the knowledge platform spec | `crates/jig-core/src/issues/providers/linear/` |
 
 ### Operations
 

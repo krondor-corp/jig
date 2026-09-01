@@ -108,7 +108,7 @@ Let the agent populate your docs automatically:
 jig init --audit
 ```
 
-This launches the agent in a `jig-init` tmux session to audit the codebase and fill in the skeleton docs. Attach with `tmux attach -t jig-init`. Pass extra instructions:
+This runs the agent as a one-shot foreground process to audit the codebase and fill in the skeleton docs — it blocks your terminal until the audit finishes. Pass extra instructions:
 
 ```bash
 jig init --audit "We use pnpm, not npm. The API is actix-web."

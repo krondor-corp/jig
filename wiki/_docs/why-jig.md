@@ -10,7 +10,7 @@ Every team is different. Sometimes different repos within a team have different 
 
 jig is:
 - **Malleable** — Extend it with your own skills and conventions
-- **Minimal** — A thin layer over git worktrees and tmux
+- **Minimal** — A thin layer over git worktrees and a terminal multiplexer (tmux or [herdr](https://herdr.dev))
 - **Terminal-native** — Stays out of your way
 
 If you want an integrated IDE experience, use Cursor or Windsurf. If you want a lightweight framework that works with any terminal-based ACA and respects your existing tooling, use jig.
@@ -21,7 +21,7 @@ You can! jig is mostly conveniences:
 
 - Automatic `.jig/` directory for tracking worktrees (gitignored)
 - Copying gitignored files (like `.env`) into new worktrees
-- tmux integration for spawning and managing agent sessions
+- A pluggable mux backend (tmux or herdr) for spawning and managing agent sessions
 - Scaffolding for documentation and issue tracking
 
 If you only need worktrees, use `git worktree` directly. jig helps when you're orchestrating multiple agents and want conventions across your team.

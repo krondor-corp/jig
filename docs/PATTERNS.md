@@ -56,7 +56,7 @@ impl Op for Create {
 
 - **jig-core modules**: One submodule directory per domain
   - `git/` — Git operations via git2: `Repo`, `Worktree`, `Branch`, `WorktreeRef`
-  - `mux/` — Multiplexer traits (`MuxSession`, `MuxWindow`) + tmux implementation
+  - `mux/` — `Mux` trait + backends (`TmuxMux`, `HerdrMux`)
   - `issues/` — Issue provider trait + Linear implementation
   - `agents/` — Agent adapters (Claude Code)
   - `github/` — GitHub API client and queries
@@ -171,9 +171,12 @@ Key conventions:
   - Associated functions for path-scoped operations (diff, status, commits ahead)
   - Errors propagate via `#[from] git2::Error` in the `Error` enum
 
-- **Multiplexer abstraction**: `MuxSession` and `MuxWindow` traits in `jig-core/src/mux/`
-  - `Worker<W: MuxWindow = TmuxWindow>` is generic over the mux backend
-  - Use `TmuxWorker` type alias for the concrete tmux-backed worker
+- **Multiplexer abstraction**: `Mux` trait in `jig-core/src/mux/`, dyn-dispatched (`Box<dyn Mux>`, `&dyn Mux`)
+  - Backends: `TmuxMux` (default) and `HerdrMux` (herdr — persistent PTYs, remote attach, live agent state)
+  - Backend choice is a `MuxKind` (`tmux`/`herdr`) read from global config (`jig config mux`), `JIG_MUX` env overrides per-run
+  - Construct via `mux::for_repo`/`for_repo_with_prefix`/`from_group_name` factories — never call `TmuxMux::new`/`HerdrMux::new` directly outside `mux/`
+  - `attach`/`attach_window` are default-method compositions of `focus`/`focus_window` (point the backend at a target) and `connect` (bring a client in front of the user) — implement the primitives, not the composed methods, when adding a backend
+  - `agent_state(&self, name) -> Option<AgentState>` lets a backend report live `idle/working/blocked/done` classification; default `None` (tmux has no such signal)
 
 - **Path handling**: Use `PathBuf` for owned paths, `&Path` for references
   - Canonicalize paths before displaying to users
