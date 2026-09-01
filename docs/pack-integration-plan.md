@@ -2,6 +2,13 @@
 
 Status: design spike (2026-06-28). Tracked in Linear under epic **KRO-164**.
 
+> **2026-09-01: promoted.** This plan's v0 (pull-only doc → skill sync) is now Phase A
+> of [knowledge-platform-spec.md](./knowledge-platform-spec.md) — jig's primary
+> differentiator, not a spike. That spec also resolves two things left open here:
+> curation is human-only (no agent write-back), and sync runs automatically at
+> `jig spawn`/`jig resume`, not as a manual step. Read it first; this doc is now the
+> client-implementation reference.
+
 ## Summary
 
 Today jig orchestrates coding agents from the outside: it creates worktrees, writes the
