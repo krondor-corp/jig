@@ -72,7 +72,7 @@ If automation fails, you can release manually:
 
 ```bash
 # Install cargo-smart-release
-cargo install cargo-smart-release
+cargo install cargo-smart-release --locked
 
 # Preview what would happen
 cargo smart-release jig-cli --no-publish

@@ -43,7 +43,7 @@ jobs:
             ${{ runner.os }}-cargo-index-
 
       - name: Install cargo-smart-release
-        run: cargo install cargo-smart-release
+        run: cargo install cargo-smart-release --locked
 
       - name: Configure git
         run: |
