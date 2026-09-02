@@ -351,11 +351,44 @@ impl Mux for HerdrMux {
     }
 }
 
+/// Point stdin/stdout/stderr at the controlling terminal.
+///
+/// Fails loudly when there is no controlling terminal: exec'ing an
+/// interactive client with nowhere to draw would hang instead of erroring.
+#[cfg(unix)]
+fn redirect_std_to_tty() -> Result<(), MuxError> {
+    use nix::unistd::{dup2_stderr, dup2_stdin, dup2_stdout};
+
+    let tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|e| MuxError::CommandFailed {
+            command: "herdr".to_string(),
+            detail: format!("no controlling terminal to attach to: {e}"),
+        })?;
+
+    for redirect in [dup2_stdin, dup2_stdout, dup2_stderr] {
+        redirect(&tty).map_err(|e| MuxError::CommandFailed {
+            command: "herdr".to_string(),
+            detail: format!("failed to redirect to /dev/tty: {e}"),
+        })?;
+    }
+    Ok(())
+}
+
 impl HerdrMux {
     /// Attach the herdr TUI client. On Unix, replaces the current process.
+    ///
+    /// The client renders to stdout rather than to `/dev/tty`, so it must be
+    /// handed the real terminal on all three standard fds before the exec.
+    /// jig is routinely run with its stdout captured — the shell integration
+    /// wraps every command in `$(command jig ...)` to catch `cd` output — and
+    /// a TUI drawing into that pipe looks to the user like a frozen terminal.
     #[cfg(unix)]
     fn attach_client(&self) -> Result<(), MuxError> {
         use std::ffi::CString;
+        redirect_std_to_tty()?;
         let cmd = CString::new("herdr").unwrap();
         let argv = [cmd.as_c_str()];
         let err = nix::unistd::execvp(cmd.as_c_str(), &argv);

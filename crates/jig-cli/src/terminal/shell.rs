@@ -8,6 +8,16 @@ const MARKER_END: &str = "# <<< jig shell integration <<<";
 const BASH_INIT: &str = r#"
 # jig shell integration for bash
 jig() {
+    # `attach` execs an interactive client into this process — it needs the
+    # terminal, not a capture pipe. Everything else is captured so that the
+    # `cd ...` line commands like `open` print can be eval'd.
+    case "$1" in
+        attach)
+            command jig "$@"
+            return $?
+            ;;
+    esac
+
     local output
     output=$(command jig "$@")
     local exit_code=$?
@@ -102,6 +112,16 @@ complete -F _jig jig
 const ZSH_INIT: &str = r##"
 # jig shell integration for zsh
 jig() {
+    # `attach` execs an interactive client into this process — it needs the
+    # terminal, not a capture pipe. Everything else is captured so that the
+    # `cd ...` line commands like `open` print can be eval'd.
+    case "$1" in
+        attach)
+            command jig "$@"
+            return $?
+            ;;
+    esac
+
     local output
     output=$(command jig "$@")
     local exit_code=$?
@@ -248,6 +268,14 @@ compdef _jig jig
 const FISH_INIT: &str = r#"
 # jig shell integration for fish
 function jig
+    # `attach` execs an interactive client into this process — it needs the
+    # terminal, not a capture pipe. Everything else is captured so that the
+    # `cd ...` line commands like `open` print can be eval'd.
+    if test "$argv[1]" = attach
+        command jig $argv
+        return $status
+    end
+
     set -l output (command jig $argv)
     set -l exit_code $status
     if string match -q 'cd *' "$output"
