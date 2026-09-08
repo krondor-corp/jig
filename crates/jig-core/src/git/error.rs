@@ -26,6 +26,9 @@ pub enum GitError {
     #[error("invalid path: {0}")]
     InvalidPath(PathBuf),
 
+    #[error("fetch failed: {0}")]
+    FetchFailed(String),
+
     #[error("push failed: {0}")]
     PushFailed(String),
 

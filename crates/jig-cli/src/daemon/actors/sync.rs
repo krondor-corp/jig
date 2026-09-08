@@ -1,4 +1,8 @@
 //! Sync actor — runs `git fetch` in a background thread.
+//!
+//! Fetch only: this advances remote-tracking refs so `origin/<base>` is fresh
+//! for worktree creation, and deliberately never fast-forwards local branches —
+//! a user or worker may have one checked out and in progress.
 
 use jig_core::git::Repo;
 
@@ -38,7 +42,7 @@ impl Actor for SyncActor {
             };
             match repo.fetch("origin", &[]) {
                 Ok(()) => tracing::debug!(repo = %name, "fetched origin"),
-                Err(e) => tracing::debug!(repo = %name, "fetch failed: {}", e),
+                Err(e) => tracing::warn!(repo = %name, "fetch failed: {}", e),
             }
         }
     }
