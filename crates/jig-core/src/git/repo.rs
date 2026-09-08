@@ -102,9 +102,22 @@ impl Repo {
     // ------------------------------------------------------------------
 
     /// Fetch from a remote. If `refspecs` is empty, fetches all refs.
+    ///
+    /// Only remote-tracking refs move — local branches are left alone, since a
+    /// user or worker may be working on one.
     pub fn fetch(&self, remote: &str, refspecs: &[&str]) -> Result<()> {
-        let mut remote = self.inner.find_remote(remote)?;
-        remote.fetch(refspecs, None, None)?;
+        let name = remote;
+        let mut remote = self
+            .inner
+            .find_remote(name)
+            .map_err(|e| GitError::FetchFailed(format!("no remote '{name}': {e}")))?;
+
+        let mut fetch_opts = git2::FetchOptions::new();
+        fetch_opts.remote_callbacks(remote_callbacks());
+
+        remote
+            .fetch(refspecs, Some(&mut fetch_opts), None)
+            .map_err(|e| GitError::FetchFailed(format!("fetch {name} failed: {e}")))?;
         Ok(())
     }
 
@@ -490,25 +503,8 @@ impl Repo {
             .find_remote("origin")
             .map_err(|e| GitError::PushFailed(format!("no remote 'origin': {e}")))?;
 
-        let mut callbacks = git2::RemoteCallbacks::new();
-        callbacks.credentials(|url, username_from_url, allowed_types| {
-            if allowed_types.contains(git2::CredentialType::SSH_KEY) {
-                git2::Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
-            } else if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-                git2::Cred::credential_helper(
-                    &git2::Config::open_default()?,
-                    url,
-                    username_from_url,
-                )
-            } else if allowed_types.contains(git2::CredentialType::DEFAULT) {
-                git2::Cred::default()
-            } else {
-                Err(git2::Error::from_str("no available credentials"))
-            }
-        });
-
         let mut push_opts = git2::PushOptions::new();
-        push_opts.remote_callbacks(callbacks);
+        push_opts.remote_callbacks(remote_callbacks());
 
         remote
             .push(&[&refspec], Some(&mut push_opts))
@@ -698,6 +694,27 @@ impl Repo {
 
         Err(GitError::BranchNotFound(base_branch.to_string()))
     }
+}
+
+/// Remote authentication callbacks — the single source of credentials for every
+/// network operation in this module. Both `fetch` and `push_branch` route
+/// through it; do not inline a second `credentials` closure. A remote operation
+/// that omits these callbacks fails against any authenticated remote with
+/// "authentication required but no callback set".
+fn remote_callbacks() -> git2::RemoteCallbacks<'static> {
+    let mut callbacks = git2::RemoteCallbacks::new();
+    callbacks.credentials(|url, username_from_url, allowed_types| {
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            git2::Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
+        } else if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+            git2::Cred::credential_helper(&git2::Config::open_default()?, url, username_from_url)
+        } else if allowed_types.contains(git2::CredentialType::DEFAULT) {
+            git2::Cred::default()
+        } else {
+            Err(git2::Error::from_str("no available credentials"))
+        }
+    });
+    callbacks
 }
 
 #[cfg(test)]
