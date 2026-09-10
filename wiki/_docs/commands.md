@@ -25,6 +25,8 @@ Quick reference for all jig commands.
 | `jig ps` | Show worker status dashboard |
 | `jig ps -w` | Watch mode with live updates |
 | `jig ps -gw` | Global watch — all repos, live updates, runs daemon lifecycle |
+| `jig daemon status` | Check the daemon is alive, ticking, and not stuck (default for `jig daemon`) |
+| `jig daemon logs` | Print the daemon's log (`-f` to follow, `-n` lines, `--path`) |
 | `jig attach <name>` | Attach to a worker's agent session (`-g` to search all repos, `--repo` to target one) |
 | `jig kill <name>` | Kill a worker's agent session (`-a` for all) |
 | `jig nuke` | Kill all workers and clear state (keeps config/hooks) |

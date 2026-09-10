@@ -24,19 +24,28 @@ fn main() {
     }
 }
 
-fn init_tracing(log_file: Option<std::path::PathBuf>) {
+fn init_tracing(log_file: Option<std::path::PathBuf>, is_daemon: bool) {
     use tracing_subscriber::prelude::*;
 
     let default_level = if log_file.is_some() { "info" } else { "warn" };
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level));
 
-    let file_layer = log_file.and_then(|path| {
-        std::fs::File::create(&path).ok().map(|file| {
-            tracing_subscriber::fmt::layer()
-                .with_writer(std::sync::Mutex::new(file))
-                .with_ansi(false)
-        })
+    // The daemon's log exists from the start so `jig daemon logs` can find
+    // it; one-off commands only create a file if they actually log.
+    let writer: Option<Box<dyn std::io::Write + Send>> = log_file.and_then(|path| {
+        let writer: Box<dyn std::io::Write + Send> = if is_daemon {
+            Box::new(std::fs::File::create(&path).ok()?)
+        } else {
+            Box::new(context::log::LazyFile::new(path.clone()))
+        };
+        context::log::set_session_log(path);
+        Some(writer)
+    });
+    let file_layer = writer.map(|writer| {
+        tracing_subscriber::fmt::layer()
+            .with_writer(std::sync::Mutex::new(writer))
+            .with_ansi(false)
     });
 
     // Only write to stderr when there's no log file — the watch mode
@@ -71,8 +80,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _ = context::ensure_global_dirs();
 
     // Every command gets a session log file
-    let log_file = context::new_daemon_log_path().ok();
-    init_tracing(log_file);
+    let is_daemon = cli.command.as_ref().is_some_and(|c| c.hosts_daemon());
+    let log_file = if is_daemon {
+        context::new_daemon_log_path()
+    } else {
+        context::new_session_log_path()
+    };
+    init_tracing(log_file.ok(), is_daemon);
 
     match cli.command {
         None => {

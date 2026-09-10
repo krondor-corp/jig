@@ -8,11 +8,12 @@ const MARKER_END: &str = "# <<< jig shell integration <<<";
 const BASH_INIT: &str = r#"
 # jig shell integration for bash
 jig() {
-    # `attach` execs an interactive client into this process — it needs the
-    # terminal, not a capture pipe. Everything else is captured so that the
-    # `cd ...` line commands like `open` print can be eval'd.
+    # `attach` execs an interactive client into this process and
+    # `daemon logs -f` streams until interrupted — both need the terminal,
+    # not a capture pipe. Everything else is captured so that the `cd ...`
+    # line commands like `open` print can be eval'd.
     case "$1" in
-        attach)
+        attach|daemon)
             command jig "$@"
             return $?
             ;;
@@ -112,11 +113,12 @@ complete -F _jig jig
 const ZSH_INIT: &str = r##"
 # jig shell integration for zsh
 jig() {
-    # `attach` execs an interactive client into this process — it needs the
-    # terminal, not a capture pipe. Everything else is captured so that the
-    # `cd ...` line commands like `open` print can be eval'd.
+    # `attach` execs an interactive client into this process and
+    # `daemon logs -f` streams until interrupted — both need the terminal,
+    # not a capture pipe. Everything else is captured so that the `cd ...`
+    # line commands like `open` print can be eval'd.
     case "$1" in
-        attach)
+        attach|daemon)
             command jig "$@"
             return $?
             ;;
@@ -268,10 +270,11 @@ compdef _jig jig
 const FISH_INIT: &str = r#"
 # jig shell integration for fish
 function jig
-    # `attach` execs an interactive client into this process — it needs the
-    # terminal, not a capture pipe. Everything else is captured so that the
-    # `cd ...` line commands like `open` print can be eval'd.
-    if test "$argv[1]" = attach
+    # `attach` execs an interactive client into this process and
+    # `daemon logs -f` streams until interrupted — both need the terminal,
+    # not a capture pipe. Everything else is captured so that the `cd ...`
+    # line commands like `open` print can be eval'd.
+    if contains -- "$argv[1]" attach daemon
         command jig $argv
         return $status
     end

@@ -64,6 +64,29 @@ Press `t` or `l` again to switch back. Press `q` to quit.
 
 The daemon uses background actor threads for blocking I/O: syncing repos, querying GitHub, polling for spawnable issues, creating worktrees, pruning merged workers, and delivering nudges through the configured mux backend.
 
+### Checking on the daemon
+
+`jig daemon status` tells you whether the daemon is actually alive — useful when workers seem to have stopped being nudged or spawned:
+
+```text
+✓ daemon running  pid 72706 · up 3h12m · v0.5.2
+  → last tick 1s ago (every 2s)
+  → log ~/.config/jig/state/logs/20260910T195104Z-daemon.log
+  → jig-monitor  last finished 1s ago
+  → jig-sync     last finished 1m40s ago
+  → jig-spawn    busy 45s (last finished 2m ago)
+```
+
+It reads a heartbeat the daemon rewrites every tick (`~/.config/jig/state/daemon-heartbeat.json`) and reports one of:
+
+- **running** — process alive, ticking on schedule
+- **stalled** — process alive but the tick loop stopped
+- **not running** — no daemon, or it exited without shutting down cleanly
+
+It also flags any actor that has been busy for over 10 minutes (e.g. a `git fetch` hung on auth), since the tick loop keeps running while a wedged actor silently skips its work. The command exits non-zero unless the daemon is healthy.
+
+`jig daemon logs` prints the daemon's own log; `-f` follows it (and moves to the new log when the daemon restarts), `-n` sets how many lines, `--path` prints the file path.
+
 ## Nudges
 
 When agents get stuck, the daemon intervenes by sending keystrokes through the mux backend (tmux or herdr). Each nudge type has an independent counter and escalates after `max_nudges` (default 3) to a notification instead.
@@ -170,7 +193,6 @@ Worker state is derived by replaying the event stream — there's no mutable sta
 jig ps                   # Status snapshot
 jig ps -w                # Watch mode (current repo)
 jig ps -gw               # Global watch — all repos, runs daemon
-jig daemon               # Headless daemon
-jig daemon --once        # Single tick
-jig daemon --interval 60 # Custom interval
+jig daemon status        # Is the daemon alive and ticking?
+jig daemon logs -f       # Follow the daemon's log
 ```
