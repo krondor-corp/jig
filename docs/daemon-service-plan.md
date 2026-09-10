@@ -6,6 +6,12 @@ Turn the in-process daemon into a persistent background service with IPC, manage
 > mux snapshot batching before daemonizing, `agent_state` in IPC status, and the
 > `WorkerSnapshot` type doubling as the fleet sync frame. Read the spec first.
 
+> **Already shipped (pre-IPC):** `jig daemon status` and `jig daemon logs` work
+> from files — the long-running daemon rewrites `state/daemon-heartbeat.json`
+> each tick (pid, last tick, per-actor busy/finished times, log path) and logs to
+> `state/logs/<ts>-daemon.log`. Phase 2's PID file should subsume the heartbeat,
+> and `status` should switch to `Request::Ping` once the socket exists.
+
 ## Design Decisions
 
 - **IPC**: JSON-over-Unix-domain-socket, newline-delimited (matches existing JSONL event log pattern, stdlib only)

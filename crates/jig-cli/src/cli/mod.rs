@@ -57,6 +57,7 @@ crate::command_enum! {
     (Version, commands::Version),
     (Which, commands::Which),
     (Health, commands::Health),
+    (Daemon, commands::Daemon),
 
     #[command(visible_alias = "h")]
     (Home, commands::Home),
@@ -67,4 +68,11 @@ crate::command_enum! {
 
     #[command(name = "shell-setup")]
     (ShellSetup, commands::ShellSetup),
+}
+
+impl Command {
+    /// Whether this invocation runs the long-running daemon loop.
+    pub fn hosts_daemon(&self) -> bool {
+        matches!(self, Command::Ps(ps) if ps.watch.is_some())
+    }
 }

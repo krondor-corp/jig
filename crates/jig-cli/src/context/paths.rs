@@ -49,6 +49,11 @@ pub fn daemon_log_path() -> Result<PathBuf, std::io::Error> {
     Ok(global_state_dir()?.join("daemon.jsonl"))
 }
 
+/// `~/.config/jig/state/daemon-heartbeat.json`
+pub fn daemon_heartbeat_path() -> Result<PathBuf, std::io::Error> {
+    Ok(global_state_dir()?.join("daemon-heartbeat.json"))
+}
+
 /// `~/.config/jig/<repo>/<branch>/`
 pub fn worker_events_dir(repo: &str, branch: &str) -> Result<PathBuf, std::io::Error> {
     Ok(global_config_dir()?.join(repo).join(branch))
@@ -79,13 +84,23 @@ pub fn daemon_logs_dir() -> Result<PathBuf, std::io::Error> {
     Ok(global_state_dir()?.join("logs"))
 }
 
-/// Create a new session log path: `~/.config/jig/state/logs/<YYYYMMDDTHHMMSSZ>.log`
-pub fn new_daemon_log_path() -> Result<PathBuf, std::io::Error> {
+const DAEMON_LOG_SUFFIX: &str = "-daemon.log";
+
+/// New log path for a one-off command: `~/.config/jig/state/logs/<YYYYMMDDTHHMMSSZ>.log`
+pub fn new_session_log_path() -> Result<PathBuf, std::io::Error> {
     let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
     Ok(daemon_logs_dir()?.join(format!("{}.log", ts)))
 }
 
-/// Find the most recent daemon log file (lexicographic sort on ISO timestamps).
+/// New log path for a daemon run: `~/.config/jig/state/logs/<YYYYMMDDTHHMMSSZ>-daemon.log`
+///
+/// The suffix keeps daemon logs findable among one-off command logs.
+pub fn new_daemon_log_path() -> Result<PathBuf, std::io::Error> {
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    Ok(daemon_logs_dir()?.join(format!("{}{}", ts, DAEMON_LOG_SUFFIX)))
+}
+
+/// Find the most recent daemon run's log (lexicographic sort on ISO timestamps).
 pub fn latest_daemon_log() -> Result<Option<PathBuf>, std::io::Error> {
     let dir = daemon_logs_dir()?;
     if !dir.exists() {
@@ -93,13 +108,11 @@ pub fn latest_daemon_log() -> Result<Option<PathBuf>, std::io::Error> {
     }
     let mut logs: Vec<_> = std::fs::read_dir(&dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "log")
-                .unwrap_or(false)
-        })
         .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with(DAEMON_LOG_SUFFIX))
+        })
         .collect();
     logs.sort();
     Ok(logs.pop())

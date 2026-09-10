@@ -77,7 +77,7 @@ impl Ps {
         let mut workers = vec![];
         let mut triages = vec![];
         let quit = AtomicBool::new(false);
-        let mut daemon = crate::daemon::Daemon::start(cfg)?;
+        let mut daemon = crate::daemon::Daemon::oneshot(cfg)?;
         daemon.run(&quit, |daemon| {
             // The monitor pass runs on its actor thread; a one-shot ps must
             // wait for it or it reads the pre-tick (empty) state.
@@ -146,7 +146,8 @@ fn run_watch(cfg: Context, global: bool) {
 
     let mut view_mode = ViewMode::Table;
     let mut log_buffer: VecDeque<String> = VecDeque::with_capacity(LOG_BUFFER_SIZE);
-    let mut log_tailer = crate::context::log::LogTailer::new();
+    let mut log_tailer = crate::context::log::session_log()
+        .map(|path| crate::context::log::LogTailer::from_end(path.to_path_buf()));
 
     terminal::enable_raw_mode().ok();
     eprint!("\x1B[2J");
@@ -200,7 +201,11 @@ fn run_watch(cfg: Context, global: bool) {
             view_mode.toggle();
         }
 
-        for line in log_tailer.poll(LOG_BUFFER_SIZE) {
+        let new_lines = log_tailer
+            .as_mut()
+            .map(|t| t.poll(LOG_BUFFER_SIZE))
+            .unwrap_or_default();
+        for line in new_lines {
             if log_buffer.len() >= LOG_BUFFER_SIZE {
                 log_buffer.pop_front();
             }

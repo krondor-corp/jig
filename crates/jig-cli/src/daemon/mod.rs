@@ -8,6 +8,7 @@
 pub mod actors;
 pub mod checks;
 pub mod events;
+pub mod heartbeat;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -59,12 +60,30 @@ pub struct Daemon {
     config: Config,
     registry: RepoRegistry,
     last_poll: Instant,
+    /// Long-running (`ps --watch`) rather than a single one-shot tick. Only
+    /// long-running daemons record lifecycle events and a heartbeat.
+    persistent: bool,
+    started_at: i64,
 }
 
 impl Daemon {
-    /// Create and start the daemon from a Config.
+    /// Start a long-running daemon: records lifecycle events in
+    /// `daemon.jsonl` and keeps the heartbeat `jig daemon status` reads.
     pub fn start(cfg: Context) -> Result<Self, DaemonError> {
-        startup_recovery(&cfg.config, &cfg.registry);
+        Self::new(cfg, true)
+    }
+
+    /// Start a daemon for a one-shot tick (plain `jig ps`). Leaves the
+    /// lifecycle log and heartbeat to any long-running daemon.
+    pub fn oneshot(cfg: Context) -> Result<Self, DaemonError> {
+        Self::new(cfg, false)
+    }
+
+    fn new(cfg: Context, persistent: bool) -> Result<Self, DaemonError> {
+        if persistent {
+            log_startup();
+        }
+        recover_orphans(&cfg.config, &cfg.registry);
         let _notifier = make_notifier(&cfg.config)?;
 
         let last_poll = Instant::now() - Duration::from_secs(cfg.config.poll_interval + 1);
@@ -77,6 +96,8 @@ impl Daemon {
             config: cfg.config,
             registry: cfg.registry,
             last_poll,
+            persistent,
+            started_at: chrono::Utc::now().timestamp(),
         })
     }
 
@@ -109,7 +130,10 @@ impl Daemon {
                 }
             }
         }
-        log_shutdown("normal");
+        if self.persistent {
+            heartbeat::Heartbeat::clear(std::process::id());
+            log_shutdown("normal");
+        }
     }
 
     /// Whether the poll interval has elapsed.
@@ -160,7 +184,31 @@ impl Daemon {
             self.mark_polled();
         }
 
+        if self.persistent {
+            if let Err(e) = self.heartbeat().write() {
+                tracing::warn!("failed to write daemon heartbeat: {}", e);
+            }
+        }
+
         Ok(())
+    }
+
+    fn heartbeat(&self) -> heartbeat::Heartbeat {
+        heartbeat::Heartbeat {
+            pid: std::process::id(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            started_at: self.started_at,
+            ticked_at: chrono::Utc::now().timestamp(),
+            tick_interval: self.config.tick_interval,
+            log: crate::context::log::session_log().map(Into::into),
+            actors: vec![
+                self.monitor.activity(),
+                self.sync.activity(),
+                self.prune.activity(),
+                self.spawn.activity(),
+                self.triage.activity(),
+            ],
+        }
     }
 }
 
@@ -196,8 +244,8 @@ fn make_notifier(global_config: &Config) -> Result<crate::notify::Notifier, Daem
     ))
 }
 
-/// Run startup recovery: log lifecycle event, detect crash, resume orphans.
-fn startup_recovery(global_config: &Config, registry: &RepoRegistry) {
+/// Log the Started lifecycle event, noting if the previous run crashed.
+fn log_startup() {
     let log = match events::global() {
         Ok(l) => l,
         Err(e) => {
@@ -223,7 +271,10 @@ fn startup_recovery(global_config: &Config, registry: &RepoRegistry) {
     if let Err(e) = log.append(&events::started()) {
         tracing::warn!("failed to write daemon Started event: {}", e);
     }
+}
 
+/// Resume workers whose mux window died, if `auto_recover` is on.
+fn recover_orphans(global_config: &Config, registry: &RepoRegistry) {
     if global_config.auto_recover {
         let mut recovered = Vec::new();
         for entry in registry.repos() {

@@ -7,4 +7,4 @@ pub mod spawn;
 pub mod sync;
 pub mod triage;
 
-pub use actor::{Actor, ActorHandle};
+pub use actor::{Actor, ActorActivity, ActorHandle};
