@@ -73,6 +73,12 @@ crate::command_enum! {
 impl Command {
     /// Whether this invocation runs the long-running daemon loop.
     pub fn hosts_daemon(&self) -> bool {
-        matches!(self, Command::Ps(ps) if ps.watch.is_some())
+        match self {
+            Command::Daemon(d) => d.command.as_ref().is_some_and(|c| c.hosts_daemon()),
+            // `ps --watch` only hosts a daemon when none is already running;
+            // when it does, its log is the daemon log `jig daemon logs` shows.
+            Command::Ps(ps) => ps.watch.is_some(),
+            _ => false,
+        }
     }
 }

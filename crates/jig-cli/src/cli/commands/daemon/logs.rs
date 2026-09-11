@@ -30,7 +30,7 @@ pub struct Logs {
 
 #[derive(Debug, thiserror::Error)]
 pub enum LogsError {
-    #[error("no daemon log found — the daemon runs inside `jig ps -gw`")]
+    #[error("no daemon log found — start the daemon with `jig daemon start`")]
     NoLog,
     #[error("failed to read daemon log {0}: {1}")]
     Read(PathBuf, std::io::Error),
