@@ -859,7 +859,11 @@ mod remote_tests {
             super::super::Worktree::open(&foreign),
             Err(GitError::NotJigWorktree(_))
         ));
-        assert_eq!(repo.foreign_worktree_paths().unwrap(), vec![foreign]);
+        // git2 reports resolved paths (/private/var vs /var on macOS).
+        assert_eq!(
+            repo.foreign_worktree_paths().unwrap(),
+            vec![foreign.canonicalize().unwrap()]
+        );
         assert_eq!(repo.linked_worktree_paths().unwrap().len(), 2);
     }
 
