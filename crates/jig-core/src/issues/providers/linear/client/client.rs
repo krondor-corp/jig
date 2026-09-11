@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -6,8 +8,21 @@ use super::request::LinearRequest;
 
 const LINEAR_API_URL: &str = "https://api.linear.app/graphql";
 
+/// Upper bound on a whole Linear request, connect through body.
+///
+/// ureq has no timeouts by default, and the daemon's actors call Linear on
+/// every poll. A connection that dies without a reset (typically across
+/// laptop sleep) would block the actor forever — and since `ActorHandle`
+/// drops requests while one is in flight, auto-spawn and triage silently
+/// stop until the daemon restarts. Failing after this long just skips a
+/// poll; the next one retries.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub struct LinearClient {
     api_key: String,
+    endpoint: String,
+    timeout: Duration,
 }
 
 #[derive(Serialize)]
@@ -31,6 +46,8 @@ impl LinearClient {
     pub fn new(api_key: &str) -> Self {
         Self {
             api_key: api_key.to_string(),
+            endpoint: LINEAR_API_URL.to_string(),
+            timeout: REQUEST_TIMEOUT,
         }
     }
 
@@ -47,9 +64,11 @@ impl LinearClient {
     ) -> Result<T> {
         let body = GqlBody { query, variables };
 
-        let response = ureq::post(LINEAR_API_URL)
+        let response = ureq::post(&self.endpoint)
             .config()
             .http_status_as_error(false)
+            .timeout_global(Some(self.timeout))
+            .timeout_connect(Some(CONNECT_TIMEOUT.min(self.timeout)))
             .build()
             .header("Authorization", &self.api_key)
             .header("Content-Type", "application/json")
@@ -81,5 +100,34 @@ impl LinearClient {
         }
 
         gql.data.ok_or(LinearError::NoData)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unresponsive_server_times_out_instead_of_hanging() {
+        // Accepts the connection, then never answers — like a socket that
+        // died across sleep without a reset.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let _held: Vec<_> = listener.incoming().collect();
+        });
+
+        let client = LinearClient {
+            api_key: "test".into(),
+            endpoint: format!("http://{addr}/graphql"),
+            timeout: Duration::from_millis(300),
+        };
+
+        let started = std::time::Instant::now();
+        let result: Result<serde_json::Value> =
+            client.raw_execute("{ viewer { id } }", serde_json::json!({}));
+
+        assert!(matches!(result, Err(LinearError::Http(_))), "{result:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
