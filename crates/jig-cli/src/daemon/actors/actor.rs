@@ -84,7 +84,7 @@ impl<A: Actor> ActorHandle<A> {
                     let now = chrono::Utc::now().timestamp();
                     bg_timings.last_finished.store(now, Ordering::Relaxed);
                     bg_timings.busy_since.store(0, Ordering::Relaxed);
-                    bg_pending.store(false, Ordering::Relaxed);
+                    bg_pending.store(false, Ordering::Release);
                     match result {
                         Ok(resp) => {
                             if resp_tx.send(resp).is_err() {
@@ -119,14 +119,20 @@ impl<A: Actor> Default for ActorHandle<A> {
 }
 
 impl<A: Actor> ActorHandle<A> {
+    /// Dispatch `req` unless a request is already in flight.
+    ///
+    /// `pending` must be claimed *before* the request is handed over. Setting
+    /// it after `try_send` let a fast `handle` finish and clear it first; the
+    /// late `store(true)` then stuck, and every later `send` was refused —
+    /// the actor silently never ran again until the daemon restarted.
     pub fn send(&self, req: A::Request) -> bool {
-        if self.pending.load(Ordering::Relaxed) {
+        if self.pending.swap(true, Ordering::AcqRel) {
             return false;
         }
         if self.tx.try_send(req).is_ok() {
-            self.pending.store(true, Ordering::Relaxed);
             true
         } else {
+            self.pending.store(false, Ordering::Release);
             false
         }
     }
@@ -140,7 +146,7 @@ impl<A: Actor> ActorHandle<A> {
     }
 
     pub fn is_pending(&self) -> bool {
-        self.pending.load(Ordering::Relaxed)
+        self.pending.load(Ordering::Acquire)
     }
 
     pub fn actor(&self) -> &A {
@@ -195,6 +201,37 @@ mod tests {
                 "actor stuck pending"
             );
             std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Answers instantly — the widest window for `send` racing the thread.
+    #[derive(Default)]
+    struct Instant0;
+
+    impl Actor for Instant0 {
+        type Request = ();
+        type Response = ();
+
+        const NAME: &'static str = "test-instant";
+        const QUEUE_SIZE: usize = 1;
+
+        fn handle(&self, _: ()) {}
+    }
+
+    #[test]
+    fn fast_actor_never_wedges_pending() {
+        let handle = ActorHandle::<Instant0>::new();
+        for _ in 0..200_000 {
+            assert!(handle.send(()), "send refused: actor wedged pending");
+            let start = Instant::now();
+            while handle.is_pending() {
+                assert!(
+                    start.elapsed() < Duration::from_secs(5),
+                    "actor stuck pending"
+                );
+                std::thread::yield_now();
+            }
+            handle.drain();
         }
     }
 
