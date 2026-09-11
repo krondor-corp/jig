@@ -8,6 +8,11 @@ pub enum GitError {
     #[error("not in a worktree")]
     NotInWorktree,
 
+    /// A linked worktree that jig didn't create — e.g. one made by Claude
+    /// Code under `.claude/worktrees/`. jig leaves these alone.
+    #[error("{} is not a jig worktree (not under .jig/)", .0.display())]
+    NotJigWorktree(PathBuf),
+
     #[error("branch '{0}' not found")]
     BranchNotFound(String),
 
