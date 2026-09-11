@@ -8,9 +8,11 @@
 pub mod actors;
 pub mod checks;
 pub mod events;
-pub mod heartbeat;
+pub mod ipc;
+pub mod pidfile;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -43,11 +45,61 @@ use actors::prune::PruneActor;
 use actors::spawn::SpawnActor;
 use actors::sync::SyncActor;
 use actors::triage::TriageActor;
-use actors::ActorHandle;
+use actors::{ActivityProbe, ActorHandle};
 
 pub use crate::worker::events::WorkerState;
 pub use actors::triage::TriageEntry;
 pub use checks::{PrChecks, PrHealth};
+pub use ipc::{DaemonInfo, DaemonStatus, WorkerSnapshot};
+
+/// Everything the IPC listener needs, without the `Daemon` itself.
+///
+/// The listener runs on its own thread and must never block a tick (nor be
+/// blocked by one). Actors already hold their state behind interior
+/// mutability, so sharing the `Arc`s plus a couple of atomics is enough —
+/// no `Arc<Mutex<Daemon>>`, and no chance of a slow status request wedging
+/// the loop.
+#[derive(Clone)]
+pub struct DaemonShared {
+    monitor: Arc<MonitorActor>,
+    triage: Arc<TriageActor>,
+    spawn: Arc<SpawnActor>,
+    probes: Arc<Vec<ActivityProbe>>,
+    /// Unix timestamp of the last completed tick.
+    ticked_at: Arc<AtomicI64>,
+    /// Unix timestamp the next poll tick is due.
+    poll_deadline: Arc<AtomicI64>,
+    started_at: i64,
+    tick_interval: u64,
+    log: Option<PathBuf>,
+}
+
+impl DaemonShared {
+    /// Identity and liveness — the answer to `Request::Ping`.
+    pub fn info(&self) -> DaemonInfo {
+        DaemonInfo {
+            pid: std::process::id(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            started_at: self.started_at,
+            ticked_at: self.ticked_at.load(Ordering::Relaxed),
+            tick_interval: self.tick_interval,
+            log: self.log.clone(),
+            actors: self.probes.iter().map(ActivityProbe::activity).collect(),
+        }
+    }
+
+    /// The full frame `jig ps` renders — the answer to `Request::GetStatus`.
+    pub fn status(&self) -> DaemonStatus {
+        let now = chrono::Utc::now().timestamp();
+        DaemonStatus {
+            info: self.info(),
+            workers: self.monitor.workers().iter().map(Into::into).collect(),
+            triages: self.triage.active_entries(),
+            spawning: self.spawn.spawning_workers(),
+            poll_remaining: (self.poll_deadline.load(Ordering::Relaxed) - now).max(0) as u64,
+        }
+    }
+}
 
 /// The daemon — owns actors and drives the tick loop.
 pub struct Daemon {
@@ -60,21 +112,21 @@ pub struct Daemon {
     config: Config,
     registry: RepoRegistry,
     last_poll: Instant,
-    /// Long-running (`ps --watch`) rather than a single one-shot tick. Only
-    /// long-running daemons record lifecycle events and a heartbeat.
+    /// Long-running (`jig daemon start`, `ps --watch`) rather than a single
+    /// one-shot tick. Only long-running daemons record lifecycle events.
     persistent: bool,
-    started_at: i64,
+    shared: DaemonShared,
 }
 
 impl Daemon {
     /// Start a long-running daemon: records lifecycle events in
-    /// `daemon.jsonl` and keeps the heartbeat `jig daemon status` reads.
+    /// `daemon.jsonl` and can serve IPC via [`Self::shared`].
     pub fn start(cfg: Context) -> Result<Self, DaemonError> {
         Self::new(cfg, true)
     }
 
-    /// Start a daemon for a one-shot tick (plain `jig ps`). Leaves the
-    /// lifecycle log and heartbeat to any long-running daemon.
+    /// Start a daemon for a one-shot tick (plain `jig ps` with no daemon
+    /// running). Leaves the lifecycle log to any long-running daemon.
     pub fn oneshot(cfg: Context) -> Result<Self, DaemonError> {
         Self::new(cfg, false)
     }
@@ -87,22 +139,58 @@ impl Daemon {
         let _notifier = make_notifier(&cfg.config)?;
 
         let last_poll = Instant::now() - Duration::from_secs(cfg.config.poll_interval + 1);
+        let started_at = chrono::Utc::now().timestamp();
+
+        let sync = ActorHandle::<SyncActor>::new();
+        let monitor = ActorHandle::<MonitorActor>::new();
+        let prune = ActorHandle::<PruneActor>::new();
+        let spawn = ActorHandle::<SpawnActor>::new();
+        let triage = ActorHandle::<TriageActor>::new();
+
+        let shared = DaemonShared {
+            monitor: monitor.shared(),
+            triage: triage.shared(),
+            spawn: spawn.shared(),
+            probes: Arc::new(vec![
+                monitor.probe(),
+                sync.probe(),
+                prune.probe(),
+                spawn.probe(),
+                triage.probe(),
+            ]),
+            ticked_at: Arc::new(AtomicI64::new(started_at)),
+            poll_deadline: Arc::new(AtomicI64::new(started_at)),
+            started_at,
+            tick_interval: cfg.config.tick_interval,
+            log: crate::context::log::session_log().map(Into::into),
+        };
+
         Ok(Self {
-            sync: ActorHandle::new(),
-            monitor: ActorHandle::new(),
-            prune: ActorHandle::new(),
-            spawn: ActorHandle::new(),
-            triage: ActorHandle::new(),
+            sync,
+            monitor,
+            prune,
+            spawn,
+            triage,
             config: cfg.config,
             registry: cfg.registry,
             last_poll,
             persistent,
-            started_at: chrono::Utc::now().timestamp(),
+            shared,
         })
     }
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// A handle the IPC listener can hold while the tick loop keeps running.
+    pub fn shared(&self) -> DaemonShared {
+        self.shared.clone()
+    }
+
+    /// The frame `jig ps` renders, as the daemon would answer it over IPC.
+    pub fn snapshot(&self) -> DaemonStatus {
+        self.shared.status()
     }
 
     /// Run the tick loop. Checks `quit` between ticks; calls `on_tick` after
@@ -131,7 +219,6 @@ impl Daemon {
             }
         }
         if self.persistent {
-            heartbeat::Heartbeat::clear(std::process::id());
             log_shutdown("normal");
         }
     }
@@ -144,6 +231,10 @@ impl Daemon {
     /// Mark that a poll tick just fired.
     fn mark_polled(&mut self) {
         self.last_poll = Instant::now();
+        self.shared.poll_deadline.store(
+            chrono::Utc::now().timestamp() + self.config.poll_interval as i64,
+            Ordering::Relaxed,
+        );
     }
 
     /// Seconds until the next poll tick.
@@ -184,31 +275,13 @@ impl Daemon {
             self.mark_polled();
         }
 
-        if self.persistent {
-            if let Err(e) = self.heartbeat().write() {
-                tracing::warn!("failed to write daemon heartbeat: {}", e);
-            }
-        }
+        // Published last, so a stale `ticked_at` over IPC means the tick
+        // itself wedged rather than that we simply have not started one.
+        self.shared
+            .ticked_at
+            .store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
 
         Ok(())
-    }
-
-    fn heartbeat(&self) -> heartbeat::Heartbeat {
-        heartbeat::Heartbeat {
-            pid: std::process::id(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            started_at: self.started_at,
-            ticked_at: chrono::Utc::now().timestamp(),
-            tick_interval: self.config.tick_interval,
-            log: crate::context::log::session_log().map(Into::into),
-            actors: vec![
-                self.monitor.activity(),
-                self.sync.activity(),
-                self.prune.activity(),
-                self.spawn.activity(),
-                self.triage.activity(),
-            ],
-        }
     }
 }
 
