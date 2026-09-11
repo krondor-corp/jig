@@ -407,6 +407,9 @@ impl Watch {
 
 impl Drop for Watch {
     fn drop(&mut self) {
+        // Stop the key reader too, or it keeps swallowing keystrokes from
+        // whatever runs after the view closes.
+        self.quit.store(true, Ordering::Relaxed);
         disable_raw_mode().ok();
     }
 }

@@ -278,6 +278,8 @@ pub enum IpcError {
     NotRunning,
     #[error("daemon already running (pid {0})")]
     AlreadyRunning(u32),
+    #[error("another daemon is already listening on {0}")]
+    SocketInUse(PathBuf),
     #[error("daemon socket {0}: {1}")]
     Socket(PathBuf, std::io::Error),
     #[error("failed to talk to the daemon: {0}")]
@@ -381,13 +383,12 @@ impl Server {
 
         if path.exists() {
             match UnixStream::connect(&path) {
-                Ok(_) => {
-                    let pid = super::pidfile::PidFile::running_pid()
-                        .ok()
-                        .flatten()
-                        .unwrap_or(0);
-                    return Err(IpcError::AlreadyRunning(pid));
-                }
+                // Reached only when the PID file did not already stop us —
+                // someone is listening without holding the daemon slot.
+                Ok(_) => match super::pidfile::PidFile::running_pid().ok().flatten() {
+                    Some(pid) => return Err(IpcError::AlreadyRunning(pid)),
+                    None => return Err(IpcError::SocketInUse(path)),
+                },
                 Err(_) => {
                     tracing::info!(path = %path.display(), "removing stale daemon socket");
                     std::fs::remove_file(&path)?;
@@ -397,8 +398,15 @@ impl Server {
 
         let listener = UnixListener::bind(&path).map_err(|e| IpcError::Socket(path.clone(), e))?;
         listener.set_nonblocking(true)?;
-        // The socket carries this user's worker state; keep it to the owner
-        // even when the fallback directory is more permissive.
+        // The socket carries this user's worker state. `$XDG_RUNTIME_DIR` is
+        // already 0700, but the `~/.config/jig/state` fallback is not — and
+        // locking down the directory closes the window between `bind` and
+        // this `set_permissions` that tightening only the socket would leave
+        // open.
+        let owner_only = std::fs::Permissions::from_mode(0o700);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::set_permissions(parent, owner_only);
+        }
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
 
         Ok(Self { listener, path })
