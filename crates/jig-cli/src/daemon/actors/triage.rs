@@ -20,7 +20,7 @@ pub struct TriageRequest {
     pub ctx: TickContext,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TriageEntry {
     pub spawned_at: i64,
     pub issue_id: String,
