@@ -232,6 +232,30 @@ impl Repo {
         Ok(worktrees)
     }
 
+    /// Every linked worktree git knows about whose directory still exists,
+    /// whoever created it.
+    pub fn linked_worktree_paths(&self) -> Result<Vec<PathBuf>> {
+        let mut paths = Vec::new();
+        self.for_each_worktree(|_name, wt| {
+            if wt.path().exists() {
+                paths.push(wt.path().to_path_buf());
+            }
+            Ok(())
+        })?;
+        Ok(paths)
+    }
+
+    /// Linked worktrees outside `.jig/` (e.g. Claude Code's
+    /// `.claude/worktrees/`), which [`Repo::list_worktrees`] skips.
+    pub fn foreign_worktree_paths(&self) -> Result<Vec<PathBuf>> {
+        let jig_dir = self.worktrees_path();
+        Ok(self
+            .linked_worktree_paths()?
+            .into_iter()
+            .filter(|p| !p.starts_with(&jig_dir))
+            .collect())
+    }
+
     /// Create a worktree for `branch`, forking from `base` if the branch
     /// doesn't exist yet. Ensures the base branch is also checked out.
     pub fn create_worktree(&self, branch: &Branch, base: &Branch) -> Result<PathBuf> {
@@ -835,6 +859,8 @@ mod remote_tests {
             super::super::Worktree::open(&foreign),
             Err(GitError::NotJigWorktree(_))
         ));
+        assert_eq!(repo.foreign_worktree_paths().unwrap(), vec![foreign]);
+        assert_eq!(repo.linked_worktree_paths().unwrap().len(), 2);
     }
 
     #[test]
