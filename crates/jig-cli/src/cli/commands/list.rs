@@ -92,6 +92,7 @@ impl Op for List {
                     &r.repo.name(),
                 );
                 eprintln!("{table}");
+                note_foreign_worktrees(&git_repo, &r.repo.repo_root);
                 Ok(ListOutput(String::new()))
             }
         }
@@ -101,13 +102,13 @@ impl Op for List {
 impl List {
     fn list_all_git_worktrees(&self) -> Result<ListOutput, ListError> {
         let repo = Repo::discover()?;
-        let worktrees = repo.list_worktrees()?;
-        for wt in &worktrees {
-            let branch_display = match wt.branch() {
+        // Every worktree, including ones jig doesn't manage.
+        for path in repo.linked_worktree_paths()? {
+            let branch_display = match Repo::open(&path).and_then(|r| r.current_branch()) {
                 Ok(b) => ui::highlight(&b),
                 Err(_) => ui::dim("(detached)"),
             };
-            eprintln!("{} {}", wt.path().display(), branch_display);
+            eprintln!("{} {}", path.display(), branch_display);
         }
         Ok(ListOutput(String::new()))
     }
@@ -162,9 +163,36 @@ impl List {
             let table =
                 build_worktree_table(&worktrees, &cfg.worktrees_path, &base_branch, &cfg.name());
             eprintln!("{table}");
+            note_foreign_worktrees(&git_repo, &cfg.repo_root);
         }
         Ok(ListOutput(String::new()))
     }
+}
+
+/// Say when worktrees were left out because jig didn't create them, so they
+/// don't just vanish from the listing.
+fn note_foreign_worktrees(repo: &Repo, repo_root: &Path) {
+    let foreign = repo.foreign_worktree_paths().unwrap_or_default();
+    if foreign.is_empty() {
+        return;
+    }
+    let paths: Vec<String> = foreign
+        .iter()
+        .map(|p| p.strip_prefix(repo_root).unwrap_or(p).display().to_string())
+        .collect();
+    let noun = if paths.len() == 1 {
+        "worktree"
+    } else {
+        "worktrees"
+    };
+    eprintln!(
+        "{}",
+        ui::dim(&format!(
+            "not shown: {} {noun} not created by jig ({}) — see `jig ls --all`",
+            paths.len(),
+            paths.join(", ")
+        ))
+    );
 }
 
 /// Get worker status from event log for a worktree.

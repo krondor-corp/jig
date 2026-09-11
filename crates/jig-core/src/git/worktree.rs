@@ -44,10 +44,16 @@ impl std::fmt::Display for WorktreeRef {
     }
 }
 
-/// A validated linked git worktree. Guarantees the underlying repo
-/// is a worktree, not the main clone.
+/// A validated jig-managed worktree. Guarantees the underlying repo is a
+/// linked worktree (not the main clone) living under the repo's `.jig/`.
+///
+/// Other linked worktrees (Claude Code's `.claude/worktrees/`, hand-made
+/// ones) fail to open with [`GitError::NotJigWorktree`], so everything built
+/// on `Worktree` — discovery, the daemon, hooks — skips them.
 pub struct Worktree {
     repo: Repo,
+    /// Path relative to `.jig/` — the worker's identity.
+    name: Branch,
 }
 
 impl Worktree {
@@ -67,7 +73,12 @@ impl Worktree {
         if !repo.inner().is_worktree() {
             return Err(GitError::NotInWorktree);
         }
-        Ok(Self { repo })
+        let path = repo.root()?;
+        let name = match path.strip_prefix(repo.worktrees_path()) {
+            Ok(rel) => Branch::new(rel.to_string_lossy().as_ref()),
+            Err(_) => return Err(GitError::NotJigWorktree(path)),
+        };
+        Ok(Self { repo, name })
     }
 
     /// Create a git worktree on disk: ensures `.jig` is git-excluded,
@@ -117,14 +128,10 @@ impl Worktree {
         self.repo.root().expect("worktrees always have a workdir")
     }
 
+    /// The worker name: this worktree's path relative to `.jig/`. Not
+    /// necessarily the checked-out git branch — see [`Worktree::branch`].
     pub fn branch_name(&self) -> Branch {
-        let worktrees_path = self.repo.worktrees_path();
-        let path = self.path();
-        let name = path
-            .strip_prefix(&worktrees_path)
-            .expect("worktree path must be under worktrees dir")
-            .to_string_lossy();
-        Branch::new(name.as_ref())
+        self.name.clone()
     }
 
     pub fn repo_root(&self) -> PathBuf {

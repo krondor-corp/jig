@@ -212,6 +212,8 @@ impl Repo {
     // ------------------------------------------------------------------
 
     /// List all linked worktrees (not the main clone).
+    /// jig-managed worktrees (those under `.jig/`). Worktrees made by other
+    /// tools are skipped — see [`super::Worktree`].
     pub fn list_worktrees(&self) -> Result<Vec<super::Worktree>> {
         let wt_names = self.inner.worktrees()?;
         let mut worktrees = Vec::with_capacity(wt_names.len());
@@ -228,6 +230,30 @@ impl Repo {
             worktrees.push(worktree);
         }
         Ok(worktrees)
+    }
+
+    /// Every linked worktree git knows about whose directory still exists,
+    /// whoever created it.
+    pub fn linked_worktree_paths(&self) -> Result<Vec<PathBuf>> {
+        let mut paths = Vec::new();
+        self.for_each_worktree(|_name, wt| {
+            if wt.path().exists() {
+                paths.push(wt.path().to_path_buf());
+            }
+            Ok(())
+        })?;
+        Ok(paths)
+    }
+
+    /// Linked worktrees outside `.jig/` (e.g. Claude Code's
+    /// `.claude/worktrees/`), which [`Repo::list_worktrees`] skips.
+    pub fn foreign_worktree_paths(&self) -> Result<Vec<PathBuf>> {
+        let jig_dir = self.worktrees_path();
+        Ok(self
+            .linked_worktree_paths()?
+            .into_iter()
+            .filter(|p| !p.starts_with(&jig_dir))
+            .collect())
     }
 
     /// Create a worktree for `branch`, forking from `base` if the branch
@@ -550,10 +576,16 @@ impl Repo {
             }
         }
 
-        Ok(clone
-            .list_worktrees()?
-            .iter()
-            .any(|wt| wt.branch().is_ok_and(|b| &*b == local)))
+        // Every linked worktree counts here, not just jig's — git refuses to
+        // check a branch out twice no matter who made the other worktree.
+        let mut checked_out = false;
+        clone.for_each_worktree(|_name, wt| {
+            if let Ok(repo) = Repo::open(wt.path()) {
+                checked_out |= repo.current_branch().is_ok_and(|b| &*b == local);
+            }
+            Ok(())
+        })?;
+        Ok(checked_out)
     }
 
     /// Low-level: create a git2 worktree at `path` for `branch`, forking
@@ -789,6 +821,63 @@ mod remote_tests {
         let repo = Repo::open(tmp.path()).unwrap();
         let result = repo.find_valid_start_point("main");
         assert!(result.is_ok(), "expected Ok for existing local branch");
+    }
+
+    /// A worktree another tool made outside `.jig/` (like Claude Code's
+    /// `.claude/worktrees/<name>`), on branch `claude/branch`.
+    fn add_foreign_worktree(git: &git2::Repository, root: &Path) -> PathBuf {
+        let head = git.head().unwrap().peel_to_commit().unwrap();
+        let branch = git.branch("claude/branch", &head, false).unwrap();
+        let path = root.join(".claude/worktrees/indexing-rework");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut opts = git2::WorktreeAddOptions::new();
+        opts.reference(Some(branch.get()));
+        git.worktree("indexing-rework", &path, Some(&opts)).unwrap();
+        path
+    }
+
+    #[test]
+    fn foreign_worktrees_are_ignored_not_fatal() {
+        let tmp = TempDir::new().unwrap();
+        let git = init_repo_with_commit(tmp.path());
+        let repo = Repo::open(tmp.path()).unwrap();
+        repo.create_worktree(&"feat/mine".into(), &"main".into())
+            .unwrap();
+        let foreign = add_foreign_worktree(&git, tmp.path());
+
+        // Discovery sees only jig's worktree — this used to panic in
+        // `branch_name` ("worktree path must be under worktrees dir").
+        let names: Vec<String> = repo
+            .list_worktrees()
+            .unwrap()
+            .iter()
+            .map(|wt| wt.branch_name().to_string())
+            .collect();
+        assert_eq!(names, vec!["feat/mine"]);
+
+        assert!(matches!(
+            super::super::Worktree::open(&foreign),
+            Err(GitError::NotJigWorktree(_))
+        ));
+        // git2 reports resolved paths (/private/var vs /var on macOS).
+        assert_eq!(
+            repo.foreign_worktree_paths().unwrap(),
+            vec![foreign.canonicalize().unwrap()]
+        );
+        assert_eq!(repo.linked_worktree_paths().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn branch_in_foreign_worktree_still_counts_as_checked_out() {
+        let tmp = TempDir::new().unwrap();
+        let git = init_repo_with_commit(tmp.path());
+        add_foreign_worktree(&git, tmp.path());
+
+        let repo = Repo::open(tmp.path()).unwrap();
+        assert!(matches!(
+            repo.create_worktree(&"claude/branch".into(), &"main".into()),
+            Err(GitError::WorktreeExists(_))
+        ));
     }
 
     #[test]

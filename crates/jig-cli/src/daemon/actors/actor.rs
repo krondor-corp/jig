@@ -39,6 +39,14 @@ struct Timings {
     last_finished: AtomicI64,
 }
 
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
+    panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload")
+}
+
 /// Generic wrapper that owns channels, the background thread, and a shared
 /// reference to the actor. The main thread uses `send()` for fire-and-forget
 /// dispatch, `drain()` to collect responses, and `.actor()` to read actor
@@ -68,13 +76,26 @@ impl<A: Actor> ActorHandle<A> {
                 while let Ok(req) = req_rx.recv() {
                     let now = chrono::Utc::now().timestamp();
                     bg_timings.busy_since.store(now, Ordering::Relaxed);
-                    let resp = bg.handle(req);
+                    // A panic must not kill the thread: `pending` would stay
+                    // set and `send()` would drop every later request, so the
+                    // actor would silently never run again.
+                    let result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| bg.handle(req)));
                     let now = chrono::Utc::now().timestamp();
                     bg_timings.last_finished.store(now, Ordering::Relaxed);
                     bg_timings.busy_since.store(0, Ordering::Relaxed);
-                    bg_pending.store(false, Ordering::Relaxed);
-                    if resp_tx.send(resp).is_err() {
-                        break;
+                    bg_pending.store(false, Ordering::Release);
+                    match result {
+                        Ok(resp) => {
+                            if resp_tx.send(resp).is_err() {
+                                break;
+                            }
+                        }
+                        Err(panic) => tracing::error!(
+                            actor = A::NAME,
+                            "actor panicked, will retry on next request: {}",
+                            panic_message(panic.as_ref())
+                        ),
                     }
                 }
             })
@@ -98,14 +119,20 @@ impl<A: Actor> Default for ActorHandle<A> {
 }
 
 impl<A: Actor> ActorHandle<A> {
+    /// Dispatch `req` unless a request is already in flight.
+    ///
+    /// `pending` must be claimed *before* the request is handed over. Setting
+    /// it after `try_send` let a fast `handle` finish and clear it first; the
+    /// late `store(true)` then stuck, and every later `send` was refused —
+    /// the actor silently never ran again until the daemon restarted.
     pub fn send(&self, req: A::Request) -> bool {
-        if self.pending.load(Ordering::Relaxed) {
+        if self.pending.swap(true, Ordering::AcqRel) {
             return false;
         }
         if self.tx.try_send(req).is_ok() {
-            self.pending.store(true, Ordering::Relaxed);
             true
         } else {
+            self.pending.store(false, Ordering::Release);
             false
         }
     }
@@ -119,7 +146,7 @@ impl<A: Actor> ActorHandle<A> {
     }
 
     pub fn is_pending(&self) -> bool {
-        self.pending.load(Ordering::Relaxed)
+        self.pending.load(Ordering::Acquire)
     }
 
     pub fn actor(&self) -> &A {
@@ -136,5 +163,95 @@ impl<A: Actor> ActorHandle<A> {
             busy_since: since(&self.timings.busy_since),
             last_finished: since(&self.timings.last_finished),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Panics on its first request, then answers normally.
+    #[derive(Default)]
+    struct Flaky {
+        calls: std::sync::atomic::AtomicU32,
+    }
+
+    impl Actor for Flaky {
+        type Request = ();
+        type Response = u32;
+
+        const NAME: &'static str = "test-flaky";
+        const QUEUE_SIZE: usize = 1;
+
+        fn handle(&self, _: ()) -> u32 {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                panic!("boom");
+            }
+            n
+        }
+    }
+
+    fn wait_idle<A: Actor>(handle: &ActorHandle<A>) {
+        let start = Instant::now();
+        while handle.is_pending() {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "actor stuck pending"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Answers instantly — the widest window for `send` racing the thread.
+    #[derive(Default)]
+    struct Instant0;
+
+    impl Actor for Instant0 {
+        type Request = ();
+        type Response = ();
+
+        const NAME: &'static str = "test-instant";
+        const QUEUE_SIZE: usize = 1;
+
+        fn handle(&self, _: ()) {}
+    }
+
+    #[test]
+    fn fast_actor_never_wedges_pending() {
+        let handle = ActorHandle::<Instant0>::new();
+        for _ in 0..200_000 {
+            assert!(handle.send(()), "send refused: actor wedged pending");
+            let start = Instant::now();
+            while handle.is_pending() {
+                assert!(
+                    start.elapsed() < Duration::from_secs(5),
+                    "actor stuck pending"
+                );
+                std::thread::yield_now();
+            }
+            handle.drain();
+        }
+    }
+
+    #[test]
+    fn actor_survives_a_panicking_request() {
+        let handle = ActorHandle::<Flaky>::new();
+
+        assert!(handle.send(()));
+        wait_idle(&handle);
+        assert!(handle.activity().busy_since.is_none());
+
+        // Not wedged: the next request is accepted and answered.
+        assert!(handle.send(()));
+        wait_idle(&handle);
+        let start = Instant::now();
+        let mut responses = handle.drain();
+        while responses.is_empty() && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(5));
+            responses = handle.drain();
+        }
+        assert_eq!(responses, vec![1]);
     }
 }
