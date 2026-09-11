@@ -149,7 +149,7 @@ pub fn check_commits(client: &dyn GitHub, pr_number: u64) -> Result<bool> {
 }
 
 /// Query GitHub for a worker's PR status, running all health checks if open.
-pub fn check_pr(gh: &dyn GitHub, branch: &str, worker_key: &str) -> PrReport {
+pub fn check_pr(gh: &dyn GitHub, branch: &str) -> PrReport {
     let pr_url = match gh.get_pr_for_branch(branch) {
         Ok(Some(pr_info)) => match Url::parse(&pr_info.url) {
             Ok(url) => url,
@@ -169,8 +169,10 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str, worker_key: &str) -> PrReport {
                 review_feedback_count: 0,
             }
         }
+        // The error is returned, not logged here: the monitor warns once per
+        // distinct failure, and a `debug!` too would report it twice at two
+        // different levels.
         Err(e) => {
-            tracing::debug!(worker = %worker_key, error = %e, "PR discovery failed");
             return PrReport {
                 status: PrStatus::Error {
                     pr_url: None,
