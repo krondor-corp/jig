@@ -88,14 +88,18 @@ pub fn worker_state_str(status: &WorkerStatus) -> &'static str {
 }
 
 /// Format PR health status for display.
+///
+/// A failed check wins over `has_pr`: when `gh` is broken, PR discovery is
+/// the first thing to fail, so there is no PR to report and the failure
+/// would otherwise render as an unexplained `-`. The reason stays out of the
+/// column — it would widen the table — and goes to `jig daemon logs`.
 pub fn format_health(info: &PrHealth) -> (String, Color) {
-    if !info.has_pr {
-        return ("-".to_string(), Color::DarkGrey);
+    if info.pr_error.is_some() {
+        return ("? gh".to_string(), Color::Yellow);
     }
 
-    if let Some(err) = &info.pr_error {
-        tracing::debug!(error = %err, "PR health error");
-        return ("?".to_string(), Color::Yellow);
+    if !info.has_pr {
+        return ("-".to_string(), Color::DarkGrey);
     }
 
     if info.pr_checks.is_empty() {
@@ -391,6 +395,51 @@ mod tests {
             spawned_at: chrono::Utc::now().timestamp() - ago_secs,
             repo_name: repo.to_string(),
         }
+    }
+
+    #[test]
+    fn health_flags_a_failed_check_even_without_a_pr() {
+        // The `gh`-is-broken case: PR discovery failed, so there is no PR to
+        // report — a bare "-" would read as "nothing wrong here".
+        let health = PrHealth {
+            pr_error: Some("gh CLI failed: not logged into github.com".into()),
+            has_pr: false,
+            ..Default::default()
+        };
+        let (text, color) = format_health(&health);
+        assert_eq!(text, "? gh");
+        assert_eq!(color, Color::Yellow);
+    }
+
+    #[test]
+    fn health_error_does_not_widen_the_column() {
+        let health = PrHealth {
+            pr_error: Some(format!("{}\nsecond line", "x".repeat(200))),
+            has_pr: true,
+            ..Default::default()
+        };
+        let (text, _) = format_health(&health);
+        assert_eq!(text, "? gh");
+    }
+
+    #[test]
+    fn health_without_pr_or_error_stays_blank() {
+        let (text, color) = format_health(&PrHealth::default());
+        assert_eq!(text, "-");
+        assert_eq!(color, Color::DarkGrey);
+    }
+
+    #[test]
+    fn health_reports_ok_when_checks_pass() {
+        let health = PrHealth {
+            has_pr: true,
+            pr_checks: crate::daemon::PrChecks {
+                ci: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(format_health(&health).0, "ok");
     }
 
     #[test]
