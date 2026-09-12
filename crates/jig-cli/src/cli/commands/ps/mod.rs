@@ -174,10 +174,10 @@ fn oneshot_frame(cfg: Context) -> Result<Frame, PsError> {
         if !daemon.wait_for_monitor(Daemon::MONITOR_WAIT) {
             // Say so rather than printing a table that silently omits
             // whatever the pass had not reached yet.
-            eprintln!(
-                "warning: monitor pass still running after {}s — this table may be incomplete",
+            ui::warning(&format!(
+                "monitor pass still running after {}s — this table may be incomplete",
                 Daemon::MONITOR_WAIT.as_secs()
-            );
+            ));
         }
         frame = Frame::from_daemon(daemon);
         false
