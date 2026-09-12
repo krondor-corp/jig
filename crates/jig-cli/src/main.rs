@@ -79,8 +79,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Best-effort global directory setup
     let _ = context::ensure_global_dirs();
 
-    // Every command gets a session log file
-    let is_daemon = cli.command.as_ref().is_some_and(|c| c.hosts_daemon());
+    // Every command gets a session log file; only one that runs the daemon
+    // loop gets the `-daemon.log` name that `jig daemon logs` looks for.
+    let is_daemon = cli.command.as_ref().is_some_and(|c| c.runs_daemon_loop());
     let log_file = if is_daemon {
         context::new_daemon_log_path()
     } else {

@@ -33,14 +33,6 @@ crate::command_enum! {
     (Logs, logs::Logs),
 }
 
-impl Command {
-    /// Whether this subcommand runs the long-running tick loop, and so
-    /// should log to a daemon log file rather than a one-off session log.
-    pub fn hosts_daemon(&self) -> bool {
-        matches!(self, Command::Start(_))
-    }
-}
-
 impl Op for Daemon {
     type Context = ();
     type Output = OpOutput;

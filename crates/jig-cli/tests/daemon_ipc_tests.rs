@@ -252,6 +252,65 @@ fn ps_without_a_daemon_still_works() {
         .stderr(predicate::str::contains("No spawned sessions"));
 }
 
+/// A `ps --watch` that is only a client must not leave a `-daemon.log`.
+///
+/// `jig daemon logs` falls back to the newest `-daemon.log` when no daemon
+/// is up to name its own, so an empty file from a client shadows the real
+/// daemon's log the moment that daemon exits.
+#[test]
+fn a_watching_client_does_not_shadow_the_daemon_log() {
+    let sandbox = Sandbox::new();
+    let mut daemon = sandbox.start_daemon();
+
+    let real_log = String::from_utf8(
+        sandbox
+            .jig()
+            .args(["daemon", "logs", "--path"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    assert!(real_log.ends_with("-daemon.log"), "got {real_log:?}");
+
+    // Run `ps -gw` against the daemon, then kill it the way a user's ctrl-c
+    // would not (no cleanup), which is the harshest case for stray files.
+    let mut client = StdCommand::new(assert_cmd::cargo::cargo_bin("jig"))
+        .args(["ps", "-gw"])
+        .env("XDG_CONFIG_HOME", sandbox.config.path())
+        .env("XDG_RUNTIME_DIR", sandbox.runtime.path())
+        .current_dir(sandbox.config.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn ps -gw");
+    std::thread::sleep(Duration::from_millis(1500));
+    let _ = client.kill();
+    let _ = client.wait();
+
+    sandbox.jig().args(["daemon", "stop"]).assert().success();
+    daemon.wait_for_exit();
+
+    let resolved = String::from_utf8(
+        sandbox
+            .jig()
+            .args(["daemon", "logs", "--path"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    assert_eq!(
+        resolved, real_log,
+        "after the daemon exits, `jig daemon logs` must still resolve to its \
+         log, not to one a watching client left behind"
+    );
+}
+
 #[test]
 fn ps_reads_from_a_running_daemon() {
     let sandbox = Sandbox::new();
