@@ -45,7 +45,7 @@ When the daemon can't fix a problem by nudging, it sends you a notification.
 
 ### Triggers
 
-- **Nudge escalation** — a worker got 3 nudges of the same type without it clearing
+- **Nudge escalation** — a nudge type exceeded `max_nudges` (default 3)
 - **Worker done** — PR merged, agent completed
 - **Triage failure** — triage subprocess crashed or timed out
 

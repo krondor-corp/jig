@@ -4,7 +4,7 @@
 //! polls GitHub, enriches runtime state, runs nudge rules, sends
 //! notifications, and returns [`PruneTarget`]s for the prune actor.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -36,17 +36,10 @@ pub struct MonitorActor {
     previous_states: Mutex<HashMap<String, WorkerState>>,
     workers: Mutex<Vec<WorkerState>>,
     resume_failures: Mutex<HashMap<String, u32>>,
-    /// `"<worker>:<nudge_key>"` pairs already escalated to a notification.
-    escalated: Mutex<HashSet<String>>,
 }
 
 const GITHUB_POLL_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_RESUME_ATTEMPTS: u32 = 3;
-/// Nudges of one type before the daemon gives up and notifies a human. A
-/// worker that hasn't responded to three identical nudges won't respond to
-/// a sixteenth — and some nudges (e.g. an unresolved review thread the agent
-/// cannot resolve) can never clear on the agent's side.
-const MAX_NUDGES: u32 = 3;
 
 impl MonitorActor {
     pub fn workers(&self) -> Vec<WorkerState> {
@@ -57,24 +50,6 @@ impl MonitorActor {
         match self.github_last_polled.lock().unwrap().get(key) {
             Some(t) => t.elapsed() >= GITHUB_POLL_INTERVAL,
             None => true,
-        }
-    }
-
-    /// Whether to deliver a nudge the worker has already had `sent` of.
-    /// Past [`MAX_NUDGES`] it escalates once (per daemon run), then stays quiet.
-    fn gate_nudge(&self, key: &str, nudge_key: &str, sent: u32) -> NudgeGate {
-        if sent < MAX_NUDGES {
-            return NudgeGate::Send;
-        }
-        let first = self
-            .escalated
-            .lock()
-            .unwrap()
-            .insert(format!("{key}:{nudge_key}"));
-        if first {
-            NudgeGate::Escalate
-        } else {
-            NudgeGate::Suppress
         }
     }
 
@@ -480,7 +455,7 @@ impl MonitorActor {
         repo_path: &std::path::Path,
         mux: &dyn Mux,
         event_log: &crate::worker::events::EventLog,
-        state: &WorkerState,
+        _state: &WorkerState,
         global_config: &Config,
         notifier: &Notifier,
     ) -> Vec<PruneTarget> {
@@ -493,30 +468,6 @@ impl MonitorActor {
                     nudge_key,
                     is_pr_nudge,
                 } => {
-                    let sent = state.nudge_counts.get(nudge_key).copied().unwrap_or(0);
-                    match self.gate_nudge(key, nudge_key, sent) {
-                        NudgeGate::Send => {}
-                        NudgeGate::Suppress => continue,
-                        NudgeGate::Escalate => {
-                            tracing::warn!(
-                                worker = key,
-                                nudge_key = %nudge_key,
-                                sent,
-                                "nudge limit reached, escalating to a notification"
-                            );
-                            let event = NotificationEvent::NeedsIntervention {
-                                repo: repo_name.to_string(),
-                                worker: worker_name.to_string(),
-                                reason: format!(
-                                    "sent {sent} '{nudge_key}' nudges without it clearing"
-                                ),
-                            };
-                            if let Err(e) = notifier.emit(event) {
-                                tracing::warn!(worker = key, "notification failed: {}", e);
-                            }
-                            continue;
-                        }
-                    }
                     let w = Worker::from_branch(repo_path, branch.clone());
                     if w.has_mux_window(mux) {
                         if !is_pr_nudge && !w.is_agent_running(mux) {
@@ -592,15 +543,6 @@ impl MonitorActor {
 
         prune_targets
     }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum NudgeGate {
-    Send,
-    /// Limit just reached: notify a human instead of nudging.
-    Escalate,
-    /// Already escalated: say nothing.
-    Suppress,
 }
 
 // ── Dispatch actions ────────────────────────────────────────────────
@@ -822,31 +764,6 @@ fn process_pr_report(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn nudges_stop_after_the_limit_and_escalate_once() {
-        let monitor = MonitorActor::default();
-        for sent in 0..MAX_NUDGES {
-            assert_eq!(monitor.gate_nudge("r/w", "review", sent), NudgeGate::Send);
-        }
-        assert_eq!(
-            monitor.gate_nudge("r/w", "review", MAX_NUDGES),
-            NudgeGate::Escalate
-        );
-        assert_eq!(
-            monitor.gate_nudge("r/w", "review", MAX_NUDGES + 1),
-            NudgeGate::Suppress
-        );
-        // Each nudge type and each worker has its own limit.
-        assert_eq!(
-            monitor.gate_nudge("r/w", "ci", MAX_NUDGES),
-            NudgeGate::Escalate
-        );
-        assert_eq!(
-            monitor.gate_nudge("r/other", "review", MAX_NUDGES),
-            NudgeGate::Escalate
-        );
-    }
 
     #[test]
     fn waiting_input_triggers_nudge() {
