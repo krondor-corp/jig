@@ -7,6 +7,7 @@ use super::super::rest::RestRequest;
 
 #[derive(Deserialize)]
 pub(crate) struct RawReview {
+    pub(crate) id: u64,
     pub(crate) state: String,
     pub(crate) body: String,
     pub(crate) user: RawUser,
@@ -25,6 +26,9 @@ pub(crate) struct RawReviewComment {
     pub(crate) original_line: Option<u64>,
     pub(crate) user: RawUser,
     pub(crate) in_reply_to_id: Option<u64>,
+    /// The review this comment belongs to — used to drop comments from a
+    /// review that is still `PENDING` (visible only to its own author).
+    pub(crate) pull_request_review_id: Option<u64>,
 }
 
 pub(crate) struct GetReviews {
@@ -92,6 +96,8 @@ pub(crate) struct CommentsConnection {
 
 #[derive(Deserialize)]
 pub(crate) struct RawThreadComment {
+    /// `PENDING` while it sits in an unsubmitted review, else `SUBMITTED`.
+    pub(crate) state: String,
     pub(crate) body: String,
     pub(crate) path: Option<String>,
     pub(crate) line: Option<u64>,
@@ -124,6 +130,7 @@ impl GraphQlRequest for GetUnresolvedThreads {
                       isResolved
                       comments(first: 1) {{
                         nodes {{
+                          state
                           body
                           path
                           line: originalLine

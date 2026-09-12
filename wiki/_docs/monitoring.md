@@ -89,7 +89,7 @@ It also flags any actor that has been busy for over 10 minutes (e.g. a `git fetc
 
 ## Nudges
 
-When agents get stuck, the daemon intervenes by sending keystrokes through the mux backend (tmux or herdr). Each nudge type has an independent counter and escalates after `max_nudges` (default 3) to a notification instead.
+When agents get stuck, the daemon intervenes by sending keystrokes through the mux backend (tmux or herdr). Each nudge type has an independent counter and escalates to a notification after 3 nudges.
 
 ### Nudge types
 
@@ -104,7 +104,9 @@ When agents get stuck, the daemon intervenes by sending keystrokes through the m
 
 ### Escalation
 
-After `max_nudges` of the same type, the daemon stops nudging and fires a notification — alerting you that the worker needs human attention. This prevents infinite loops where an agent keeps failing at the same thing.
+After 3 nudges of the same type, the daemon stops nudging and fires one `NeedsIntervention` notification — alerting you that the worker needs human attention. This prevents infinite loops where an agent keeps failing at the same thing, or is nudged about something it can't clear itself (like a review thread only a human can resolve).
+
+Review nudges only count **submitted** feedback. Comments in a review you're still writing (GitHub's "Pending" state) are ignored, even though the daemon's `gh` — usually logged in as you — can see them.
 
 ### Draft-only nudging
 
@@ -133,41 +135,12 @@ auto_cleanup_closed = false      # kill workers when PR closed without merge
 ### Health thresholds
 
 ```toml
-# ~/.config/jig/config.toml (global) or jig.toml (per-repo)
+# ~/.config/jig/config.toml
 
-[health]
-silence_threshold_seconds = 300  # 5 minutes before "stalled"
-max_nudges = 3                   # per nudge type before escalation
+silence_threshold_seconds = 300  # 5 minutes before "stalled"; also the gap between repeat nudges
 ```
 
-### Per-type nudge config
-
-```toml
-# jig.toml
-
-[health.nudge.idle]
-max = 5
-cooldown_seconds = 600
-
-[health.nudge.ci]
-max = 2
-cooldown_seconds = 180
-```
-
-Available types: `idle`, `stuck`, `ci`, `conflict`, `review`, `bad_commits`. Resolution: per-type repo → repo defaults → global → hardcoded defaults.
-
-### Custom nudge templates
-
-Override any built-in template by placing files in `.jig/templates/`:
-
-```text
-.jig/templates/
-├── nudge-idle.hbs
-├── nudge-ci.hbs
-└── spawn-preamble.hbs
-```
-
-Templates use Handlebars and always receive `nudge_count`, `max_nudges`, and `is_final_nudge`.
+The nudge limit (3 per type) is fixed.
 
 ## The event system
 

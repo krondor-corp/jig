@@ -1,5 +1,6 @@
 //! GitHub client wrapping `gh` CLI.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -13,7 +14,9 @@ use super::queries::pr_state::GetPrState;
 use super::queries::review_activity::{
     GetPrCommentsTimestamps, GetPrCommitsActivity, GetPrReviewsActivity,
 };
-use super::queries::reviews::{GetReviewComments, GetReviews, GetUnresolvedThreads};
+use super::queries::reviews::{
+    GetReviewComments, GetReviews, GetUnresolvedThreads, RawReviewThread,
+};
 use super::rest::RestClient;
 use super::types::{
     CheckRun, CheckStatus, PrCommit, PrInfo, PrState, PrStateInfo, ReviewComment, ReviewState,
@@ -301,18 +304,7 @@ impl GitHubClient {
             }) {
                 Ok(response) => {
                     let threads = response.data.repository.pull_request.review_threads.nodes;
-                    return Ok(threads
-                        .into_iter()
-                        .filter(|t| !t.is_resolved)
-                        .filter_map(|t| t.comments.nodes.into_iter().next())
-                        .map(|c| ReviewComment {
-                            body: c.body,
-                            path: c.path,
-                            line: c.line,
-                            state: ReviewState::Commented,
-                            author: c.author.login,
-                        })
-                        .collect());
+                    return Ok(open_submitted_threads(threads));
                 }
                 Err(e) => tracing::debug!(
                     pr_number,
@@ -325,10 +317,13 @@ impl GitHubClient {
         let comments = self
             .rest
             .call(&GetReviewComments { pr_number }, &self.repo)?;
+        let reviews = self.rest.call(&GetReviews { pr_number }, &self.repo)?;
+        let pending = pending_review_ids(reviews.iter().map(|r| (r.id, r.state.as_str())));
 
         Ok(comments
             .into_iter()
             .filter(|c| c.in_reply_to_id.is_none())
+            .filter(|c| !in_pending_review(c.pull_request_review_id, &pending))
             .map(|c| ReviewComment {
                 body: c.body,
                 path: c.path,
@@ -394,8 +389,10 @@ impl GitHubClient {
                 return false;
             }
         };
+        let pending = pending_review_ids(reviews.iter().map(|r| (r.id, r.state.as_str())));
         let latest_comment_date = comments
             .iter()
+            .filter(|c| !in_pending_review(c.pull_request_review_id, &pending))
             .map(|c| c.created_at.as_str())
             .max()
             .unwrap_or("");
@@ -424,6 +421,43 @@ impl GitHubClient {
     }
 }
 
+/// Review/comment state GitHub uses for a review its author hasn't submitted.
+///
+/// A draft review is visible to its own author through the API — and the
+/// daemon's `gh` is usually logged in as the person reviewing — so drafts
+/// must be filtered out everywhere feedback is read, or the daemon nudges
+/// workers about comments the reviewer is still writing.
+const PENDING: &str = "PENDING";
+
+/// First comment of each unresolved thread, skipping threads opened in a
+/// review the reviewer hasn't submitted yet — those are drafts, not feedback.
+fn open_submitted_threads(threads: Vec<RawReviewThread>) -> Vec<ReviewComment> {
+    threads
+        .into_iter()
+        .filter(|t| !t.is_resolved)
+        .filter_map(|t| t.comments.nodes.into_iter().next())
+        .filter(|c| c.state != PENDING)
+        .map(|c| ReviewComment {
+            body: c.body,
+            path: c.path,
+            line: c.line,
+            state: ReviewState::Commented,
+            author: c.author.login,
+        })
+        .collect()
+}
+
+fn pending_review_ids<'a>(reviews: impl Iterator<Item = (u64, &'a str)>) -> HashSet<u64> {
+    reviews
+        .filter(|(_, state)| *state == PENDING)
+        .map(|(id, _)| id)
+        .collect()
+}
+
+fn in_pending_review(review_id: Option<u64>, pending: &HashSet<u64>) -> bool {
+    review_id.is_some_and(|id| pending.contains(&id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,5 +471,44 @@ mod tests {
     #[test]
     fn is_healthy_does_not_panic() {
         let _ = GitHubClient::is_healthy();
+    }
+
+    fn thread(resolved: bool, state: &str, body: &str) -> serde_json::Value {
+        serde_json::json!({
+            "isResolved": resolved,
+            "comments": { "nodes": [{
+                "state": state,
+                "body": body,
+                "path": "src/lib.rs",
+                "line": 3,
+                "author": { "login": "reviewer" }
+            }]}
+        })
+    }
+
+    #[test]
+    fn draft_review_threads_are_not_feedback() {
+        let threads: Vec<RawReviewThread> = serde_json::from_value(serde_json::json!([
+            thread(false, "SUBMITTED", "please rename"),
+            thread(false, "PENDING", "still writing this review"),
+            thread(true, "SUBMITTED", "already resolved"),
+        ]))
+        .unwrap();
+
+        let open: Vec<_> = open_submitted_threads(threads)
+            .into_iter()
+            .map(|c| c.body)
+            .collect();
+        assert_eq!(open, vec!["please rename"]);
+    }
+
+    #[test]
+    fn comments_in_a_pending_review_are_dropped() {
+        let pending = pending_review_ids(
+            [(1, "COMMENTED"), (2, "PENDING"), (3, "CHANGES_REQUESTED")].into_iter(),
+        );
+        assert!(in_pending_review(Some(2), &pending));
+        assert!(!in_pending_review(Some(1), &pending));
+        assert!(!in_pending_review(None, &pending));
     }
 }

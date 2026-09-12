@@ -21,6 +21,7 @@ pub(crate) struct RawActivityCommitter {
 
 #[derive(Deserialize)]
 pub(crate) struct RawActivityReview {
+    pub(crate) id: u64,
     pub(crate) state: String,
     pub(crate) submitted_at: Option<String>,
 }
@@ -28,6 +29,7 @@ pub(crate) struct RawActivityReview {
 #[derive(Deserialize)]
 pub(crate) struct RawActivityCommentTimestamp {
     pub(crate) created_at: String,
+    pub(crate) pull_request_review_id: Option<u64>,
 }
 
 pub(crate) struct GetPrCommitsActivity {
