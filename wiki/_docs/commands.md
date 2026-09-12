@@ -25,7 +25,7 @@ Quick reference for all jig commands.
 | `jig ps` | Show worker status dashboard |
 | `jig ps -w` | Watch mode with live updates |
 | `jig ps -gw` | Global watch — all repos, live updates from the running daemon |
-| `jig daemon start` | Run the daemon in the foreground (`--once` for a single tick) |
+| `jig daemon start` | Run the daemon in the foreground (`--once` for a single tick, `--timeout` to bound its wait) |
 | `jig daemon stop` | Stop the running daemon |
 | `jig daemon status` | Check the daemon is alive, ticking, and not stuck (default for `jig daemon`) |
 | `jig daemon logs` | Print the daemon's log (`-f` to follow, `-n` lines, `--path`) |

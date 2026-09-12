@@ -193,6 +193,26 @@ impl Daemon {
         self.shared.status()
     }
 
+    /// Default bound on [`Self::wait_for_monitor`].
+    pub const MONITOR_WAIT: Duration = Duration::from_secs(30);
+
+    /// Block until the monitor pass `tick()` dispatched finishes, or
+    /// `timeout` elapses. Returns whether it finished.
+    ///
+    /// A caller that reads worker state after a single tick must do this:
+    /// the pass runs on the monitor's own thread, so returning immediately
+    /// reads the pre-tick (empty) state.
+    pub fn wait_for_monitor(&self, timeout: Duration) -> bool {
+        let start = Instant::now();
+        while self.monitor.is_pending() {
+            if start.elapsed() >= timeout {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        true
+    }
+
     /// Run the tick loop. Checks `quit` between ticks; calls `on_tick` after
     /// each successful tick — return `false` to stop.
     pub fn run<F>(&mut self, quit: &AtomicBool, mut on_tick: F)

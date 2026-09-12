@@ -19,6 +19,15 @@ pub struct Start {
     /// Run a single tick and exit, instead of looping
     #[arg(long)]
     once: bool,
+
+    /// Seconds `--once` waits for the monitor pass before giving up [default: 30]
+    ///
+    /// A pass that polls many repos over a slow network can outrun the
+    /// default; raise this rather than accepting a half-filled tick.
+    // Deliberately not `default_value_t`: clap treats a defaulted argument as
+    // present, which would make `requires` reject every run without `--once`.
+    #[arg(long, value_name = "SECONDS", requires = "once")]
+    timeout: Option<u64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +40,15 @@ pub enum StartError {
     Daemon(#[from] DaemonError),
     #[error(transparent)]
     Context(#[from] crate::context::ContextError),
+}
+
+impl Start {
+    /// How long `--once` waits for the monitor pass it dispatched.
+    fn monitor_wait(&self) -> Duration {
+        self.timeout
+            .map(Duration::from_secs)
+            .unwrap_or(Daemon::MONITOR_WAIT)
+    }
 }
 
 impl Op for Start {
@@ -62,11 +80,16 @@ impl Op for Start {
         ));
 
         let once = self.once;
+        let monitor_wait = self.monitor_wait();
         daemon.run(&quit, |daemon| {
             if once {
-                // The monitor pass runs on its own thread; a one-shot run
-                // that returns immediately would exit before it finishes.
-                wait_for_monitor(daemon);
+                if !daemon.wait_for_monitor(monitor_wait) {
+                    ui::warning(&format!(
+                        "monitor pass still running after {}s — exiting anyway {}",
+                        monitor_wait.as_secs(),
+                        ui::dim("(raise --timeout)")
+                    ));
+                }
                 return false;
             }
             sleep_until_tick(&quit, tick_interval);
@@ -81,16 +104,6 @@ impl Op for Start {
 
         ui::success("daemon stopped");
         Ok(NoOutput)
-    }
-}
-
-/// How long a `--once` run waits for the monitor pass it just dispatched.
-const ONCE_MONITOR_TIMEOUT: Duration = Duration::from_secs(30);
-
-fn wait_for_monitor(daemon: &Daemon) {
-    let start = Instant::now();
-    while daemon.monitor.is_pending() && start.elapsed() < ONCE_MONITOR_TIMEOUT {
-        std::thread::sleep(Duration::from_millis(25));
     }
 }
 
@@ -114,5 +127,52 @@ fn install_signal_handlers(quit: Arc<AtomicBool>) {
         quit.store(true, Ordering::Relaxed);
     }) {
         tracing::warn!("failed to install signal handler: {}", e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// Parse just this subcommand's arguments.
+    #[derive(Parser)]
+    struct Harness {
+        #[command(flatten)]
+        start: Start,
+    }
+
+    fn parse(args: &[&str]) -> Start {
+        Harness::try_parse_from(args).expect("should parse").start
+    }
+
+    #[test]
+    fn monitor_wait_defaults_to_the_daemons_bound() {
+        assert_eq!(
+            parse(&["jig", "--once"]).monitor_wait(),
+            Daemon::MONITOR_WAIT
+        );
+    }
+
+    #[test]
+    fn timeout_overrides_the_default() {
+        assert_eq!(
+            parse(&["jig", "--once", "--timeout", "90"]).monitor_wait(),
+            Duration::from_secs(90)
+        );
+    }
+
+    #[test]
+    fn timeout_is_rejected_without_once() {
+        // It only bounds the `--once` wait, so accepting it alone would
+        // silently do nothing.
+        assert!(Harness::try_parse_from(["jig", "--timeout", "90"]).is_err());
+    }
+
+    #[test]
+    fn a_plain_start_needs_no_arguments() {
+        let start = parse(&["jig"]);
+        assert!(!start.once);
+        assert_eq!(start.monitor_wait(), Daemon::MONITOR_WAIT);
     }
 }

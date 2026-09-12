@@ -78,6 +78,11 @@ jig daemon stop      # ask the running one to shut down
 jig daemon status    # is it alive, ticking, and unstuck?
 ```
 
+`jig daemon start --once` runs a single tick and exits — useful in a cron job
+or a smoke test. It waits up to 30s for the monitor pass to finish so the tick
+is complete; `--timeout <SECONDS>` raises that when a pass has many repos to
+poll over a slow network.
+
 There is **one daemon per user**, always global — it watches every tracked
 repo. A second `jig daemon start` fails with `daemon already running (pid N)`
 rather than starting a rival that would fight over the same worktrees.

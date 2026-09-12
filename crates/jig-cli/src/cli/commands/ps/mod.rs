@@ -171,12 +171,7 @@ fn oneshot_frame(cfg: Context) -> Result<Frame, PsError> {
     let mut frame = Frame::default();
     let mut daemon = Daemon::oneshot(cfg)?;
     daemon.run(&quit, |daemon| {
-        // The monitor pass runs on its actor thread; a one-shot ps must
-        // wait for it or it reads the pre-tick (empty) state.
-        let start = Instant::now();
-        while daemon.monitor.is_pending() && start.elapsed().as_secs() < 30 {
-            std::thread::sleep(std::time::Duration::from_millis(25));
-        }
+        daemon.wait_for_monitor(Daemon::MONITOR_WAIT);
         frame = Frame::from_daemon(daemon);
         false
     });
