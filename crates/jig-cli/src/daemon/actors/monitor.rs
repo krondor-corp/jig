@@ -177,31 +177,52 @@ impl MonitorActor {
         let mut pr_health = old_state.pr_health.clone();
         let mut is_draft = old_state.is_draft;
 
-        let gh_client = if self.should_poll_github(key) {
-            GitHubClient::from_repo_path(worker.path()).ok()
+        // A merged or failed worker is not polled: the call is spent on a
+        // worker nothing acts on any more.
+        let gh_client = if !state.status.is_terminal() && self.should_poll_github(key) {
+            // Mark before the attempt, not after it succeeds: a `gh` that is
+            // missing or logged out must back off like a working one, or
+            // every tick re-runs `gh repo view` for every worker.
+            self.mark_github_polled(key);
+            match GitHubClient::from_repo_path(worker.path()) {
+                Ok(client) => Some(client),
+                Err(e) => {
+                    pr_health.pr_error = Some(e.to_string());
+                    None
+                }
+            }
         } else {
             None
         };
-        let gh: Option<&dyn jig_core::github::GitHub> = gh_client
-            .as_ref()
-            .map(|c| c as &dyn jig_core::github::GitHub);
 
-        if gh.is_some() {
-            self.mark_github_polled(key);
+        if let Some(gh) = gh_client
+            .as_ref()
+            .map(|c| c as &dyn jig_core::github::GitHub)
+        {
+            let report = checks::check_pr(gh, &worker_name);
+            state.review_feedback_count = report.review_feedback_count;
+            process_pr_report(&report, &log, &state, &mut pr_health, &mut is_draft);
+
+            // Re-reduce if we wrote a PrOpened event
+            if state.pr_url.is_none() && pr_health.has_pr {
+                state = log.reduce()?;
+                state.check_silence(global_config);
+                state.review_feedback_count = report.review_feedback_count;
+            }
         }
 
-        if let Some(gh) = gh {
-            if !state.status.is_terminal() {
-                let report = checks::check_pr(gh, &worker_name, key);
-                state.review_feedback_count = report.review_feedback_count;
-                process_pr_report(&report, &log, &state, &mut pr_health, &mut is_draft);
-
-                // Re-reduce if we wrote a PrOpened event
-                if state.pr_url.is_none() && pr_health.has_pr {
-                    state = log.reduce()?;
-                    state.check_silence(global_config);
-                    state.review_feedback_count = report.review_feedback_count;
-                }
+        // GitHub failures are otherwise invisible: nothing else reports
+        // `pr_error`, and the daemon log keeps `info` and above. Warn on the
+        // change rather than the state, so a `gh` that stays broken says its
+        // piece once instead of every poll.
+        if pr_health.pr_error != old_state.pr_health.pr_error {
+            match &pr_health.pr_error {
+                Some(error) => tracing::warn!(
+                    worker = key,
+                    error = %error,
+                    "GitHub check failed — PR tracking is stale for this worker"
+                ),
+                None => tracing::info!(worker = key, "GitHub check recovered"),
             }
         }
 
@@ -691,6 +712,11 @@ fn process_pr_report(
     pr_health: &mut PrHealth,
     is_draft: &mut bool,
 ) {
+    // Cleared as well as set: `pr_health` is carried over from the previous
+    // tick, so an error left in place would stick in `jig ps` long after
+    // GitHub started answering again.
+    pr_health.pr_error = None;
+
     match &report.status {
         PrStatus::NoPr => {}
         PrStatus::Error { error, .. } => {

@@ -34,7 +34,7 @@ WORKER              STATE    COMMITS  PR     HEALTH  ISSUE
 | **STATE** | Derived worker status from the event stream |
 | **COMMITS** | Commits ahead of base branch (`*` = uncommitted changes) |
 | **PR** | PR number if one exists |
-| **HEALTH** | PR check results: `ok`, problem names in red, `-` if no PR |
+| **HEALTH** | PR check results: `ok`, problem names in red, `-` if no PR, or `? gh` when the check itself failed — see `jig daemon logs` for why |
 | **ISSUE** | Linked issue reference |
 
 ### At a glance
