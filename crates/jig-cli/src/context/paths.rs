@@ -49,9 +49,29 @@ pub fn daemon_log_path() -> Result<PathBuf, std::io::Error> {
     Ok(global_state_dir()?.join("daemon.jsonl"))
 }
 
-/// `~/.config/jig/state/daemon-heartbeat.json`
-pub fn daemon_heartbeat_path() -> Result<PathBuf, std::io::Error> {
-    Ok(global_state_dir()?.join("daemon-heartbeat.json"))
+/// Where the daemon's socket and PID file live.
+///
+/// `$XDG_RUNTIME_DIR/jig/` when the session has one — it is user-private,
+/// on tmpfs, and cleared on logout, so a reboot can never leave a stale
+/// socket behind. Falls back to `~/.config/jig/state/` otherwise (macOS
+/// sets no `XDG_RUNTIME_DIR`).
+pub fn daemon_runtime_dir() -> Result<PathBuf, std::io::Error> {
+    match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(dir) if !dir.is_empty() => Ok(PathBuf::from(dir).join("jig")),
+        _ => global_state_dir(),
+    }
+}
+
+/// `$XDG_RUNTIME_DIR/jig/daemon.sock` (or `~/.config/jig/state/daemon.sock`)
+pub fn daemon_socket_path() -> Result<PathBuf, std::io::Error> {
+    Ok(daemon_runtime_dir()?.join("daemon.sock"))
+}
+
+/// `$XDG_RUNTIME_DIR/jig/daemon.pid` (or `~/.config/jig/state/daemon.pid`)
+///
+/// Lives beside the socket so the pair is created and cleared together.
+pub fn daemon_pid_path() -> Result<PathBuf, std::io::Error> {
+    Ok(daemon_runtime_dir()?.join("daemon.pid"))
 }
 
 /// `~/.config/jig/<repo>/<branch>/`
@@ -126,6 +146,7 @@ pub fn ensure_global_dirs() -> Result<(), std::io::Error> {
         global_state_dir()?,
         global_events_dir()?,
         daemon_logs_dir()?,
+        daemon_runtime_dir()?,
     ];
     for dir in &dirs {
         std::fs::create_dir_all(dir)?;

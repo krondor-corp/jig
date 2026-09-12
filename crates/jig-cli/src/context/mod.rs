@@ -39,10 +39,10 @@ pub enum ContextError {
 pub use config::Config;
 pub use config::{LinearConfig, LinearProfile, NotifyConfig};
 pub use paths::{
-    daemon_heartbeat_path, daemon_log_path, daemon_logs_dir, ensure_global_dirs, global_config_dir,
-    global_config_path, global_events_dir, global_hooks_dir, global_state_dir, hook_registry_path,
-    latest_daemon_log, new_daemon_log_path, new_session_log_path, notifications_path,
-    repo_registry_path, triages_path, worker_events_dir,
+    daemon_log_path, daemon_logs_dir, daemon_pid_path, daemon_runtime_dir, daemon_socket_path,
+    ensure_global_dirs, global_config_dir, global_config_path, global_events_dir, global_hooks_dir,
+    global_state_dir, hook_registry_path, latest_daemon_log, new_daemon_log_path,
+    new_session_log_path, notifications_path, repo_registry_path, triages_path, worker_events_dir,
 };
 pub use registry::{RepoEntry, RepoRegistry};
 pub use repo::{

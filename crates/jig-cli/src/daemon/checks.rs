@@ -1,5 +1,6 @@
 //! PR checks — query GitHub state and classify problems for nudging.
 
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use jig_core::git::conventional::CommitMessage;
@@ -36,7 +37,7 @@ pub enum PrStatus {
 }
 
 /// Per-worker PR health info collected during a tick.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrHealth {
     pub pr_checks: PrChecks,
     pub pr_error: Option<String>,
@@ -44,7 +45,7 @@ pub struct PrHealth {
 }
 
 /// Aggregate of per-category PR check results.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrChecks {
     pub ci: Option<bool>,
     pub conflicts: Option<bool>,

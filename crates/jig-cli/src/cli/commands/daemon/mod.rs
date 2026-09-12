@@ -1,16 +1,21 @@
-//! Daemon command — inspect the background daemon run by `jig ps --watch`.
+//! Daemon command — run and inspect the background daemon.
+//!
+//! The daemon is a single per-user process bound to a unix socket; `status`
+//! and `stop` are IPC clients rather than file readers.
 
 mod logs;
+mod start;
 mod status;
+mod stop;
 
 use std::path::PathBuf;
 
 use clap::Args;
 
 use crate::cli::op::Op;
-use crate::daemon::heartbeat::Heartbeat;
+use crate::daemon::ipc;
 
-/// Inspect the background daemon (status, logs)
+/// Run and inspect the background daemon (start, stop, status, logs)
 #[derive(Args, Debug, Clone)]
 pub struct Daemon {
     #[command(subcommand)]
@@ -18,6 +23,10 @@ pub struct Daemon {
 }
 
 crate::command_enum! {
+    /// Run the daemon in the foreground
+    (Start, start::Start),
+    /// Stop the running daemon
+    (Stop, stop::Stop),
     /// Show whether the daemon is running, ticking, and unstuck (default)
     (Status, status::Status),
     /// Print the daemon's log
@@ -43,10 +52,10 @@ impl Op for Daemon {
 
 /// The log of the running daemon, else of the most recent daemon run.
 fn current_daemon_log() -> Option<PathBuf> {
-    Heartbeat::read()
+    ipc::ping()
         .ok()
         .flatten()
-        .and_then(|hb| hb.log)
+        .and_then(|info| info.log)
         .filter(|p| p.exists())
         .or_else(|| crate::context::latest_daemon_log().ok().flatten())
 }

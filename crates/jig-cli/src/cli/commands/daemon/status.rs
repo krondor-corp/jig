@@ -1,11 +1,17 @@
 //! `jig daemon status` — is the daemon alive, ticking, and unstuck?
+//!
+//! The daemon answers for itself over its socket (`Request::Ping`). That a
+//! reply came back at all is the liveness proof the heartbeat file could
+//! only approximate; the per-actor busy/finished times it used to carry ride
+//! along in the response.
 
 use clap::Args;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
 use crate::daemon::actors::ActorActivity;
-use crate::daemon::heartbeat::{Heartbeat, Liveness};
+use crate::daemon::ipc::{self, IpcError, Liveness, STUCK_ACTOR_SECS};
+use crate::daemon::pidfile::PidFile;
 
 use super::display_path;
 
@@ -21,8 +27,8 @@ pub enum StatusError {
     Stalled,
     #[error("daemon has actors that look stuck")]
     StuckActors,
-    #[error("failed to read daemon heartbeat: {0}")]
-    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Ipc(#[from] IpcError),
 }
 
 impl Op for Status {
@@ -36,54 +42,41 @@ impl Op for Status {
 
     fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         let now = chrono::Utc::now().timestamp();
-        let Some(hb) = Heartbeat::read()? else {
-            ui::failure("daemon not running");
-            if let Some(stopped) = last_stop() {
-                ui::detail(&stopped);
-            }
-            ui::detail(&format!("start it with {}", ui::highlight("jig ps -gw")));
+        let Some(info) = ipc::ping()? else {
+            report_not_running();
             return Err(StatusError::NotRunning);
         };
 
         let ago = |ts: i64| ui::format_duration_short((now - ts).max(0) as u64);
-        let liveness = hb.liveness(now);
+        let liveness = info.liveness(now);
         match liveness {
             Liveness::Running => ui::success(&format!(
                 "daemon running  {}",
                 ui::dim(&format!(
                     "pid {} · up {} · v{}",
-                    hb.pid,
-                    ago(hb.started_at),
-                    hb.version
+                    info.pid,
+                    ago(info.started_at),
+                    info.version
                 ))
             )),
             Liveness::Stalled => ui::warning(&format!(
-                "daemon stalled — pid {} is alive but has not ticked for {}",
-                hb.pid,
-                ago(hb.ticked_at)
-            )),
-            Liveness::Dead => ui::failure(&format!(
-                "daemon not running — pid {} exited without shutting down",
-                hb.pid
+                "daemon stalled — pid {} is answering but has not ticked for {}",
+                info.pid,
+                ago(info.ticked_at)
             )),
         }
 
         ui::detail(&format!(
             "last tick {} ago {}",
-            ago(hb.ticked_at),
-            ui::dim(&format!("(every {}s)", hb.tick_interval))
+            ago(info.ticked_at),
+            ui::dim(&format!("(every {}s)", info.tick_interval))
         ));
-        if let Some(log) = &hb.log {
+        if let Some(log) = &info.log {
             ui::detail(&format!("log {}", display_path(log)));
         }
 
-        if liveness == Liveness::Dead {
-            ui::detail(&format!("restart it with {}", ui::highlight("jig ps -gw")));
-            return Err(StatusError::NotRunning);
-        }
-
-        let width = hb.actors.iter().map(|a| a.name.len()).max().unwrap_or(0);
-        for actor in &hb.actors {
+        let width = info.actors.iter().map(|a| a.name.len()).max().unwrap_or(0);
+        for actor in &info.actors {
             ui::detail(&format!(
                 "{:width$}  {}",
                 actor.name,
@@ -91,7 +84,7 @@ impl Op for Status {
             ));
         }
 
-        let stuck: Vec<_> = hb.stuck_actors(now).map(|a| a.name.as_str()).collect();
+        let stuck: Vec<_> = info.stuck_actors(now).map(|a| a.name.as_str()).collect();
         if !stuck.is_empty() {
             ui::warning(&format!(
                 "{} busy far longer than a normal pass — check {}",
@@ -108,6 +101,33 @@ impl Op for Status {
     }
 }
 
+/// Nothing answered the socket. A PID file still claiming a live process
+/// means the daemon is up but its listener is gone — worth saying, since
+/// "not running" would send the user to start a second one.
+fn report_not_running() {
+    match PidFile::running_pid() {
+        Ok(Some(pid)) => {
+            ui::failure(&format!(
+                "daemon not answering — pid {pid} is alive but its socket is gone"
+            ));
+            ui::detail(&format!(
+                "kill it with {}",
+                ui::highlight(&format!("kill {pid}"))
+            ));
+        }
+        _ => {
+            ui::failure("daemon not running");
+            if let Some(stopped) = last_stop() {
+                ui::detail(&stopped);
+            }
+            ui::detail(&format!(
+                "start it with {}",
+                ui::highlight("jig daemon start")
+            ));
+        }
+    }
+}
+
 fn describe(actor: &ActorActivity, now: i64, ago: &dyn Fn(i64) -> String) -> String {
     let last = actor
         .last_finished
@@ -115,7 +135,7 @@ fn describe(actor: &ActorActivity, now: i64, ago: &dyn Fn(i64) -> String) -> Str
     match actor.busy_since {
         Some(since) => {
             let busy = format!("busy {}", ago(since));
-            let busy = if now - since > crate::daemon::heartbeat::STUCK_ACTOR_SECS {
+            let busy = if now - since > STUCK_ACTOR_SECS {
                 ui::warn_text(&busy)
             } else {
                 busy
