@@ -5,6 +5,7 @@ use clap::Args;
 use jig_core::issues::IssueStatus;
 
 use crate::cli::op::Op;
+use crate::context::JigDirs;
 use crate::context::{RepoConfig, RepoCtx};
 
 /// Mark an issue as complete
@@ -61,8 +62,8 @@ impl Op for Complete {
     type Error = CompleteError;
     type Output = CompleteOutput;
 
-    fn build_context(&self) -> Result<RepoCtx, CompleteError> {
-        Ok(RepoCtx::from_cwd()?)
+    fn build_context(&self, dirs: &JigDirs) -> Result<RepoCtx, CompleteError> {
+        Ok(RepoCtx::from_cwd(dirs)?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {

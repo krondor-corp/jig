@@ -17,7 +17,7 @@ use clap::Args;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{self, disable_raw_mode};
 
-use crate::context::{Context, ScopedCtx};
+use crate::context::{Context, JigDirs, ScopedCtx};
 use crate::daemon::ipc::{self, DaemonStatus};
 use crate::daemon::pidfile::PidFile;
 use crate::daemon::{Daemon, TriageEntry, WorkerState};
@@ -54,8 +54,8 @@ impl Op for Ps {
     type Error = PsError;
     type Output = NoOutput;
 
-    fn build_context(&self) -> Result<ScopedCtx, PsError> {
-        Ok(ScopedCtx::from_global(self.global)?)
+    fn build_context(&self, dirs: &JigDirs) -> Result<ScopedCtx, PsError> {
+        Ok(ScopedCtx::from_global(dirs, self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
@@ -140,7 +140,7 @@ impl Ps {
             return Ok(NoOutput);
         }
 
-        let frame = match daemon_frame(scope.as_deref()) {
+        let frame = match daemon_frame(&cfg.dirs, scope.as_deref()) {
             Some(frame) => frame,
             None => oneshot_frame(cfg)?,
         };
@@ -154,8 +154,8 @@ impl Ps {
 /// A daemon that answers badly — one left from an older jig, say — is worth
 /// a log line but not a failed `ps`: the in-process fallback below still
 /// produces the right answer.
-fn daemon_frame(scope: Option<&Path>) -> Option<Frame> {
-    match ipc::status() {
+fn daemon_frame(dirs: &JigDirs, scope: Option<&Path>) -> Option<Frame> {
+    match ipc::status(dirs) {
         Ok(Some(status)) => Some(Frame::from_status(status, scope)),
         Ok(None) => None,
         Err(e) => {
@@ -450,8 +450,8 @@ fn spawn_key_reader(quit: Arc<AtomicBool>, toggle: Arc<AtomicBool>) {
 /// Run the watch loop against a running daemon, or against one this process
 /// hosts when none is up.
 fn run_watch(cfg: Context, global: bool, scope: Option<PathBuf>) {
-    if ipc::is_running() {
-        run_watch_ipc(cfg.config.tick_interval, global, scope);
+    if ipc::is_running(&cfg.dirs) {
+        run_watch_ipc(&cfg.dirs, cfg.config.tick_interval, global, scope);
     } else {
         run_watch_local(cfg, global);
     }
@@ -459,10 +459,10 @@ fn run_watch(cfg: Context, global: bool, scope: Option<PathBuf>) {
 
 /// Poll the daemon over IPC and render. No tick loop, no actors — several of
 /// these can run at once without fighting over the same worktrees.
-fn run_watch_ipc(interval: u64, global: bool, scope: Option<PathBuf>) {
+fn run_watch_ipc(dirs: &JigDirs, interval: u64, global: bool, scope: Option<PathBuf>) {
     let mut watch = Watch::new(interval, global);
     loop {
-        let status = match ipc::status() {
+        let status = match ipc::status(dirs) {
             Ok(Some(status)) => status,
             // The daemon went away mid-watch. Say so rather than silently
             // rendering the last frame forever.
@@ -494,6 +494,7 @@ fn run_watch_ipc(interval: u64, global: bool, scope: Option<PathBuf>) {
 /// repo under that name would be a lie.
 fn run_watch_local(cfg: Context, global: bool) {
     let interval = cfg.config.tick_interval;
+    let dirs = cfg.dirs.clone();
 
     let mut daemon = match Daemon::start(cfg) {
         Ok(d) => d,
@@ -508,7 +509,7 @@ fn run_watch_local(cfg: Context, global: bool) {
 
     // Held for the life of the view; dropping them releases the socket and
     // the single-daemon claim.
-    let hosted = global.then(host_daemon).flatten();
+    let hosted = if global { host_daemon(&dirs) } else { None };
     let source = match &hosted {
         Some(_) => Source::Hosted,
         None => Source::Local,
@@ -534,11 +535,11 @@ fn run_watch_local(cfg: Context, global: bool) {
 /// Claim the daemon slot and socket for a hosting watch view. `None` when
 /// another daemon won the race — the view still works, it just does not
 /// answer for anyone else.
-fn host_daemon() -> Option<(ipc::Server, PidFile)> {
-    let pid_file = PidFile::acquire()
+fn host_daemon(dirs: &JigDirs) -> Option<(ipc::Server, PidFile)> {
+    let pid_file = PidFile::acquire(dirs)
         .inspect_err(|e| tracing::info!("not hosting the daemon socket: {}", e))
         .ok()?;
-    let server = ipc::Server::bind()
+    let server = ipc::Server::bind(dirs)
         .inspect_err(|e| tracing::info!("not hosting the daemon socket: {}", e))
         .ok()?;
     Some((server, pid_file))

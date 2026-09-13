@@ -11,10 +11,7 @@ pub use schema::{Event, EventKind, EventType, TerminalKind};
 /// Worker event log — wraps the core `EventLog` with a `for_worker` constructor.
 pub type EventLog = jig_core::EventLog<Event>;
 
-/// Create an event log for a worker using the global config directory.
-///
-/// Path: `~/.config/jig/<repo>/<branch>/events.jsonl`
-pub fn event_log_for_worker(repo: &str, branch: &str) -> Result<EventLog, std::io::Error> {
-    let dir = crate::context::worker_events_dir(repo, branch)?;
-    Ok(EventLog::new(dir.join("events.jsonl")))
+/// A worker's event log: `~/.config/jig/<repo>/<branch>/events.jsonl`
+pub fn event_log_for_worker(dirs: &crate::context::JigDirs, repo: &str, branch: &str) -> EventLog {
+    EventLog::new(dirs.worker_events_dir(repo, branch).join("events.jsonl"))
 }

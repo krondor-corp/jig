@@ -1,194 +1,261 @@
-//! Path helpers — all jig directories and file paths.
+//! Where jig keeps its files.
+//!
+//! [`JigDirs`] is resolved from the environment once, in `main`, and passed
+//! down. Nothing below `main` reads an XDG variable, so a test can point any
+//! code path at temp directories by handing it a `JigDirs` of its own — no
+//! process-wide `set_var`, no serialized tests.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// `$<var>/jig` when the XDG base-directory variable `var` is set, else
-/// `fallback()`. The single place jig reads an XDG variable.
-fn xdg_jig_dir(
-    var: &str,
-    fallback: impl FnOnce() -> Result<PathBuf, std::io::Error>,
-) -> Result<PathBuf, std::io::Error> {
-    jig_dir_from(std::env::var_os(var), fallback)
+const DAEMON_LOG_SUFFIX: &str = "-daemon.log";
+
+/// jig's config/state root and its runtime root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JigDirs {
+    /// `$XDG_CONFIG_HOME/jig`, else `~/.config/jig` — config, the repo
+    /// registry, worker event logs, and `state/`.
+    config: PathBuf,
+    /// `$XDG_RUNTIME_DIR/jig`, else `<config>/state` — the daemon's socket
+    /// and PID file, which must not outlive the session when the OS offers
+    /// somewhere that doesn't.
+    runtime: PathBuf,
 }
 
-/// [`xdg_jig_dir`] with the variable's value passed in, so tests can cover
-/// the resolution without touching the process environment. An empty value
-/// counts as unset, as the XDG spec requires.
-fn jig_dir_from(
-    value: Option<OsString>,
-    fallback: impl FnOnce() -> Result<PathBuf, std::io::Error>,
-) -> Result<PathBuf, std::io::Error> {
-    match value {
-        Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir).join("jig")),
-        _ => fallback(),
+impl JigDirs {
+    /// Resolve from `XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR` and the home
+    /// directory. Called once, by `main`.
+    pub fn from_env() -> Result<Self, std::io::Error> {
+        Self::resolve(
+            std::env::var_os("XDG_CONFIG_HOME"),
+            std::env::var_os("XDG_RUNTIME_DIR"),
+            dirs::home_dir(),
+        )
+    }
+
+    /// The layout the binary would use if `XDG_CONFIG_HOME` and
+    /// `XDG_RUNTIME_DIR` were these roots — how tests get the real layout
+    /// under temp dirs.
+    pub fn under(config_home: &Path, runtime_home: &Path) -> Self {
+        Self {
+            config: config_home.join("jig"),
+            runtime: runtime_home.join("jig"),
+        }
+    }
+
+    /// [`Self::from_env`] with the inputs passed in. An empty XDG value
+    /// counts as unset, as the spec requires.
+    fn resolve(
+        config_home: Option<OsString>,
+        runtime_home: Option<OsString>,
+        home: Option<PathBuf>,
+    ) -> Result<Self, std::io::Error> {
+        let set = |value: Option<OsString>| value.filter(|v| !v.is_empty()).map(PathBuf::from);
+        let config = match set(config_home) {
+            Some(dir) => dir.join("jig"),
+            None => home
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "could not find home directory",
+                    )
+                })?
+                .join(".config")
+                .join("jig"),
+        };
+        let runtime = match set(runtime_home) {
+            Some(dir) => dir.join("jig"),
+            None => config.join("state"),
+        };
+        Ok(Self { config, runtime })
+    }
+
+    // ── config root ──────────────────────────────────────────────
+
+    /// `~/.config/jig/`
+    pub fn config_dir(&self) -> &Path {
+        &self.config
+    }
+
+    /// `~/.config/jig/config.toml`
+    pub fn config_file(&self) -> PathBuf {
+        self.config.join("config.toml")
+    }
+
+    /// `~/.config/jig/hooks/`
+    pub fn hooks_dir(&self) -> PathBuf {
+        self.config.join("hooks")
+    }
+
+    /// `~/.config/jig/repos.json`
+    pub fn repo_registry(&self) -> PathBuf {
+        self.config.join("repos.json")
+    }
+
+    /// `~/.config/jig/<repo>/<branch>/` — a worker's event log lives here.
+    pub fn worker_events_dir(&self, repo: &str, branch: &str) -> PathBuf {
+        self.config.join(repo).join(branch)
+    }
+
+    // ── state ────────────────────────────────────────────────────
+
+    /// `~/.config/jig/state/`
+    pub fn state_dir(&self) -> PathBuf {
+        self.config.join("state")
+    }
+
+    /// `~/.config/jig/state/daemon.jsonl` — daemon Started/Stopped events.
+    pub fn daemon_lifecycle_log(&self) -> PathBuf {
+        self.state_dir().join("daemon.jsonl")
+    }
+
+    /// `~/.config/jig/state/notifications.jsonl`
+    pub fn notifications(&self) -> PathBuf {
+        self.state_dir().join("notifications.jsonl")
+    }
+
+    /// `~/.config/jig/state/events/`
+    pub fn events_dir(&self) -> PathBuf {
+        self.state_dir().join("events")
+    }
+
+    /// `~/.config/jig/state/logs/`
+    pub fn logs_dir(&self) -> PathBuf {
+        self.state_dir().join("logs")
+    }
+
+    /// A new log for a one-off command: `logs/<YYYYMMDDTHHMMSSZ>.log`
+    pub fn new_session_log(&self) -> PathBuf {
+        let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+        self.logs_dir().join(format!("{ts}.log"))
+    }
+
+    /// A new log for a daemon run: `logs/<YYYYMMDDTHHMMSSZ>-daemon.log`
+    ///
+    /// The suffix keeps daemon logs findable among one-off command logs.
+    pub fn new_daemon_log(&self) -> PathBuf {
+        let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+        self.logs_dir().join(format!("{ts}{DAEMON_LOG_SUFFIX}"))
+    }
+
+    /// The most recent daemon run's log (lexicographic sort on ISO timestamps).
+    pub fn latest_daemon_log(&self) -> Result<Option<PathBuf>, std::io::Error> {
+        let dir = self.logs_dir();
+        if !dir.exists() {
+            return Ok(None);
+        }
+        let mut logs: Vec<_> = std::fs::read_dir(&dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().ends_with(DAEMON_LOG_SUFFIX))
+            })
+            .collect();
+        logs.sort();
+        Ok(logs.pop())
+    }
+
+    // ── runtime ──────────────────────────────────────────────────
+
+    /// Where the daemon's socket and PID file live — see the field docs.
+    pub fn runtime_dir(&self) -> &Path {
+        &self.runtime
+    }
+
+    /// `<runtime>/daemon.sock`
+    pub fn socket(&self) -> PathBuf {
+        self.runtime.join("daemon.sock")
+    }
+
+    /// `<runtime>/daemon.pid` — beside the socket, so the pair is created
+    /// and cleared together.
+    pub fn pid_file(&self) -> PathBuf {
+        self.runtime.join("daemon.pid")
+    }
+
+    /// Create every directory jig writes into.
+    pub fn ensure(&self) -> Result<(), std::io::Error> {
+        for dir in [
+            self.config.clone(),
+            self.hooks_dir(),
+            self.state_dir(),
+            self.events_dir(),
+            self.logs_dir(),
+            self.runtime.clone(),
+        ] {
+            std::fs::create_dir_all(dir)?;
+        }
+        Ok(())
     }
 }
 
-/// `$XDG_CONFIG_HOME/jig/`, else `~/.config/jig/`
-pub fn global_config_dir() -> Result<PathBuf, std::io::Error> {
-    xdg_jig_dir("XDG_CONFIG_HOME", || {
-        let home = dirs::home_dir().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "could not find home directory",
-            )
-        })?;
-        Ok(home.join(".config").join("jig"))
-    })
-}
-
-/// `~/.config/jig/config.toml`
-pub fn global_config_path() -> Result<PathBuf, std::io::Error> {
-    Ok(global_config_dir()?.join("config.toml"))
-}
-
-/// `~/.config/jig/hooks/`
-pub fn global_hooks_dir() -> Result<PathBuf, std::io::Error> {
-    Ok(global_config_dir()?.join("hooks"))
+/// A test fixture's roots, laid out exactly as the binary would lay them out.
+#[cfg(test)]
+impl From<&jig_core::test_support::Fixture> for JigDirs {
+    fn from(fixture: &jig_core::test_support::Fixture) -> Self {
+        Self::under(fixture.config_home(), fixture.runtime_home())
+    }
 }
 
 /// `<repo_root>/.jig/hooks/hooks.json`
-pub fn hook_registry_path(repo_root: &std::path::Path) -> PathBuf {
+pub fn hook_registry_path(repo_root: &Path) -> PathBuf {
     repo_root
         .join(super::JIG_DIR)
         .join("hooks")
         .join("hooks.json")
 }
 
-/// `~/.config/jig/state/`
-pub fn global_state_dir() -> Result<PathBuf, std::io::Error> {
-    Ok(global_config_dir()?.join("state"))
-}
-
-/// `~/.config/jig/state/daemon.jsonl`
-pub fn daemon_log_path() -> Result<PathBuf, std::io::Error> {
-    Ok(global_state_dir()?.join("daemon.jsonl"))
-}
-
-/// Where the daemon's socket and PID file live.
-///
-/// `$XDG_RUNTIME_DIR/jig/` when the session has one — it is user-private,
-/// on tmpfs, and cleared on logout, so a reboot can never leave a stale
-/// socket behind. Falls back to `~/.config/jig/state/` otherwise (macOS
-/// sets no `XDG_RUNTIME_DIR`).
-pub fn daemon_runtime_dir() -> Result<PathBuf, std::io::Error> {
-    xdg_jig_dir("XDG_RUNTIME_DIR", global_state_dir)
-}
-
-/// `$XDG_RUNTIME_DIR/jig/daemon.sock` (or `~/.config/jig/state/daemon.sock`)
-pub fn daemon_socket_path() -> Result<PathBuf, std::io::Error> {
-    Ok(daemon_runtime_dir()?.join("daemon.sock"))
-}
-
-/// `$XDG_RUNTIME_DIR/jig/daemon.pid` (or `~/.config/jig/state/daemon.pid`)
-///
-/// Lives beside the socket so the pair is created and cleared together.
-pub fn daemon_pid_path() -> Result<PathBuf, std::io::Error> {
-    Ok(daemon_runtime_dir()?.join("daemon.pid"))
-}
-
-/// `~/.config/jig/<repo>/<branch>/`
-pub fn worker_events_dir(repo: &str, branch: &str) -> Result<PathBuf, std::io::Error> {
-    Ok(global_config_dir()?.join(repo).join(branch))
-}
-
-/// `~/.config/jig/repos.json`
-pub fn repo_registry_path() -> Result<PathBuf, std::io::Error> {
-    Ok(global_config_dir()?.join("repos.json"))
-}
-
-/// `~/.config/jig/state/notifications.jsonl`
-pub fn notifications_path() -> Result<PathBuf, std::io::Error> {
-    Ok(global_state_dir()?.join("notifications.jsonl"))
-}
-
-/// `~/.config/jig/state/triages.json`
-pub fn triages_path() -> Result<PathBuf, std::io::Error> {
-    Ok(global_state_dir()?.join("triages.json"))
-}
-
-/// `~/.config/jig/state/events/`
-pub fn global_events_dir() -> Result<PathBuf, std::io::Error> {
-    Ok(global_state_dir()?.join("events"))
-}
-
-/// `~/.config/jig/state/logs/`
-pub fn daemon_logs_dir() -> Result<PathBuf, std::io::Error> {
-    Ok(global_state_dir()?.join("logs"))
-}
-
-const DAEMON_LOG_SUFFIX: &str = "-daemon.log";
-
-/// New log path for a one-off command: `~/.config/jig/state/logs/<YYYYMMDDTHHMMSSZ>.log`
-pub fn new_session_log_path() -> Result<PathBuf, std::io::Error> {
-    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-    Ok(daemon_logs_dir()?.join(format!("{}.log", ts)))
-}
-
-/// New log path for a daemon run: `~/.config/jig/state/logs/<YYYYMMDDTHHMMSSZ>-daemon.log`
-///
-/// The suffix keeps daemon logs findable among one-off command logs.
-pub fn new_daemon_log_path() -> Result<PathBuf, std::io::Error> {
-    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-    Ok(daemon_logs_dir()?.join(format!("{}{}", ts, DAEMON_LOG_SUFFIX)))
-}
-
-/// Find the most recent daemon run's log (lexicographic sort on ISO timestamps).
-pub fn latest_daemon_log() -> Result<Option<PathBuf>, std::io::Error> {
-    let dir = daemon_logs_dir()?;
-    if !dir.exists() {
-        return Ok(None);
-    }
-    let mut logs: Vec<_> = std::fs::read_dir(&dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .is_some_and(|n| n.to_string_lossy().ends_with(DAEMON_LOG_SUFFIX))
-        })
-        .collect();
-    logs.sort();
-    Ok(logs.pop())
-}
-
-/// Create all global directories.
-pub fn ensure_global_dirs() -> Result<(), std::io::Error> {
-    let dirs = [
-        global_config_dir()?,
-        global_hooks_dir()?,
-        global_state_dir()?,
-        global_events_dir()?,
-        daemon_logs_dir()?,
-        daemon_runtime_dir()?,
-    ];
-    for dir in &dirs {
-        std::fs::create_dir_all(dir)?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn config_dir_ends_with_jig() {
-        let dir = global_config_dir().unwrap();
-        assert!(dir.ends_with("jig"));
+    fn home() -> Option<PathBuf> {
+        Some(PathBuf::from("/home/me"))
     }
 
     #[test]
-    fn xdg_value_wins_over_the_fallback() {
-        let dir = jig_dir_from(Some("/run/user/501".into()), || panic!("not used")).unwrap();
-        assert_eq!(dir, PathBuf::from("/run/user/501/jig"));
+    fn xdg_roots_win_over_the_fallbacks() {
+        let dirs =
+            JigDirs::resolve(Some("/cfg".into()), Some("/run/user/501".into()), home()).unwrap();
+        assert_eq!(dirs.config_dir(), Path::new("/cfg/jig"));
+        assert_eq!(dirs.runtime_dir(), Path::new("/run/user/501/jig"));
     }
 
     #[test]
-    fn unset_or_empty_xdg_value_uses_the_fallback() {
-        for value in [None, Some(OsString::new())] {
-            let dir = jig_dir_from(value, || Ok(PathBuf::from("/fallback"))).unwrap();
-            assert_eq!(dir, PathBuf::from("/fallback"));
+    fn unset_or_empty_xdg_values_use_the_fallbacks() {
+        for (config, runtime) in [(None, None), (Some(OsString::new()), Some(OsString::new()))] {
+            let dirs = JigDirs::resolve(config, runtime, home()).unwrap();
+            assert_eq!(dirs.config_dir(), Path::new("/home/me/.config/jig"));
+            assert_eq!(dirs.runtime_dir(), Path::new("/home/me/.config/jig/state"));
+        }
+    }
+
+    #[test]
+    fn no_home_and_no_config_home_is_an_error() {
+        assert!(JigDirs::resolve(None, None, None).is_err());
+    }
+
+    #[test]
+    fn under_matches_what_the_env_would_resolve() {
+        let from_env = JigDirs::resolve(Some("/c".into()), Some("/r".into()), None).unwrap();
+        assert_eq!(JigDirs::under(Path::new("/c"), Path::new("/r")), from_env);
+    }
+
+    #[test]
+    fn ensure_creates_every_dir() {
+        let root = tempfile::tempdir().unwrap();
+        let dirs = JigDirs::under(&root.path().join("config"), &root.path().join("run"));
+        dirs.ensure().unwrap();
+        for dir in [
+            dirs.config_dir().to_path_buf(),
+            dirs.hooks_dir(),
+            dirs.state_dir(),
+            dirs.events_dir(),
+            dirs.logs_dir(),
+            dirs.runtime_dir().to_path_buf(),
+        ] {
+            assert!(dir.is_dir(), "missing {}", dir.display());
         }
     }
 }

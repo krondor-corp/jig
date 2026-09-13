@@ -8,6 +8,7 @@ use clap::Args;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
+use crate::context::JigDirs;
 
 const GITHUB_REPO: &str = "krondor-corp/jig";
 const INSTALL_SCRIPT_URL: &str =
@@ -58,7 +59,7 @@ impl Op for Update {
     type Error = UpdateError;
     type Output = NoOutput;
 
-    fn build_context(&self) -> Result<(), UpdateError> {
+    fn build_context(&self, _dirs: &JigDirs) -> Result<(), UpdateError> {
         Ok(())
     }
 

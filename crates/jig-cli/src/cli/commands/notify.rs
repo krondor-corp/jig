@@ -9,6 +9,7 @@ use crate::notify::{NotificationEvent, NotificationQueue, Notifier};
 
 use crate::cli::op::Op;
 use crate::cli::ui;
+use crate::context::JigDirs;
 
 /// Manage and inspect notifications
 #[derive(Args, Debug, Clone)]
@@ -195,26 +196,26 @@ pub enum NotifyError {
 }
 
 impl Op for Notify {
-    type Context = ();
+    type Context = JigDirs;
     type Error = NotifyError;
     type Output = NotifyOutput;
 
-    fn build_context(&self) -> Result<(), NotifyError> {
-        Ok(())
+    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, NotifyError> {
+        Ok(dirs.clone())
     }
 
-    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
+    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
         match &self.subcommand {
-            NotifyCommands::Doctor => run_doctor(),
-            NotifyCommands::Test => run_test(),
-            NotifyCommands::Tail { n } => run_tail(*n),
-            NotifyCommands::Send { kind } => run_send(kind.clone()),
+            NotifyCommands::Doctor => run_doctor(&dirs),
+            NotifyCommands::Test => run_test(&dirs),
+            NotifyCommands::Tail { n } => run_tail(&dirs, *n),
+            NotifyCommands::Send { kind } => run_send(&dirs, kind.clone()),
         }
     }
 }
 
-fn run_doctor() -> Result<NotifyOutput, NotifyError> {
-    let config_path = Config::default_path()?;
+fn run_doctor(dirs: &JigDirs) -> Result<NotifyOutput, NotifyError> {
+    let config_path = dirs.config_file();
     let config_path_str = config_path.display().to_string();
 
     // Try to load config, capturing parse errors
@@ -223,7 +224,7 @@ fn run_doctor() -> Result<NotifyOutput, NotifyError> {
         Err(e) => (NotifyConfig::default(), Some(e.to_string())),
     };
 
-    let queue = NotificationQueue::global()?;
+    let queue = NotificationQueue::global(dirs);
     let queue_path_str = queue.path().display().to_string();
     let queue_exists = queue.exists();
 
@@ -292,9 +293,9 @@ fn run_doctor() -> Result<NotifyOutput, NotifyError> {
     Ok(NotifyOutput::Doctor)
 }
 
-fn run_test() -> Result<NotifyOutput, NotifyError> {
-    let config = Config::load()?;
-    let queue = NotificationQueue::global()?;
+fn run_test(dirs: &JigDirs) -> Result<NotifyOutput, NotifyError> {
+    let config = Config::load(dirs)?;
+    let queue = NotificationQueue::global(dirs);
     let notifier = Notifier::new(config.notify, queue);
 
     let event = NotificationEvent::NeedsIntervention {
@@ -309,8 +310,8 @@ fn run_test() -> Result<NotifyOutput, NotifyError> {
     Ok(NotifyOutput::Test)
 }
 
-fn run_tail(n: usize) -> Result<NotifyOutput, NotifyError> {
-    let queue = NotificationQueue::global()?;
+fn run_tail(dirs: &JigDirs, n: usize) -> Result<NotifyOutput, NotifyError> {
+    let queue = NotificationQueue::global(dirs);
     let events = queue.tail(n)?;
 
     let lines: Vec<String> = events
@@ -325,9 +326,9 @@ fn run_tail(n: usize) -> Result<NotifyOutput, NotifyError> {
     Ok(NotifyOutput::Tail(TailOutput { lines }))
 }
 
-fn run_send(kind: SendKind) -> Result<NotifyOutput, NotifyError> {
-    let config = Config::load()?;
-    let queue = NotificationQueue::global()?;
+fn run_send(dirs: &JigDirs, kind: SendKind) -> Result<NotifyOutput, NotifyError> {
+    let config = Config::load(dirs)?;
+    let queue = NotificationQueue::global(dirs);
     let notifier = Notifier::new(config.notify, queue);
 
     let event = kind.into_event();

@@ -25,8 +25,8 @@ pub struct RepoRegistry {
 
 impl RepoRegistry {
     /// Load registry from disk, returning empty registry if file doesn't exist
-    pub fn load() -> Result<Self, super::ContextError> {
-        Self::load_from(&Self::registry_path()?)
+    pub fn load(dirs: &super::JigDirs) -> Result<Self, super::ContextError> {
+        Self::load_from(&dirs.repo_registry())
     }
 
     /// [`Self::load`] from an explicit file.
@@ -40,8 +40,8 @@ impl RepoRegistry {
     }
 
     /// Save registry to disk
-    pub fn save(&self) -> Result<(), super::ContextError> {
-        self.save_to(&Self::registry_path()?)
+    pub fn save(&self, dirs: &super::JigDirs) -> Result<(), super::ContextError> {
+        self.save_to(&dirs.repo_registry())
     }
 
     /// [`Self::save`] to an explicit file.
@@ -111,9 +111,5 @@ impl RepoRegistry {
 
     fn find_mut(&mut self, path: &Path) -> Option<&mut RepoEntry> {
         self.repos.iter_mut().find(|e| e.path == path)
-    }
-
-    fn registry_path() -> Result<PathBuf, super::ContextError> {
-        Ok(super::paths::repo_registry_path()?)
     }
 }

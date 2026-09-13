@@ -7,13 +7,17 @@
 use std::error::Error;
 use std::fmt::Display;
 
+use crate::context::JigDirs;
+
 /// Trait for CLI operations.
 pub trait Op {
     type Context;
     type Error: Error + Send + Sync + 'static;
     type Output: Display;
 
-    fn build_context(&self) -> Result<Self::Context, Self::Error>;
+    /// Build this command's context. `dirs` is where jig keeps its files,
+    /// resolved from the environment once by `main`.
+    fn build_context(&self, dirs: &JigDirs) -> Result<Self::Context, Self::Error>;
     fn run(&self, ctx: Self::Context) -> Result<Self::Output, Self::Error>;
 }
 
@@ -55,19 +59,22 @@ macro_rules! command_enum {
         }
 
         impl $crate::cli::op::Op for Command {
-            type Context = ();
+            type Context = $crate::context::JigDirs;
             type Output = OpOutput;
             type Error = OpError;
 
-            fn build_context(&self) -> Result<(), Self::Error> {
-                Ok(())
+            fn build_context(
+                &self,
+                dirs: &$crate::context::JigDirs,
+            ) -> Result<$crate::context::JigDirs, Self::Error> {
+                Ok(dirs.clone())
             }
 
-            fn run(&self, _ctx: ()) -> Result<Self::Output, Self::Error> {
+            fn run(&self, dirs: $crate::context::JigDirs) -> Result<Self::Output, Self::Error> {
                 match self {
                     $(
                         Command::$variant(op) => {
-                            let ctx = op.build_context().map_err(OpError::$variant)?;
+                            let ctx = op.build_context(&dirs).map_err(OpError::$variant)?;
                             op.run(ctx)
                                 .map(OpOutput::$variant)
                                 .map_err(OpError::$variant)

@@ -78,8 +78,8 @@ impl Command {
     /// when no daemon is up to name its own. So only an invocation that
     /// really runs the loop may write one, or a client leaves an empty file
     /// that shadows the real daemon's log.
-    pub fn runs_daemon_loop(&self) -> bool {
-        self.runs_daemon_loop_with(crate::daemon::ipc::is_running)
+    pub fn runs_daemon_loop(&self, dirs: &crate::context::JigDirs) -> bool {
+        self.runs_daemon_loop_with(|| crate::daemon::ipc::is_running(dirs))
     }
 
     /// `daemon_is_running` is injected so the decision is testable without a

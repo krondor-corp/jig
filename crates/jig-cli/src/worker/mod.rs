@@ -13,6 +13,7 @@ use std::path::Path;
 
 use uuid::Uuid;
 
+use crate::context::JigDirs;
 use events::{Event, EventKind, TerminalKind, WorkerState};
 use jig_core::agents::Agent;
 use jig_core::git::{Branch, Repo, Worktree, WorktreeRef};
@@ -108,14 +109,13 @@ impl Worker {
         Ok(self.path.open()?)
     }
 
-    pub fn log(&self) -> Result<events::EventLog, WorkerError> {
-        let repo_name = self.repo_name();
-        let log = events::event_log_for_worker(&repo_name, &self.branch)?;
-        Ok(log)
+    /// This worker's event log.
+    pub fn log(&self, dirs: &JigDirs) -> events::EventLog {
+        events::event_log_for_worker(dirs, &self.repo_name(), &self.branch)
     }
 
-    pub fn status(&self) -> Option<WorkerStatus> {
-        let log = self.log().ok()?;
+    pub fn status(&self, dirs: &JigDirs) -> Option<WorkerStatus> {
+        let log = self.log(dirs);
         if !log.exists() {
             return None;
         }
@@ -123,9 +123,8 @@ impl Worker {
         Some(state.status)
     }
 
-    pub fn fail_reason(&self) -> Option<String> {
-        let log = self.log().ok()?;
-        let events = log.read_all().ok()?;
+    pub fn fail_reason(&self, dirs: &JigDirs) -> Option<String> {
+        let events = self.log(dirs).read_all().ok()?;
         events.iter().rev().find_map(|e| {
             if let EventKind::Terminal {
                 reason: Some(r), ..
@@ -142,10 +141,8 @@ impl Worker {
         Ok(self.worktree()?.remove(force)?)
     }
 
-    pub fn unregister(&self) -> Result<(), WorkerError> {
-        if let Ok(log) = self.log() {
-            let _ = log.remove();
-        }
+    pub fn unregister(&self, dirs: &JigDirs) -> Result<(), WorkerError> {
+        let _ = self.log(dirs).remove();
         Ok(())
     }
 
@@ -201,6 +198,7 @@ impl Worker {
 
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
+        dirs: &JigDirs,
         repo: &Repo,
         branch: &Branch,
         base: &Branch,
@@ -220,7 +218,7 @@ impl Worker {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        let event_log = events::event_log_for_worker(&repo_name, &branch_name)?;
+        let event_log = events::event_log_for_worker(dirs, &repo_name, &branch_name);
         event_log.reset()?;
 
         let _ = event_log.append(&Event::now(EventKind::Initializing {
@@ -264,6 +262,7 @@ impl Worker {
     }
 
     pub fn resume(
+        dirs: &JigDirs,
         wt: &Worktree,
         agent: &Agent,
         prompt: Prompt,
@@ -276,9 +275,7 @@ impl Worker {
             issue_ref: None,
         };
 
-        if let Ok(event_log) = worker.log() {
-            let _ = event_log.append(&Event::now(EventKind::Resume));
-        }
+        let _ = worker.log(dirs).append(&Event::now(EventKind::Resume));
 
         mux.create_window(&worker.branch, &worker.path)?;
         let cmd = agent.resume(prompt)?;
@@ -287,18 +284,16 @@ impl Worker {
         Ok(worker)
     }
 
-    pub fn nudge(&self, prompt: Prompt, mux: &dyn Mux) -> Result<(), WorkerError> {
+    pub fn nudge(&self, dirs: &JigDirs, prompt: Prompt, mux: &dyn Mux) -> Result<(), WorkerError> {
         let nudge_type_key = prompt.name().to_string();
         let message = prompt.render()?;
 
         mux.send_message(&self.branch, &message)?;
 
-        if let Ok(event_log) = self.log() {
-            let _ = event_log.append(&Event::now(EventKind::Nudge {
-                nudge_type: nudge_type_key,
-                message: message.clone(),
-            }));
-        }
+        let _ = self.log(dirs).append(&Event::now(EventKind::Nudge {
+            nudge_type: nudge_type_key,
+            message: message.clone(),
+        }));
 
         Ok(())
     }
@@ -308,16 +303,16 @@ impl Worker {
         Ok(())
     }
 
-    pub fn attach(&self, mux: &dyn Mux) -> Result<(), WorkerError> {
+    pub fn attach(&self, dirs: &JigDirs, mux: &dyn Mux) -> Result<(), WorkerError> {
         if !mux.window_exists(&self.branch) {
             if self.path.exists() {
-                if let Some(status) = self.status() {
+                if let Some(status) = self.status(dirs) {
                     match status {
                         WorkerStatus::Initializing => {
                             return Err(WorkerError::Initializing(self.branch.to_string()));
                         }
                         WorkerStatus::Failed => {
-                            let reason = self.fail_reason().unwrap_or_else(|| "unknown".into());
+                            let reason = self.fail_reason(dirs).unwrap_or_else(|| "unknown".into());
                             return Err(WorkerError::SetupFailed {
                                 branch: self.branch.to_string(),
                                 reason,
@@ -333,11 +328,11 @@ impl Worker {
         Ok(())
     }
 
-    pub fn is_orphaned(&self, mux: &dyn Mux) -> bool {
+    pub fn is_orphaned(&self, dirs: &JigDirs, mux: &dyn Mux) -> bool {
         if self.has_mux_window(mux) {
             return false;
         }
-        match self.status() {
+        match self.status(dirs) {
             Some(s) => {
                 !s.is_terminal() && s != WorkerStatus::Initializing && s != WorkerStatus::Created
             }

@@ -4,6 +4,7 @@ use clap::Args;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
+use crate::context::JigDirs;
 use crate::daemon::ipc::{self, IpcError, Request, Response};
 
 /// Stop the running daemon
@@ -19,19 +20,19 @@ pub enum StopError {
 }
 
 impl Op for Stop {
-    type Context = ();
+    type Context = JigDirs;
     type Error = StopError;
     type Output = NoOutput;
 
-    fn build_context(&self) -> Result<(), StopError> {
-        Ok(())
+    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, StopError> {
+        Ok(dirs.clone())
     }
 
-    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
+    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
         // Ask who we are stopping first, so the confirmation can name a pid
         // and a stale socket is reported as "not running" rather than a
         // connection error.
-        let pid = match ipc::ping()? {
+        let pid = match ipc::ping(&dirs)? {
             Some(info) => info.pid,
             None => {
                 ui::failure("daemon not running");
@@ -39,7 +40,7 @@ impl Op for Stop {
             }
         };
 
-        match ipc::request(&Request::Shutdown) {
+        match ipc::request(&dirs, &Request::Shutdown) {
             Ok(Response::Ok) => {
                 ui::success(&format!(
                     "daemon stopping  {}",

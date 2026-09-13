@@ -16,6 +16,7 @@ use jig_core::git::Branch;
 use jig_core::mux::Mux;
 
 use crate::cli::op::{NoOutput, Op};
+use crate::context::JigDirs;
 
 /// Attach to a worker session
 #[derive(Args, Debug, Clone)]
@@ -45,21 +46,21 @@ pub enum AttachError {
 }
 
 impl Op for Attach {
-    type Context = ();
+    type Context = JigDirs;
     type Error = AttachError;
     type Output = NoOutput;
 
-    fn build_context(&self) -> Result<(), AttachError> {
-        Ok(())
+    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, AttachError> {
+        Ok(dirs.clone())
     }
 
-    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
-        let kind = mux_kind();
+    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
+        let kind = mux_kind(&dirs);
         let branch = self.branch.as_deref();
 
         if let Some(repo_name) = self.repo.as_deref() {
-            let cfg = find_repo_by_name(repo_name)?;
-            attach(&cfg, kind, branch.map(Branch::new).as_ref())?;
+            let cfg = find_repo_by_name(&dirs, repo_name)?;
+            attach(&dirs, &cfg, kind, branch.map(Branch::new).as_ref())?;
             return Ok(NoOutput);
         }
 
@@ -70,13 +71,13 @@ impl Op for Attach {
         };
 
         match (&local, branch) {
-            (Some(cfg), None) => attach(cfg, kind, None)?,
+            (Some(cfg), None) => attach(&dirs, cfg, kind, None)?,
             (Some(cfg), Some(b)) if cfg.worktrees_path.join(b).exists() => {
-                attach(cfg, kind, Some(&Branch::new(b)))?
+                attach(&dirs, cfg, kind, Some(&Branch::new(b)))?
             }
             (_, Some(b)) => {
-                let cfg = find_repo_by_branch(b)?;
-                attach(&cfg, kind, Some(&Branch::new(b)))?
+                let cfg = find_repo_by_branch(&dirs, b)?;
+                attach(&dirs, &cfg, kind, Some(&Branch::new(b)))?
             }
             (None, None) => {
                 return Err(AttachError::Usage(
@@ -90,12 +91,12 @@ impl Op for Attach {
 
 /// Attach has no Op context (it resolves the repo itself), so the mux
 /// choice comes straight from global config.
-fn mux_kind() -> jig_core::mux::MuxKind {
-    crate::context::Config::load().unwrap_or_default().mux
+fn mux_kind(dirs: &JigDirs) -> jig_core::mux::MuxKind {
+    crate::context::Config::load(dirs).unwrap_or_default().mux
 }
 
-fn registered_repos() -> Vec<RepoConfig> {
-    let registry = RepoRegistry::load().unwrap_or_default();
+fn registered_repos(dirs: &JigDirs) -> Vec<RepoConfig> {
+    let registry = RepoRegistry::load(dirs).unwrap_or_default();
     registry
         .repos()
         .iter()
@@ -104,8 +105,8 @@ fn registered_repos() -> Vec<RepoConfig> {
         .collect()
 }
 
-fn find_repo_by_name(name: &str) -> Result<RepoConfig, AttachError> {
-    registered_repos()
+fn find_repo_by_name(dirs: &JigDirs, name: &str) -> Result<RepoConfig, AttachError> {
+    registered_repos(dirs)
         .into_iter()
         .find(|c| c.name() == name)
         .ok_or_else(|| AttachError::Usage(format!("no registered repo named '{name}'")))
@@ -113,8 +114,8 @@ fn find_repo_by_name(name: &str) -> Result<RepoConfig, AttachError> {
 
 /// Registry-wide search for the repo holding a worker branch.
 /// Ambiguity is an error: the same branch name in two repos needs `--repo`.
-fn find_repo_by_branch(branch: &str) -> Result<RepoConfig, AttachError> {
-    let mut matches: Vec<RepoConfig> = registered_repos()
+fn find_repo_by_branch(dirs: &JigDirs, branch: &str) -> Result<RepoConfig, AttachError> {
+    let mut matches: Vec<RepoConfig> = registered_repos(dirs)
         .into_iter()
         .filter(|c| c.worktrees_path.join(branch).exists())
         .collect();
@@ -135,6 +136,7 @@ fn find_repo_by_branch(branch: &str) -> Result<RepoConfig, AttachError> {
 }
 
 fn attach(
+    dirs: &JigDirs,
     cfg: &RepoConfig,
     kind: jig_core::mux::MuxKind,
     branch: Option<&Branch>,
@@ -149,7 +151,7 @@ fn attach(
                 .ok_or_else(|| {
                     AttachError::Worker(crate::worker::WorkerError::NotFound(branch.to_string()))
                 })?;
-            worker.attach(&mux)?;
+            worker.attach(dirs, &mux)?;
             Ok(())
         }
         None => {

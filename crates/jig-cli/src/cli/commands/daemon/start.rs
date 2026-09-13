@@ -9,6 +9,7 @@ use clap::Args;
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
 use crate::context::Context;
+use crate::context::JigDirs;
 use crate::daemon::ipc::{IpcError, Server};
 use crate::daemon::pidfile::{PidFile, PidFileError};
 use crate::daemon::{Daemon, DaemonError};
@@ -57,15 +58,15 @@ impl Op for Start {
     type Output = NoOutput;
 
     /// Always global: one daemon per user, watching every tracked repo.
-    fn build_context(&self) -> Result<Context, StartError> {
-        Ok(Context::from_global()?)
+    fn build_context(&self, dirs: &JigDirs) -> Result<Context, StartError> {
+        Ok(Context::from_global(dirs)?)
     }
 
     fn run(&self, cfg: Context) -> Result<Self::Output, Self::Error> {
         // Claim the slot before doing any work, so a second daemon fails
         // fast and loudly rather than half-starting and fighting the first.
-        let pid_file = PidFile::acquire()?;
-        let server = Server::bind()?;
+        let pid_file = PidFile::acquire(&cfg.dirs)?;
+        let server = Server::bind(&cfg.dirs)?;
 
         let quit = Arc::new(AtomicBool::new(false));
         install_signal_handlers(Arc::clone(&quit));

@@ -38,12 +38,7 @@ pub enum ContextError {
 
 pub use config::Config;
 pub use config::{LinearConfig, LinearProfile, NotifyConfig};
-pub use paths::{
-    daemon_log_path, daemon_logs_dir, daemon_pid_path, daemon_runtime_dir, daemon_socket_path,
-    ensure_global_dirs, global_config_dir, global_config_path, global_events_dir, global_hooks_dir,
-    global_state_dir, hook_registry_path, latest_daemon_log, new_daemon_log_path,
-    new_session_log_path, notifications_path, repo_registry_path, triages_path, worker_events_dir,
-};
+pub use paths::{hook_registry_path, JigDirs};
 pub use registry::{RepoEntry, RepoRegistry};
 pub use repo::{
     AgentConfig, IssuesConfig, JigToml, LinearIssuesConfig, SpawnConfig, TriageConfig,
@@ -203,6 +198,7 @@ impl RepoConfig {
 
 /// Runtime context: config + repo registry + resolved repo configs.
 pub struct Context {
+    pub dirs: JigDirs,
     pub config: Config,
     pub registry: RepoRegistry,
     pub repos: Vec<RepoConfig>,
@@ -210,28 +206,24 @@ pub struct Context {
 
 impl Context {
     /// Single repo from cwd.
-    pub fn from_cwd() -> Result<Self, ContextError> {
-        let config = Config::load().unwrap_or_default();
+    pub fn from_cwd(dirs: &JigDirs) -> Result<Self, ContextError> {
+        let config = Config::load(dirs).unwrap_or_default();
         let repo = RepoConfig::from_cwd()?;
-        let registry_file = repo_registry_path().ok();
-        Ok(Self::for_repo(repo, config, registry_file.as_deref()))
+        Ok(Self::for_repo(dirs, repo, config))
     }
 
     /// A single-repo context for `repo`, recording it in the global registry
-    /// at `registry_file` so daemon/-g commands see it.
+    /// so daemon/-g commands see it.
     ///
     /// Recording is best-effort — last-writer-wins under concurrent jig
     /// processes, which is acceptable for a path list, and a filesystem
     /// problem must not fail an unrelated command.
-    fn for_repo(repo: RepoConfig, config: Config, registry_file: Option<&Path>) -> Self {
-        if let Some(file) = registry_file {
-            let mut global = RepoRegistry::load_from(file).unwrap_or_default();
-            global.register(repo.repo_root.clone());
-            let _ = global.save_to(file);
-        }
+    fn for_repo(dirs: &JigDirs, repo: RepoConfig, config: Config) -> Self {
+        register_globally(dirs, &repo.repo_root);
         let mut registry = RepoRegistry::default();
         registry.register(repo.repo_root.clone());
         Self {
+            dirs: dirs.clone(),
             config,
             registry,
             repos: vec![repo],
@@ -239,9 +231,9 @@ impl Context {
     }
 
     /// All tracked repos.
-    pub fn from_global() -> Result<Self, ContextError> {
-        let config = Config::load().unwrap_or_default();
-        let registry = RepoRegistry::load()?;
+    pub fn from_global(dirs: &JigDirs) -> Result<Self, ContextError> {
+        let config = Config::load(dirs).unwrap_or_default();
+        let registry = RepoRegistry::load(dirs)?;
         let repos = registry
             .repos()
             .iter()
@@ -249,6 +241,7 @@ impl Context {
             .filter_map(|e| RepoConfig::from_path(&e.path).ok())
             .collect();
         Ok(Self {
+            dirs: dirs.clone(),
             config,
             registry,
             repos,
@@ -263,24 +256,23 @@ impl Context {
 
 /// Single-repo context: the repo discovered from cwd plus global config.
 pub struct RepoCtx {
+    pub dirs: JigDirs,
     pub repo: RepoConfig,
     pub config: Config,
     pub jig_toml: JigToml,
 }
 
 impl RepoCtx {
-    pub fn from_cwd() -> Result<Self, ContextError> {
-        let config = Config::load().unwrap_or_default();
+    pub fn from_cwd(dirs: &JigDirs) -> Result<Self, ContextError> {
+        let config = Config::load(dirs).unwrap_or_default();
         let repo = RepoConfig::from_cwd()?;
         let jig_toml = JigToml::load(&repo.repo_root)
             .ok()
             .flatten()
             .unwrap_or_default();
-        // Register so daemon/-g commands see this repo.
-        let mut global = RepoRegistry::load().unwrap_or_default();
-        global.register(repo.repo_root.clone());
-        let _ = global.save();
+        register_globally(dirs, &repo.repo_root);
         Ok(Self {
+            dirs: dirs.clone(),
             repo,
             config,
             jig_toml,
@@ -293,6 +285,7 @@ impl From<RepoCtx> for Context {
         let mut registry = RepoRegistry::default();
         registry.register(ctx.repo.repo_root.clone());
         Context {
+            dirs: ctx.dirs,
             config: ctx.config,
             registry,
             repos: vec![ctx.repo],
@@ -302,15 +295,16 @@ impl From<RepoCtx> for Context {
 
 /// All-repos context: full registry plus config.
 pub struct GlobalCtx {
+    pub dirs: JigDirs,
     pub config: Config,
     pub registry: RepoRegistry,
     pub repos: Vec<RepoConfig>,
 }
 
 impl GlobalCtx {
-    pub fn load() -> Result<Self, ContextError> {
-        let config = Config::load().unwrap_or_default();
-        let registry = RepoRegistry::load()?;
+    pub fn load(dirs: &JigDirs) -> Result<Self, ContextError> {
+        let config = Config::load(dirs).unwrap_or_default();
+        let registry = RepoRegistry::load(dirs)?;
         let repos = registry
             .repos()
             .iter()
@@ -318,6 +312,7 @@ impl GlobalCtx {
             .filter_map(|e| RepoConfig::from_path(&e.path).ok())
             .collect();
         Ok(Self {
+            dirs: dirs.clone(),
             config,
             registry,
             repos,
@@ -328,6 +323,7 @@ impl GlobalCtx {
 impl From<GlobalCtx> for Context {
     fn from(ctx: GlobalCtx) -> Self {
         Context {
+            dirs: ctx.dirs,
             config: ctx.config,
             registry: ctx.registry,
             repos: ctx.repos,
@@ -344,11 +340,18 @@ pub enum ScopedCtx {
 }
 
 impl ScopedCtx {
-    pub fn from_global(global: bool) -> Result<Self, ContextError> {
+    pub fn dirs(&self) -> &JigDirs {
+        match self {
+            ScopedCtx::Repo(r) => &r.dirs,
+            ScopedCtx::Global(g) => &g.dirs,
+        }
+    }
+
+    pub fn from_global(dirs: &JigDirs, global: bool) -> Result<Self, ContextError> {
         if global {
-            Ok(ScopedCtx::Global(GlobalCtx::load()?))
+            Ok(ScopedCtx::Global(GlobalCtx::load(dirs)?))
         } else {
-            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
+            Ok(ScopedCtx::Repo(RepoCtx::from_cwd(dirs)?))
         }
     }
 }
@@ -399,18 +402,26 @@ pub fn update_local_toml(
     Ok(())
 }
 
+/// Record `repo_root` in the global registry so daemon/-g commands see it.
+/// Best-effort: a filesystem problem must not fail an unrelated command.
+fn register_globally(dirs: &JigDirs, repo_root: &Path) {
+    let mut global = RepoRegistry::load(dirs).unwrap_or_default();
+    global.register(repo_root.to_path_buf());
+    let _ = global.save(dirs);
+}
+
 /// Resolve the effective base branch for an arbitrary repo path
 /// (without building a full Context). Used by daemon code.
-pub fn resolve_base_branch_for(repo_root: &Path) -> Result<Branch, ContextError> {
+pub fn resolve_base_branch_for(repo_root: &Path, config: &Config) -> Result<Branch, ContextError> {
     if let Ok(Some(jig_toml)) = JigToml::load(repo_root) {
         if let Some(base) = jig_toml.worktree.base {
             return Ok(Branch::new(base));
         }
     }
-    let config = Config::load().unwrap_or_default();
     Ok(Branch::new(
         config
             .default_base_branch
+            .clone()
             .unwrap_or_else(|| DEFAULT_BASE_BRANCH.to_string()),
     ))
 }
@@ -419,26 +430,21 @@ pub fn resolve_base_branch_for(repo_root: &Path) -> Result<Branch, ContextError>
 mod tests {
     use super::*;
 
-    /// A temp git repo on `main` with one commit.
-    fn init_repo() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        jig_core::test_support::init_repo(dir.path());
-        dir
-    }
+    use jig_core::test_support::Fixture;
 
     #[test]
     fn test_single_repo_context_registers_the_repo() {
-        let dir = init_repo();
-        let config_dir = tempfile::tempdir().unwrap();
-        let registry_file = config_dir.path().join("repos.json");
+        let fixture = Fixture::with_repos(1);
+        let dirs = JigDirs::from(&fixture);
+        let dir = fixture.repo(0);
 
-        let repo = RepoConfig::from_path(dir.path()).unwrap();
-        let ctx = Context::for_repo(repo, Config::default(), Some(&registry_file));
+        let repo = RepoConfig::from_path(dir).unwrap();
+        let ctx = Context::for_repo(&dirs, repo, Config::default());
 
         let repo = ctx.repo().unwrap();
         assert_eq!(
             repo.repo_root.canonicalize().unwrap(),
-            dir.path().canonicalize().unwrap()
+            dir.canonicalize().unwrap()
         );
         assert!(repo.worktrees_path.ends_with(JIG_DIR));
         assert!(repo.session_name().starts_with("jig-"));
@@ -452,15 +458,15 @@ mod tests {
         );
         assert_eq!(
             ctx.registry.repos()[0].path.canonicalize().unwrap(),
-            dir.path().canonicalize().unwrap()
+            dir.canonicalize().unwrap()
         );
 
         // ...and it is persisted globally so -g commands and the daemon see it.
-        let global = RepoRegistry::load_from(&registry_file).unwrap();
+        let global = RepoRegistry::load(&dirs).unwrap();
         assert_eq!(global.repos().len(), 1);
         assert_eq!(
             global.repos()[0].path.canonicalize().unwrap(),
-            dir.path().canonicalize().unwrap()
+            dir.canonicalize().unwrap()
         );
     }
 
@@ -487,14 +493,15 @@ mod tests {
 
     #[test]
     fn test_base_branch_from_jig_toml() {
-        let dir = init_repo();
+        let fixture = Fixture::with_repos(1);
+        let dir = fixture.repo(0);
         std::fs::write(
-            dir.path().join("jig.toml"),
+            dir.join("jig.toml"),
             "[worktree]\nbase = \"origin/develop\"\n",
         )
         .unwrap();
 
-        let repo = RepoConfig::from_path(dir.path()).unwrap();
+        let repo = RepoConfig::from_path(dir).unwrap();
         assert_eq!(repo.base_branch(&Config::default()), "origin/develop");
     }
 }

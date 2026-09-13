@@ -7,6 +7,7 @@ use crate::worker::Worker;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
+use crate::context::JigDirs;
 
 /// Kill a running worker window
 #[derive(Args, Debug, Clone)]
@@ -42,17 +43,18 @@ impl Op for Kill {
     type Error = KillError;
     type Output = NoOutput;
 
-    fn build_context(&self) -> Result<ScopedCtx, KillError> {
-        Ok(ScopedCtx::from_global(self.global)?)
+    fn build_context(&self, dirs: &JigDirs) -> Result<ScopedCtx, KillError> {
+        Ok(ScopedCtx::from_global(dirs, self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
+        let dirs = ctx.dirs().clone();
         match ctx {
             ScopedCtx::Global(g) => {
                 if self.all {
                     let mut killed = 0;
                     for repo in &g.repos {
-                        killed += kill_all_in_repo(repo, g.config.mux)?;
+                        killed += kill_all_in_repo(&dirs, repo, g.config.mux)?;
                     }
                     if killed == 0 {
                         eprintln!("{}", ui::dim("No workers to kill."));
@@ -68,7 +70,7 @@ impl Op for Kill {
                     let workers = Worker::discover(&git_repo);
                     if let Some(worker) = workers.iter().find(|w| w.branch() == name) {
                         let _ = worker.kill(&mux);
-                        worker.unregister()?;
+                        worker.unregister(&dirs)?;
                         ui::success(&format!("Killed '{}'", ui::highlight(name)));
                         return Ok(NoOutput);
                     }
@@ -80,7 +82,7 @@ impl Op for Kill {
                 let mux = jig_core::mux::for_repo(r.config.mux, &repo_name);
 
                 if self.all {
-                    let killed = kill_all_in_repo(&r.repo, r.config.mux)?;
+                    let killed = kill_all_in_repo(&dirs, &r.repo, r.config.mux)?;
                     if killed == 0 {
                         eprintln!("{}", ui::dim("No workers to kill."));
                     }
@@ -94,7 +96,7 @@ impl Op for Kill {
                     .find(|w| w.branch() == name)
                     .ok_or_else(|| KillError::NotFound(format!("worker '{}' not found", name)))?;
                 let _ = worker.kill(&mux);
-                worker.unregister()?;
+                worker.unregister(&dirs)?;
                 ui::success(&format!("Killed '{}'", ui::highlight(name)));
                 Ok(NoOutput)
             }
@@ -102,13 +104,17 @@ impl Op for Kill {
     }
 }
 
-fn kill_all_in_repo(repo: &RepoConfig, kind: jig_core::mux::MuxKind) -> Result<usize, KillError> {
+fn kill_all_in_repo(
+    dirs: &JigDirs,
+    repo: &RepoConfig,
+    kind: jig_core::mux::MuxKind,
+) -> Result<usize, KillError> {
     let repo_name = repo.name();
     let mux = jig_core::mux::for_repo(kind, &repo_name);
     let workers = Worker::discover(&jig_core::git::Repo::open(&repo.repo_root)?);
     for worker in &workers {
         let _ = worker.kill(&mux);
-        worker.unregister()?;
+        worker.unregister(dirs)?;
         ui::success(&format!("Killed '{}'", ui::highlight(worker.branch())));
     }
     Ok(workers.len())

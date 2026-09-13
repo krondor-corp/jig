@@ -6,6 +6,7 @@ mod create;
 use clap::Args;
 
 use crate::cli::op::Op;
+use crate::context::JigDirs;
 
 pub use create::Create;
 
@@ -27,18 +28,18 @@ crate::command_enum! {
 }
 
 impl Op for Pr {
-    type Context = ();
+    type Context = JigDirs;
     type Output = OpOutput;
     type Error = OpError;
 
-    fn build_context(&self) -> Result<(), Self::Error> {
-        Ok(())
+    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, Self::Error> {
+        Ok(dirs.clone())
     }
 
-    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
+    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(cmd) => cmd.run(()),
-            None => Command::Create(self.create.clone()).run(()),
+            Some(cmd) => cmd.run(dirs),
+            None => Command::Create(self.create.clone()).run(dirs),
         }
     }
 }

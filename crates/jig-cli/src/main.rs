@@ -76,18 +76,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         colored::control::set_override(true);
     }
 
+    // The one place jig reads XDG variables; everything below gets `dirs`.
+    let dirs = context::JigDirs::from_env()?;
+
     // Best-effort global directory setup
-    let _ = context::ensure_global_dirs();
+    let _ = dirs.ensure();
 
     // Every command gets a session log file; only one that runs the daemon
     // loop gets the `-daemon.log` name that `jig daemon logs` looks for.
-    let is_daemon = cli.command.as_ref().is_some_and(|c| c.runs_daemon_loop());
+    let is_daemon = cli
+        .command
+        .as_ref()
+        .is_some_and(|c| c.runs_daemon_loop(&dirs));
     let log_file = if is_daemon {
-        context::new_daemon_log_path()
+        dirs.new_daemon_log()
     } else {
-        context::new_session_log_path()
+        dirs.new_session_log()
     };
-    init_tracing(log_file.ok(), is_daemon);
+    init_tracing(Some(log_file), is_daemon);
 
     match cli.command {
         None => {
@@ -96,8 +102,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Some(ref command) => {
-            command.build_context()?;
-            let output = command.run(())?;
+            let dirs = command.build_context(&dirs)?;
+            let output = command.run(dirs)?;
             let output_str = output.to_string();
             if !output_str.is_empty() {
                 println!("{}", output_str);

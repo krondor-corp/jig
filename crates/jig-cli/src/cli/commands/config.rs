@@ -11,6 +11,7 @@ use crate::context::{
 
 use crate::cli::op::Op;
 use crate::cli::ui;
+use crate::context::JigDirs;
 
 /// Manage configuration
 #[derive(Args, Debug, Clone)]
@@ -79,43 +80,47 @@ pub enum ConfigError {
 }
 
 impl Op for Config {
-    type Context = ();
+    type Context = JigDirs;
     type Error = ConfigError;
     type Output = ConfigOutput;
 
-    fn build_context(&self) -> Result<(), ConfigError> {
-        Ok(())
+    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, ConfigError> {
+        Ok(dirs.clone())
     }
 
-    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
+    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
+        let dirs = &dirs;
         if self.list {
-            return show_list();
+            return show_list(dirs);
         }
 
         match &self.subcommand {
             None | Some(ConfigCommands::Show) => match RepoConfig::from_cwd() {
-                Ok(repo) => show_config(&repo),
-                Err(_) => show_global_config(),
+                Ok(repo) => show_config(dirs, &repo),
+                Err(_) => show_global_config(dirs),
             },
             Some(ConfigCommands::Base {
                 branch,
                 global,
                 unset,
-            }) => handle_base(branch.as_deref(), *global, *unset),
+            }) => handle_base(dirs, branch.as_deref(), *global, *unset),
             Some(ConfigCommands::OnCreate { command, unset }) => {
                 handle_on_create(command.as_deref(), *unset)
             }
-            Some(ConfigCommands::Mux { backend }) => handle_mux(*backend),
+            Some(ConfigCommands::Mux { backend }) => handle_mux(dirs, *backend),
         }
     }
 }
 
-fn handle_mux(backend: Option<jig_core::mux::MuxKind>) -> Result<ConfigOutput, ConfigError> {
+fn handle_mux(
+    dirs: &JigDirs,
+    backend: Option<jig_core::mux::MuxKind>,
+) -> Result<ConfigOutput, ConfigError> {
     match backend {
         Some(kind) => {
-            let mut global_cfg = GlobalConfig::load()?;
+            let mut global_cfg = GlobalConfig::load(dirs)?;
             global_cfg.mux = kind;
-            global_cfg.save()?;
+            global_cfg.save(dirs)?;
             ui::success(&format!(
                 "Set mux backend to '{}'",
                 ui::highlight(&kind.to_string())
@@ -123,14 +128,14 @@ fn handle_mux(backend: Option<jig_core::mux::MuxKind>) -> Result<ConfigOutput, C
             Ok(ConfigOutput(None))
         }
         None => {
-            let global = GlobalConfig::load()?;
+            let global = GlobalConfig::load(dirs)?;
             Ok(ConfigOutput(Some(global.mux.to_string())))
         }
     }
 }
 
-fn show_global_config() -> Result<ConfigOutput, ConfigError> {
-    let global = GlobalConfig::load()?;
+fn show_global_config(dirs: &JigDirs) -> Result<ConfigOutput, ConfigError> {
+    let global = GlobalConfig::load(dirs)?;
 
     fn src(s: &str) -> String {
         ui::source(&format!("({})", s))
@@ -238,8 +243,8 @@ fn show_global_config() -> Result<ConfigOutput, ConfigError> {
     Ok(ConfigOutput(None))
 }
 
-fn show_config(repo: &RepoConfig) -> Result<ConfigOutput, ConfigError> {
-    let display = ConfigDisplay::load(&repo.repo_root)?;
+fn show_config(dirs: &JigDirs, repo: &RepoConfig) -> Result<ConfigOutput, ConfigError> {
+    let display = ConfigDisplay::load(dirs, &repo.repo_root)?;
 
     fn src(s: &str) -> String {
         ui::source(&format!("({})", s))
@@ -394,20 +399,21 @@ fn show_config(repo: &RepoConfig) -> Result<ConfigOutput, ConfigError> {
     Ok(ConfigOutput(None))
 }
 
-fn show_list() -> Result<ConfigOutput, ConfigError> {
-    show_global_config()
+fn show_list(dirs: &JigDirs) -> Result<ConfigOutput, ConfigError> {
+    show_global_config(dirs)
 }
 
 fn handle_base(
+    dirs: &JigDirs,
     branch: Option<&str>,
     global: bool,
     unset: bool,
 ) -> Result<ConfigOutput, ConfigError> {
     if unset {
         if global {
-            let mut global_cfg = GlobalConfig::load()?;
+            let mut global_cfg = GlobalConfig::load(dirs)?;
             global_cfg.default_base_branch = None;
-            global_cfg.save()?;
+            global_cfg.save(dirs)?;
             ui::success("Unset global base branch");
         } else {
             let repo = RepoConfig::from_cwd()?;
@@ -420,9 +426,9 @@ fn handle_base(
     match branch {
         Some(b) => {
             if global {
-                let mut global_cfg = GlobalConfig::load()?;
+                let mut global_cfg = GlobalConfig::load(dirs)?;
                 global_cfg.default_base_branch = Some(b.to_string());
-                global_cfg.save()?;
+                global_cfg.save(dirs)?;
                 ui::success(&format!("Set global base branch to '{}'", ui::highlight(b)));
             } else {
                 let repo = RepoConfig::from_cwd()?;
@@ -433,7 +439,7 @@ fn handle_base(
         }
         None => {
             if global {
-                let global_cfg = GlobalConfig::load()?;
+                let global_cfg = GlobalConfig::load(dirs)?;
                 match global_cfg.default_base_branch {
                     Some(b) => Ok(ConfigOutput(Some(b))),
                     None => {
@@ -442,7 +448,7 @@ fn handle_base(
                     }
                 }
             } else {
-                let ctx = crate::context::RepoCtx::from_cwd()?;
+                let ctx = crate::context::RepoCtx::from_cwd(dirs)?;
                 Ok(ConfigOutput(Some(
                     ctx.repo.base_branch(&ctx.config).to_string(),
                 )))
@@ -499,9 +505,9 @@ struct ConfigDisplay {
 }
 
 impl ConfigDisplay {
-    fn load(repo_path: &Path) -> Result<Self, ContextError> {
+    fn load(dirs: &JigDirs, repo_path: &Path) -> Result<Self, ContextError> {
         let jig_toml = JigToml::load(repo_path)?.unwrap_or_default();
-        let global_config = GlobalConfig::load().unwrap_or_default();
+        let global_config = GlobalConfig::load(dirs).unwrap_or_default();
 
         let worktree_source = jig_toml.source_label("worktree");
         let agent_source = jig_toml.source_label("agent");

@@ -4,6 +4,7 @@ use clap::Args;
 use std::path::PathBuf;
 
 use crate::cli::op::Op;
+use crate::context::JigDirs;
 use crate::context::RepoConfig;
 use crate::context::RepoRegistry;
 
@@ -37,15 +38,15 @@ pub enum OpenError {
 }
 
 impl Op for Open {
-    type Context = ();
+    type Context = JigDirs;
     type Error = OpenError;
     type Output = OpenOutput;
 
-    fn build_context(&self) -> Result<(), OpenError> {
-        Ok(())
+    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, OpenError> {
+        Ok(dirs.clone())
     }
 
-    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
+    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
         let name = self
             .branch
             .as_deref()
@@ -54,7 +55,7 @@ impl Op for Open {
         let cfg = match RepoConfig::from_cwd() {
             Ok(cfg) => cfg,
             Err(_) => {
-                let registry = RepoRegistry::load().unwrap_or_default();
+                let registry = RepoRegistry::load(&dirs).unwrap_or_default();
                 let configs: Vec<_> = registry
                     .repos()
                     .iter()

@@ -7,6 +7,7 @@ use jig_core::Worktree;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
+use crate::context::JigDirs;
 use crate::context::RepoCtx;
 
 /// Exit current worktree and remove it
@@ -42,8 +43,8 @@ impl Op for Exit {
     type Error = ExitError;
     type Output = ExitOutput;
 
-    fn build_context(&self) -> Result<RepoCtx, ExitError> {
-        Ok(RepoCtx::from_cwd()?)
+    fn build_context(&self, dirs: &JigDirs) -> Result<RepoCtx, ExitError> {
+        Ok(RepoCtx::from_cwd(dirs)?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {

@@ -4,6 +4,7 @@ use clap::Args;
 use std::path::PathBuf;
 
 use crate::cli::op::Op;
+use crate::context::JigDirs;
 use crate::context::RepoCtx;
 
 /// Go to base repository root
@@ -30,8 +31,8 @@ impl Op for Home {
     type Error = HomeError;
     type Output = HomeOutput;
 
-    fn build_context(&self) -> Result<RepoCtx, HomeError> {
-        Ok(RepoCtx::from_cwd()?)
+    fn build_context(&self, dirs: &JigDirs) -> Result<RepoCtx, HomeError> {
+        Ok(RepoCtx::from_cwd(dirs)?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {

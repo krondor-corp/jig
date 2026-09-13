@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 use crate::cli::op::Op;
+use crate::context::JigDirs;
 use crate::daemon::ipc;
 
 /// Run and inspect the background daemon (start, stop, status, logs)
@@ -34,30 +35,30 @@ crate::command_enum! {
 }
 
 impl Op for Daemon {
-    type Context = ();
+    type Context = JigDirs;
     type Output = OpOutput;
     type Error = OpError;
 
-    fn build_context(&self) -> Result<(), Self::Error> {
-        Ok(())
+    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, Self::Error> {
+        Ok(dirs.clone())
     }
 
-    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
+    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(cmd) => cmd.run(()),
-            None => Command::Status(status::Status).run(()),
+            Some(cmd) => cmd.run(dirs),
+            None => Command::Status(status::Status).run(dirs),
         }
     }
 }
 
 /// The log of the running daemon, else of the most recent daemon run.
-fn current_daemon_log() -> Option<PathBuf> {
-    ipc::ping()
+fn current_daemon_log(dirs: &JigDirs) -> Option<PathBuf> {
+    ipc::ping(dirs)
         .ok()
         .flatten()
         .and_then(|info| info.log)
         .filter(|p| p.exists())
-        .or_else(|| crate::context::latest_daemon_log().ok().flatten())
+        .or_else(|| dirs.latest_daemon_log().ok().flatten())
 }
 
 /// Display a path with the home directory collapsed to `~`.
