@@ -1,7 +1,8 @@
 //! Shared setup for jig's integration tests.
 //!
-//! A [`Sandbox`] owns its own `XDG_CONFIG_HOME` and `XDG_RUNTIME_DIR` and
-//! passes them to every `jig` it runs, so tests — and the daemons they
+//! A [`Sandbox`] wraps [`jig_core::test_support::Fixture`] — its own
+//! `XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR` and any number of repos — and passes
+//! those roots to every `jig` it runs, so tests — and the daemons they
 //! start — run in parallel without seeing each other or the developer's real
 //! `~/.config/jig` and daemon socket. Nothing here changes the test
 //! process's own environment or working directory; that is what keeps
@@ -20,50 +21,67 @@ use std::process::{Child, Command as StdCommand, Stdio};
 use std::time::{Duration, Instant};
 
 use assert_cmd::Command;
+use jig_core::test_support::Fixture;
 use tempfile::TempDir;
 
-/// Isolated config, runtime and working directories for one test.
+/// A [`Fixture`] (config root, runtime root, any number of repos) plus the
+/// means to run the `jig` binary against it.
 pub struct Sandbox {
-    config: TempDir,
-    runtime: TempDir,
-    work: TempDir,
+    fixture: Fixture,
+    /// Where commands run when the sandbox has no repos.
+    scratch: TempDir,
 }
 
 impl Sandbox {
-    /// A sandbox whose working directory is empty — not a git repo.
+    /// No repos; commands run in an empty directory that isn't a git repo.
     pub fn new() -> Self {
         Self {
-            config: TempDir::new().expect("config dir"),
-            runtime: TempDir::new().expect("runtime dir"),
-            work: TempDir::new().expect("work dir"),
+            fixture: Fixture::new(),
+            scratch: TempDir::new().expect("scratch dir"),
         }
     }
 
-    /// A sandbox whose working directory is a git repo on `main` with one
-    /// commit — see [`jig_core::test_support::init_repo`].
-    pub fn with_repo() -> Self {
-        let sandbox = Self::new();
-        jig_core::test_support::init_repo(sandbox.work_dir());
-
+    /// `n` repos (see [`jig_core::test_support::init_repo`]); commands run
+    /// in the first.
+    pub fn with_repos(n: usize) -> Self {
+        let mut sandbox = Self::new();
+        for _ in 0..n {
+            sandbox.add_repo();
+        }
         let legacy_config = sandbox.jig_dir().join("config");
         std::fs::create_dir_all(legacy_config.parent().unwrap()).unwrap();
         std::fs::write(&legacy_config, "_default=main\n").unwrap();
         sandbox
     }
 
-    /// Where commands run.
+    /// One repo, which commands run in.
+    pub fn with_repo() -> Self {
+        Self::with_repos(1)
+    }
+
+    /// Add another repo and return its path.
+    pub fn add_repo(&mut self) -> PathBuf {
+        self.fixture.add_repo().to_path_buf()
+    }
+
+    /// The `i`th repo, in the order they were added.
+    pub fn repo(&self, i: usize) -> &Path {
+        self.fixture.repo(i)
+    }
+
+    /// Where [`Self::jig`] runs: the first repo, else the scratch dir.
     pub fn work_dir(&self) -> &Path {
-        self.work.path()
+        self.fixture.repos().next().unwrap_or(self.scratch.path())
     }
 
     /// `$XDG_CONFIG_HOME/jig` — config, registry and `state/`.
     pub fn jig_dir(&self) -> PathBuf {
-        self.config.path().join("jig")
+        self.fixture.config_home().join("jig")
     }
 
     /// `$XDG_RUNTIME_DIR/jig` — the daemon's socket and PID file.
     pub fn runtime_jig_dir(&self) -> PathBuf {
-        self.runtime.path().join("jig")
+        self.fixture.runtime_home().join("jig")
     }
 
     pub fn socket(&self) -> PathBuf {
@@ -97,12 +115,17 @@ impl Sandbox {
         self.git(&["commit", "--allow-empty", "-m", message, "-q"]);
     }
 
-    /// `jig`, pointed at this sandbox.
+    /// `jig`, pointed at this sandbox, running in [`Self::work_dir`].
     pub fn jig(&self) -> Command {
+        self.jig_in(self.work_dir())
+    }
+
+    /// `jig`, pointed at this sandbox, running in `dir` (e.g. another repo).
+    pub fn jig_in(&self, dir: &Path) -> Command {
         let mut cmd = Command::cargo_bin("jig").expect("jig binary");
-        cmd.env("XDG_CONFIG_HOME", self.config.path())
-            .env("XDG_RUNTIME_DIR", self.runtime.path())
-            .current_dir(self.work_dir());
+        cmd.env("XDG_CONFIG_HOME", self.fixture.config_home())
+            .env("XDG_RUNTIME_DIR", self.fixture.runtime_home())
+            .current_dir(dir);
         cmd
     }
 
@@ -110,8 +133,8 @@ impl Sandbox {
     pub fn spawn_jig(&self, args: &[&str]) -> Child {
         StdCommand::new(assert_cmd::cargo::cargo_bin("jig"))
             .args(args)
-            .env("XDG_CONFIG_HOME", self.config.path())
-            .env("XDG_RUNTIME_DIR", self.runtime.path())
+            .env("XDG_CONFIG_HOME", self.fixture.config_home())
+            .env("XDG_RUNTIME_DIR", self.fixture.runtime_home())
             .current_dir(self.work_dir())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

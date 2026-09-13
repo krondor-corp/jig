@@ -26,12 +26,15 @@ flume.workspace = true
 url.workspace = true
 strum = { version = "0.28.0", features = ["derive"] }
 
+# Only for the `test-support` feature.
+tempfile = { workspace = true, optional = true }
+
 [target.'cfg(unix)'.dependencies]
 nix.workspace = true
 
 [features]
 # Test fixtures (`jig_core::test_support`) for other crates' tests.
-test-support = []
+test-support = ["dep:tempfile"]
 
 [dev-dependencies]
 tempfile.workspace = true
