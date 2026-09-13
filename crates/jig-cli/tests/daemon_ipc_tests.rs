@@ -1,119 +1,15 @@
-#![allow(deprecated)] // Command::cargo_bin is deprecated but used across tests
-
 //! Daemon lifecycle over the unix socket: single instance, IPC status, stop,
 //! and recovery from a socket a crashed daemon left behind.
 //!
 //! Every test gets its own `XDG_CONFIG_HOME` *and* `XDG_RUNTIME_DIR`, so the
 //! daemons they start cannot see each other or the developer's own.
 
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command as StdCommand, Stdio};
-use std::time::{Duration, Instant};
+mod common;
 
-use assert_cmd::Command;
+use std::time::Duration;
+
+use common::{pid_in, Sandbox};
 use predicates::prelude::*;
-use tempfile::TempDir;
-
-/// An isolated config + runtime root for one test's daemons.
-struct Sandbox {
-    config: TempDir,
-    runtime: TempDir,
-}
-
-impl Sandbox {
-    fn new() -> Self {
-        Self {
-            config: TempDir::new().expect("config dir"),
-            runtime: TempDir::new().expect("runtime dir"),
-        }
-    }
-
-    fn jig(&self) -> Command {
-        let mut cmd = Command::cargo_bin("jig").expect("jig binary");
-        cmd.env("XDG_CONFIG_HOME", self.config.path());
-        cmd.env("XDG_RUNTIME_DIR", self.runtime.path());
-        cmd.current_dir(self.config.path());
-        cmd
-    }
-
-    fn socket(&self) -> PathBuf {
-        self.runtime.path().join("jig").join("daemon.sock")
-    }
-
-    fn pid_file(&self) -> PathBuf {
-        self.runtime.path().join("jig").join("daemon.pid")
-    }
-
-    /// Start a background daemon and wait until it answers.
-    fn start_daemon(&self) -> Daemon {
-        let child = StdCommand::new(assert_cmd::cargo::cargo_bin("jig"))
-            .args(["daemon", "start"])
-            .env("XDG_CONFIG_HOME", self.config.path())
-            .env("XDG_RUNTIME_DIR", self.runtime.path())
-            .current_dir(self.config.path())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon");
-
-        wait_for(|| self.socket().exists(), "daemon socket to appear");
-        // The socket file exists a moment before the listener answers.
-        wait_for(
-            || {
-                self.jig()
-                    .args(["daemon", "status"])
-                    .output()
-                    .unwrap()
-                    .status
-                    .success()
-            },
-            "daemon to answer status",
-        );
-        Daemon(child)
-    }
-}
-
-/// A background daemon, killed if a test fails before stopping it.
-struct Daemon(Child);
-
-impl Daemon {
-    fn wait_for_exit(&mut self) {
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(10) {
-            if matches!(self.0.try_wait(), Ok(Some(_))) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        panic!("daemon did not exit within 10s");
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn wait_for(mut ready: impl FnMut() -> bool, what: &str) {
-    let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(30) {
-        if ready() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    panic!("timed out waiting for {what}");
-}
-
-fn pid_in(path: &Path) -> u32 {
-    std::fs::read_to_string(path)
-        .expect("pid file")
-        .trim()
-        .parse()
-        .expect("pid file holds a number")
-}
 
 #[test]
 fn status_without_a_daemon_says_not_running() {
@@ -225,7 +121,7 @@ fn stop_shuts_the_daemon_down_and_clears_its_files() {
 #[test]
 fn a_socket_left_by_a_crashed_daemon_does_not_block_a_restart() {
     let sandbox = Sandbox::new();
-    let dir = sandbox.runtime.path().join("jig");
+    let dir = sandbox.runtime_jig_dir();
     std::fs::create_dir_all(&dir).unwrap();
 
     // What SIGKILL leaves: a socket file nobody is listening on, and a pid
@@ -277,15 +173,7 @@ fn a_watching_client_does_not_shadow_the_daemon_log() {
 
     // Run `ps -gw` against the daemon, then kill it the way a user's ctrl-c
     // would not (no cleanup), which is the harshest case for stray files.
-    let mut client = StdCommand::new(assert_cmd::cargo::cargo_bin("jig"))
-        .args(["ps", "-gw"])
-        .env("XDG_CONFIG_HOME", sandbox.config.path())
-        .env("XDG_RUNTIME_DIR", sandbox.runtime.path())
-        .current_dir(sandbox.config.path())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn ps -gw");
+    let mut client = sandbox.spawn_jig(&["ps", "-gw"]);
     std::thread::sleep(Duration::from_millis(1500));
     let _ = client.kill();
     let _ = client.wait();
