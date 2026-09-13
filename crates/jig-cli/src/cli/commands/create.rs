@@ -9,7 +9,7 @@ use jig_core::Worktree;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 use crate::context::RepoCtx;
 
 /// Create a new worktree.
@@ -70,8 +70,8 @@ impl Op for Create {
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<RepoCtx, CreateError> {
-        Ok(RepoCtx::from_cwd(dirs)?)
+    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CreateError> {
+        Ok(RepoCtx::from_cwd(paths)?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
@@ -98,7 +98,7 @@ impl Op for Create {
         let wt = Worktree::create(&git_repo, &branch, &base_branch, &copy_files, on_create)?;
 
         let repo_name = repo.name();
-        let event_log = events::event_log_for_worker(&ctx.dirs, &repo_name, &self.branch);
+        let event_log = events::event_log_for_worker(&ctx.paths, &repo_name, &self.branch);
         if let Err(e) = event_log.append(&Event::now(EventKind::Create {
             branch: branch.to_string(),
         })) {

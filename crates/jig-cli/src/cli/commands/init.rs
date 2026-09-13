@@ -12,7 +12,7 @@ use crate::terminal;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 
 // Embed templates at compile time from the templates/ directory
 const AGENTS_MD_TEMPLATE: &str = include_str!("../../../../../templates/AGENTS.md");
@@ -73,17 +73,17 @@ pub enum InitError {
 }
 
 impl Op for Init {
-    type Context = JigDirs;
+    type Context = AppPaths;
     type Error = InitError;
     type Output = NoOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, InitError> {
-        Ok(dirs.clone())
+    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, InitError> {
+        Ok(paths.clone())
     }
 
-    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
+    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
         if self.global {
-            return init_global(&dirs, self.force);
+            return init_global(&paths, self.force);
         }
 
         let agent_name = self.agent.as_deref().ok_or_else(|| {
@@ -102,7 +102,7 @@ impl Op for Init {
 
         // Init needs to discover repo root directly because Config may not exist
         // (init is often the first jig command run in a repo)
-        let repo_root = match RepoCtx::from_cwd(&dirs) {
+        let repo_root = match RepoCtx::from_cwd(&paths) {
             Ok(ctx) => ctx.repo.repo_root,
             Err(_) => {
                 let git_repo = Repo::discover()?;
@@ -400,11 +400,11 @@ fn launch_audit(
     Ok(())
 }
 
-fn init_global(dirs: &JigDirs, force: bool) -> Result<NoOutput, InitError> {
-    match Config::init(dirs, force)? {
+fn init_global(paths: &AppPaths, force: bool) -> Result<NoOutput, InitError> {
+    match Config::init(paths, force)? {
         Some(path) => ui::success(&format!("Created {}", path.display())),
         None => {
-            let path = dirs.config_file();
+            let path = paths.config_file();
             ui::success(&format!("Global config already exists: {}", path.display()));
             eprintln!(
                 "  Use {} to overwrite",

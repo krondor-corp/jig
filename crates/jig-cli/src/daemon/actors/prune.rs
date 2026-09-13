@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use jig_core::git::{Repo, Worktree};
 
 use super::Actor;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 
 pub struct PruneTarget {
     pub repo_path: PathBuf,
@@ -14,7 +14,7 @@ pub struct PruneTarget {
 }
 
 pub struct PruneRequest {
-    pub dirs: JigDirs,
+    pub paths: AppPaths,
     pub targets: Vec<PruneTarget>,
 }
 
@@ -31,7 +31,7 @@ impl Actor for PruneActor {
     fn handle(&self, req: PruneRequest) {
         for target in &req.targets {
             let key = format!("{}/{}", target.repo_name, target.worker_name);
-            match prune_single(&req.dirs, target) {
+            match prune_single(&req.paths, target) {
                 Ok(()) => tracing::info!(worker = %key, "pruned worktree"),
                 Err(msg) => tracing::warn!(worker = %key, "prune failed: {}", msg),
             }
@@ -39,7 +39,7 @@ impl Actor for PruneActor {
     }
 }
 
-fn prune_single(dirs: &JigDirs, target: &PruneTarget) -> std::result::Result<(), String> {
+fn prune_single(paths: &AppPaths, target: &PruneTarget) -> std::result::Result<(), String> {
     let worktree_path = crate::context::worktree_path(&target.repo_path, &target.worker_name);
 
     if worktree_path.exists() {
@@ -54,7 +54,7 @@ fn prune_single(dirs: &JigDirs, target: &PruneTarget) -> std::result::Result<(),
     }
 
     {
-        let events_dir = dirs.events_dir();
+        let events_dir = paths.events_dir();
         let sanitized = format!(
             "{}-{}",
             target.repo_name,
@@ -84,7 +84,7 @@ mod tests {
             worker_name: "nonexistent-worker".to_string(),
         };
         let fixture = jig_core::test_support::Fixture::new();
-        let _ = prune_single(&JigDirs::from(&fixture), &target);
+        let _ = prune_single(&AppPaths::from(&fixture), &target);
     }
 
     #[test]
@@ -98,6 +98,6 @@ mod tests {
             worker_name: "worker".to_string(),
         };
         let fixture = jig_core::test_support::Fixture::new();
-        let _ = prune_single(&JigDirs::from(&fixture), &target);
+        let _ = prune_single(&AppPaths::from(&fixture), &target);
     }
 }

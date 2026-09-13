@@ -26,13 +26,13 @@ fn main() {
 
 /// Route tracing per the command's [`LogSink`]. `RUST_LOG` overrides the
 /// level either way.
-fn init_tracing(sink: LogSink, dirs: &context::JigDirs) {
+fn init_tracing(sink: LogSink, paths: &context::AppPaths) {
     use tracing_subscriber::prelude::*;
 
     let file = match sink {
         LogSink::Stderr => None,
         LogSink::File => {
-            let path = dirs.new_session_log();
+            let path = paths.new_session_log();
             let file = std::fs::File::create(&path).ok();
             if file.is_some() {
                 context::log::set_session_log(path);
@@ -75,17 +75,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         colored::control::set_override(true);
     }
 
-    // The one place jig reads XDG variables; everything below gets `dirs`.
-    let dirs = context::JigDirs::from_env()?;
+    // The one place jig reads XDG variables; everything below gets `paths`.
+    let paths = context::AppPaths::from_env()?;
 
     // Best-effort global directory setup
-    let _ = dirs.ensure();
+    let _ = paths.ensure();
 
     let sink = cli
         .command
         .as_ref()
         .map_or(LogSink::Stderr, |c| c.log_sink());
-    init_tracing(sink, &dirs);
+    init_tracing(sink, &paths);
 
     match cli.command {
         None => {
@@ -94,8 +94,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Some(ref command) => {
-            let dirs = command.build_context(&dirs)?;
-            let output = command.run(dirs)?;
+            let paths = command.build_context(&paths)?;
+            let output = command.run(paths)?;
             let output_str = output.to_string();
             if !output_str.is_empty() {
                 println!("{}", output_str);

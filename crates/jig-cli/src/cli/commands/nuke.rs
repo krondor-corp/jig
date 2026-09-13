@@ -6,7 +6,7 @@ use jig_core::mux::Mux;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 
 /// Nuke all workers and state for this repo (keeps config)
 #[derive(clap::Args, Debug, Clone)]
@@ -31,27 +31,27 @@ impl Op for Nuke {
     type Error = NukeError;
     type Output = NoOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<ScopedCtx, NukeError> {
-        Ok(ScopedCtx::from_global(dirs, self.global)?)
+    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, NukeError> {
+        Ok(ScopedCtx::from_global(paths, self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
-        let dirs = ctx.dirs().clone();
+        let paths = ctx.paths().clone();
         match ctx {
             ScopedCtx::Global(g) => {
                 if g.repos.is_empty() {
                     return Err(crate::context::ContextError::NotInGitRepo.into());
                 }
                 for repo in &g.repos {
-                    nuke_repo(&dirs, repo, g.config.mux)?;
+                    nuke_repo(&paths, repo, g.config.mux)?;
                 }
             }
             ScopedCtx::Repo(r) => {
-                nuke_repo(&dirs, &r.repo, r.config.mux)?;
+                nuke_repo(&paths, &r.repo, r.config.mux)?;
             }
         }
 
-        let logs_dir = dirs.logs_dir();
+        let logs_dir = paths.logs_dir();
         if logs_dir.exists() {
             let _ = std::fs::remove_dir_all(&logs_dir);
             let _ = std::fs::create_dir_all(&logs_dir);
@@ -66,7 +66,7 @@ impl Op for Nuke {
 }
 
 fn nuke_repo(
-    dirs: &JigDirs,
+    paths: &AppPaths,
     cfg: &RepoConfig,
     kind: jig_core::mux::MuxKind,
 ) -> Result<(), NukeError> {
@@ -83,7 +83,7 @@ fn nuke_repo(
 
     // 2. Clean up ALL event dirs for this repo (prefix match)
     {
-        let events_dir = dirs.events_dir();
+        let events_dir = paths.events_dir();
         if let Ok(entries) = std::fs::read_dir(&events_dir) {
             let prefix = format!("{}-", repo_name);
             for entry in entries.flatten() {
@@ -116,7 +116,7 @@ fn nuke_repo(
 
     // 4. Clear event logs for this repo's workers
     {
-        let events_dir = dirs.events_dir();
+        let events_dir = paths.events_dir();
         let prefix = format!("{}-", repo_name);
         if let Ok(entries) = std::fs::read_dir(&events_dir) {
             let mut cleared = 0;

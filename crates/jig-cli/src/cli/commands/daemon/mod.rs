@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 use crate::cli::op::Op;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 use crate::daemon::ipc;
 
 /// Run and inspect the background daemon (start, stop, status, logs)
@@ -35,18 +35,18 @@ crate::command_enum! {
 }
 
 impl Op for Daemon {
-    type Context = JigDirs;
+    type Context = AppPaths;
     type Output = OpOutput;
     type Error = OpError;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, Self::Error> {
-        Ok(dirs.clone())
+    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, Self::Error> {
+        Ok(paths.clone())
     }
 
-    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
+    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(cmd) => cmd.run(dirs),
-            None => Command::Status(status::Status).run(dirs),
+            Some(cmd) => cmd.run(paths),
+            None => Command::Status(status::Status).run(paths),
         }
     }
 
@@ -60,10 +60,10 @@ impl Op for Daemon {
 
 /// The running daemon's log, else the one the last daemon run recorded in
 /// its `Started` event.
-fn current_daemon_log(dirs: &JigDirs) -> Option<PathBuf> {
-    let running = ipc::ping(dirs).ok().flatten().and_then(|info| info.log);
+fn current_daemon_log(paths: &AppPaths) -> Option<PathBuf> {
+    let running = ipc::ping(paths).ok().flatten().and_then(|info| info.log);
     running
-        .or_else(|| crate::daemon::events::global(dirs).reduce().ok()?.log)
+        .or_else(|| crate::daemon::events::global(paths).reduce().ok()?.log)
         .filter(|p| p.exists())
 }
 

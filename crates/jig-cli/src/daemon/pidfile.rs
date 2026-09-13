@@ -13,7 +13,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PidFileError {
@@ -32,8 +32,8 @@ pub struct PidFile {
 
 impl PidFile {
     /// Claim the slot for this process, taking over a stale claim.
-    pub fn acquire(dirs: &JigDirs) -> Result<Self, PidFileError> {
-        let path = dirs.pid_file();
+    pub fn acquire(paths: &AppPaths) -> Result<Self, PidFileError> {
+        let path = paths.pid_file();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -67,8 +67,8 @@ impl PidFile {
     }
 
     /// PID of the daemon currently holding the slot, if one is alive.
-    pub fn running_pid(dirs: &JigDirs) -> std::io::Result<Option<u32>> {
-        read_live_pid(&dirs.pid_file())
+    pub fn running_pid(paths: &AppPaths) -> std::io::Result<Option<u32>> {
+        read_live_pid(&paths.pid_file())
     }
 
     pub fn pid(&self) -> u32 {
@@ -127,17 +127,17 @@ mod tests {
     use jig_core::test_support::Fixture;
 
     /// Fresh dirs for one test, plus where their pid file lives.
-    fn sandbox() -> (Fixture, JigDirs, PathBuf) {
+    fn sandbox() -> (Fixture, AppPaths, PathBuf) {
         let fixture = Fixture::new();
-        let dirs = JigDirs::from(&fixture);
-        let path = dirs.pid_file();
-        (fixture, dirs, path)
+        let paths = AppPaths::from(&fixture);
+        let path = paths.pid_file();
+        (fixture, paths, path)
     }
 
     #[test]
     fn acquire_writes_our_pid() {
-        let (_fixture, dirs, path) = sandbox();
-        let held = PidFile::acquire(&dirs).unwrap();
+        let (_fixture, paths, path) = sandbox();
+        let held = PidFile::acquire(&paths).unwrap();
         assert_eq!(held.pid(), std::process::id());
         assert_eq!(
             read_live_pid(&path).unwrap(),
@@ -148,20 +148,20 @@ mod tests {
 
     #[test]
     fn drop_releases_the_slot() {
-        let (_fixture, dirs, path) = sandbox();
-        drop(PidFile::acquire(&dirs).unwrap());
+        let (_fixture, paths, path) = sandbox();
+        drop(PidFile::acquire(&paths).unwrap());
         assert!(!path.exists(), "drop should remove our own pid file");
         assert_eq!(read_live_pid(&path).unwrap(), None);
     }
 
     #[test]
     fn a_live_foreign_pid_blocks_acquire() {
-        let (_fixture, dirs, path) = sandbox();
+        let (_fixture, paths, path) = sandbox();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         // PID 1 always exists and is never us.
         std::fs::write(&path, "1").unwrap();
 
-        match PidFile::acquire(&dirs) {
+        match PidFile::acquire(&paths) {
             Err(PidFileError::AlreadyRunning(1)) => {}
             other => panic!("expected AlreadyRunning(1), got {other:?}"),
         }
@@ -169,24 +169,24 @@ mod tests {
 
     #[test]
     fn a_stale_pid_is_taken_over() {
-        let (_fixture, dirs, path) = sandbox();
+        let (_fixture, paths, path) = sandbox();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         // Above the pid_max ceiling on every platform we run on, so it is
         // guaranteed to belong to nobody.
         std::fs::write(&path, "4294967290").unwrap();
 
-        let held = PidFile::acquire(&dirs).expect("a dead pid must not block a restart");
+        let held = PidFile::acquire(&paths).expect("a dead pid must not block a restart");
         assert_eq!(held.pid(), std::process::id());
     }
 
     #[test]
     fn a_garbage_pid_file_is_taken_over() {
-        let (_fixture, dirs, path) = sandbox();
+        let (_fixture, paths, path) = sandbox();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "not a pid").unwrap();
 
         let held =
-            PidFile::acquire(&dirs).expect("an unparseable pid file must not wedge the daemon");
+            PidFile::acquire(&paths).expect("an unparseable pid file must not wedge the daemon");
         assert_eq!(held.pid(), std::process::id());
     }
 

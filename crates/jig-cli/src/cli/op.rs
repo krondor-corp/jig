@@ -7,7 +7,7 @@
 use std::error::Error;
 use std::fmt::Display;
 
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 
 /// Where a command's tracing output goes. Decided per invocation by
 /// [`Op::log_sink`], before the command runs.
@@ -27,9 +27,9 @@ pub trait Op {
     type Error: Error + Send + Sync + 'static;
     type Output: Display;
 
-    /// Build this command's context. `dirs` is where jig keeps its files,
+    /// Build this command's context. `paths` is where jig keeps its files,
     /// resolved from the environment once by `main`.
-    fn build_context(&self, dirs: &JigDirs) -> Result<Self::Context, Self::Error>;
+    fn build_context(&self, paths: &AppPaths) -> Result<Self::Context, Self::Error>;
     fn run(&self, ctx: Self::Context) -> Result<Self::Output, Self::Error>;
 
     /// Where this invocation's tracing output goes. Override only when
@@ -77,22 +77,22 @@ macro_rules! command_enum {
         }
 
         impl $crate::cli::op::Op for Command {
-            type Context = $crate::context::JigDirs;
+            type Context = $crate::context::AppPaths;
             type Output = OpOutput;
             type Error = OpError;
 
             fn build_context(
                 &self,
-                dirs: &$crate::context::JigDirs,
-            ) -> Result<$crate::context::JigDirs, Self::Error> {
-                Ok(dirs.clone())
+                paths: &$crate::context::AppPaths,
+            ) -> Result<$crate::context::AppPaths, Self::Error> {
+                Ok(paths.clone())
             }
 
-            fn run(&self, dirs: $crate::context::JigDirs) -> Result<Self::Output, Self::Error> {
+            fn run(&self, paths: $crate::context::AppPaths) -> Result<Self::Output, Self::Error> {
                 match self {
                     $(
                         Command::$variant(op) => {
-                            let ctx = op.build_context(&dirs).map_err(OpError::$variant)?;
+                            let ctx = op.build_context(&paths).map_err(OpError::$variant)?;
                             op.run(ctx)
                                 .map(OpOutput::$variant)
                                 .map_err(OpError::$variant)

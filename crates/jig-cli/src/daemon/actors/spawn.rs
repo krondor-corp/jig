@@ -265,7 +265,7 @@ fn spawn_worker_for_issue(
     });
 
     let worker = Worker::spawn(
-        &ctx.dirs,
+        &ctx.paths,
         &repo,
         &branch,
         &base,

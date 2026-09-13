@@ -1,16 +1,17 @@
 //! Where jig keeps its files.
 //!
-//! [`JigDirs`] is resolved from the environment once, in `main`, and passed
+//! [`AppPaths`] is resolved from the environment once, in `main`, and passed
 //! down. Nothing below `main` reads an XDG variable, so a test can point any
-//! code path at temp directories by handing it a `JigDirs` of its own — no
+//! code path at temp directories by handing it an `AppPaths` of its own — no
 //! process-wide `set_var`, no serialized tests.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// jig's config/state root and its runtime root.
+/// Where jig keeps its own files — as opposed to the user's repos and
+/// worktrees. Holds the config/state root and the runtime root.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JigDirs {
+pub struct AppPaths {
     /// `$XDG_CONFIG_HOME/jig`, else `~/.config/jig` — config, the repo
     /// registry, worker event logs, and `state/`.
     config: PathBuf,
@@ -20,7 +21,7 @@ pub struct JigDirs {
     runtime: PathBuf,
 }
 
-impl JigDirs {
+impl AppPaths {
     /// Resolve from `XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR` and the home
     /// directory. Called once, by `main`.
     pub fn from_env() -> Result<Self, std::io::Error> {
@@ -33,7 +34,7 @@ impl JigDirs {
 
     /// The layout the binary would use if `XDG_CONFIG_HOME` and
     /// `XDG_RUNTIME_DIR` were these roots — how tests get the real layout
-    /// under temp dirs.
+    /// under temp paths.
     pub fn under(config_home: &Path, runtime_home: &Path) -> Self {
         Self {
             config: config_home.join("jig"),
@@ -165,7 +166,7 @@ impl JigDirs {
 
 /// A test fixture's roots, laid out exactly as the binary would lay them out.
 #[cfg(test)]
-impl From<&jig_core::test_support::Fixture> for JigDirs {
+impl From<&jig_core::test_support::Fixture> for AppPaths {
     fn from(fixture: &jig_core::test_support::Fixture) -> Self {
         Self::under(fixture.config_home(), fixture.runtime_home())
     }
@@ -189,44 +190,44 @@ mod tests {
 
     #[test]
     fn xdg_roots_win_over_the_fallbacks() {
-        let dirs =
-            JigDirs::resolve(Some("/cfg".into()), Some("/run/user/501".into()), home()).unwrap();
-        assert_eq!(dirs.config_dir(), Path::new("/cfg/jig"));
-        assert_eq!(dirs.runtime_dir(), Path::new("/run/user/501/jig"));
+        let paths =
+            AppPaths::resolve(Some("/cfg".into()), Some("/run/user/501".into()), home()).unwrap();
+        assert_eq!(paths.config_dir(), Path::new("/cfg/jig"));
+        assert_eq!(paths.runtime_dir(), Path::new("/run/user/501/jig"));
     }
 
     #[test]
     fn unset_or_empty_xdg_values_use_the_fallbacks() {
         for (config, runtime) in [(None, None), (Some(OsString::new()), Some(OsString::new()))] {
-            let dirs = JigDirs::resolve(config, runtime, home()).unwrap();
-            assert_eq!(dirs.config_dir(), Path::new("/home/me/.config/jig"));
-            assert_eq!(dirs.runtime_dir(), Path::new("/home/me/.config/jig/state"));
+            let paths = AppPaths::resolve(config, runtime, home()).unwrap();
+            assert_eq!(paths.config_dir(), Path::new("/home/me/.config/jig"));
+            assert_eq!(paths.runtime_dir(), Path::new("/home/me/.config/jig/state"));
         }
     }
 
     #[test]
     fn no_home_and_no_config_home_is_an_error() {
-        assert!(JigDirs::resolve(None, None, None).is_err());
+        assert!(AppPaths::resolve(None, None, None).is_err());
     }
 
     #[test]
     fn under_matches_what_the_env_would_resolve() {
-        let from_env = JigDirs::resolve(Some("/c".into()), Some("/r".into()), None).unwrap();
-        assert_eq!(JigDirs::under(Path::new("/c"), Path::new("/r")), from_env);
+        let from_env = AppPaths::resolve(Some("/c".into()), Some("/r".into()), None).unwrap();
+        assert_eq!(AppPaths::under(Path::new("/c"), Path::new("/r")), from_env);
     }
 
     #[test]
     fn ensure_creates_every_dir() {
         let root = tempfile::tempdir().unwrap();
-        let dirs = JigDirs::under(&root.path().join("config"), &root.path().join("run"));
-        dirs.ensure().unwrap();
+        let paths = AppPaths::under(&root.path().join("config"), &root.path().join("run"));
+        paths.ensure().unwrap();
         for dir in [
-            dirs.config_dir().to_path_buf(),
-            dirs.hooks_dir(),
-            dirs.state_dir(),
-            dirs.events_dir(),
-            dirs.logs_dir(),
-            dirs.runtime_dir().to_path_buf(),
+            paths.config_dir().to_path_buf(),
+            paths.hooks_dir(),
+            paths.state_dir(),
+            paths.events_dir(),
+            paths.logs_dir(),
+            paths.runtime_dir().to_path_buf(),
         ] {
             assert!(dir.is_dir(), "missing {}", dir.display());
         }

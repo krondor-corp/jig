@@ -11,7 +11,7 @@ use crate::context::{
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 
 /// Manage configuration
 #[derive(Args, Debug, Clone)]
@@ -80,47 +80,47 @@ pub enum ConfigError {
 }
 
 impl Op for Config {
-    type Context = JigDirs;
+    type Context = AppPaths;
     type Error = ConfigError;
     type Output = ConfigOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, ConfigError> {
-        Ok(dirs.clone())
+    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, ConfigError> {
+        Ok(paths.clone())
     }
 
-    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
-        let dirs = &dirs;
+    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
+        let paths = &paths;
         if self.list {
-            return show_list(dirs);
+            return show_list(paths);
         }
 
         match &self.subcommand {
             None | Some(ConfigCommands::Show) => match RepoConfig::from_cwd() {
-                Ok(repo) => show_config(dirs, &repo),
-                Err(_) => show_global_config(dirs),
+                Ok(repo) => show_config(paths, &repo),
+                Err(_) => show_global_config(paths),
             },
             Some(ConfigCommands::Base {
                 branch,
                 global,
                 unset,
-            }) => handle_base(dirs, branch.as_deref(), *global, *unset),
+            }) => handle_base(paths, branch.as_deref(), *global, *unset),
             Some(ConfigCommands::OnCreate { command, unset }) => {
                 handle_on_create(command.as_deref(), *unset)
             }
-            Some(ConfigCommands::Mux { backend }) => handle_mux(dirs, *backend),
+            Some(ConfigCommands::Mux { backend }) => handle_mux(paths, *backend),
         }
     }
 }
 
 fn handle_mux(
-    dirs: &JigDirs,
+    paths: &AppPaths,
     backend: Option<jig_core::mux::MuxKind>,
 ) -> Result<ConfigOutput, ConfigError> {
     match backend {
         Some(kind) => {
-            let mut global_cfg = GlobalConfig::load(dirs)?;
+            let mut global_cfg = GlobalConfig::load(paths)?;
             global_cfg.mux = kind;
-            global_cfg.save(dirs)?;
+            global_cfg.save(paths)?;
             ui::success(&format!(
                 "Set mux backend to '{}'",
                 ui::highlight(&kind.to_string())
@@ -128,14 +128,14 @@ fn handle_mux(
             Ok(ConfigOutput(None))
         }
         None => {
-            let global = GlobalConfig::load(dirs)?;
+            let global = GlobalConfig::load(paths)?;
             Ok(ConfigOutput(Some(global.mux.to_string())))
         }
     }
 }
 
-fn show_global_config(dirs: &JigDirs) -> Result<ConfigOutput, ConfigError> {
-    let global = GlobalConfig::load(dirs)?;
+fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
+    let global = GlobalConfig::load(paths)?;
 
     fn src(s: &str) -> String {
         ui::source(&format!("({})", s))
@@ -243,8 +243,8 @@ fn show_global_config(dirs: &JigDirs) -> Result<ConfigOutput, ConfigError> {
     Ok(ConfigOutput(None))
 }
 
-fn show_config(dirs: &JigDirs, repo: &RepoConfig) -> Result<ConfigOutput, ConfigError> {
-    let display = ConfigDisplay::load(dirs, &repo.repo_root)?;
+fn show_config(paths: &AppPaths, repo: &RepoConfig) -> Result<ConfigOutput, ConfigError> {
+    let display = ConfigDisplay::load(paths, &repo.repo_root)?;
 
     fn src(s: &str) -> String {
         ui::source(&format!("({})", s))
@@ -399,21 +399,21 @@ fn show_config(dirs: &JigDirs, repo: &RepoConfig) -> Result<ConfigOutput, Config
     Ok(ConfigOutput(None))
 }
 
-fn show_list(dirs: &JigDirs) -> Result<ConfigOutput, ConfigError> {
-    show_global_config(dirs)
+fn show_list(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
+    show_global_config(paths)
 }
 
 fn handle_base(
-    dirs: &JigDirs,
+    paths: &AppPaths,
     branch: Option<&str>,
     global: bool,
     unset: bool,
 ) -> Result<ConfigOutput, ConfigError> {
     if unset {
         if global {
-            let mut global_cfg = GlobalConfig::load(dirs)?;
+            let mut global_cfg = GlobalConfig::load(paths)?;
             global_cfg.default_base_branch = None;
-            global_cfg.save(dirs)?;
+            global_cfg.save(paths)?;
             ui::success("Unset global base branch");
         } else {
             let repo = RepoConfig::from_cwd()?;
@@ -426,9 +426,9 @@ fn handle_base(
     match branch {
         Some(b) => {
             if global {
-                let mut global_cfg = GlobalConfig::load(dirs)?;
+                let mut global_cfg = GlobalConfig::load(paths)?;
                 global_cfg.default_base_branch = Some(b.to_string());
-                global_cfg.save(dirs)?;
+                global_cfg.save(paths)?;
                 ui::success(&format!("Set global base branch to '{}'", ui::highlight(b)));
             } else {
                 let repo = RepoConfig::from_cwd()?;
@@ -439,7 +439,7 @@ fn handle_base(
         }
         None => {
             if global {
-                let global_cfg = GlobalConfig::load(dirs)?;
+                let global_cfg = GlobalConfig::load(paths)?;
                 match global_cfg.default_base_branch {
                     Some(b) => Ok(ConfigOutput(Some(b))),
                     None => {
@@ -448,7 +448,7 @@ fn handle_base(
                     }
                 }
             } else {
-                let ctx = crate::context::RepoCtx::from_cwd(dirs)?;
+                let ctx = crate::context::RepoCtx::from_cwd(paths)?;
                 Ok(ConfigOutput(Some(
                     ctx.repo.base_branch(&ctx.config).to_string(),
                 )))
@@ -505,9 +505,9 @@ struct ConfigDisplay {
 }
 
 impl ConfigDisplay {
-    fn load(dirs: &JigDirs, repo_path: &Path) -> Result<Self, ContextError> {
+    fn load(paths: &AppPaths, repo_path: &Path) -> Result<Self, ContextError> {
         let jig_toml = JigToml::load(repo_path)?.unwrap_or_default();
-        let global_config = GlobalConfig::load(dirs).unwrap_or_default();
+        let global_config = GlobalConfig::load(paths).unwrap_or_default();
 
         let worktree_source = jig_toml.source_label("worktree");
         let agent_source = jig_toml.source_label("agent");

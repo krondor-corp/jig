@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use url::Url;
 
-use crate::context::{self, Config, JigDirs, JigToml, RepoConfig, RepoEntry};
+use crate::context::{self, AppPaths, Config, JigToml, RepoConfig, RepoEntry};
 use crate::daemon::checks::{self, PrHealth, PrStatus};
 use crate::notify::{NotificationEvent, NotificationQueue, Notifier};
 use crate::worker::events::{self, Event, EventKind, TerminalKind, WorkerState};
@@ -70,10 +70,10 @@ impl Actor for MonitorActor {
 
     fn handle(&self, req: MonitorRequest) -> Vec<PruneTarget> {
         let global_config = &req.ctx.config;
-        let dirs = &req.ctx.dirs;
+        let paths = &req.ctx.paths;
         let notifier = Notifier::new(
             global_config.notify.clone(),
-            NotificationQueue::global(dirs),
+            NotificationQueue::global(paths),
         );
 
         // Discover workers
@@ -104,7 +104,7 @@ impl Actor for MonitorActor {
                 &repo_name,
             );
 
-            match self.process_worker(dirs, &mux, entry, worker, &key, global_config, &notifier) {
+            match self.process_worker(paths, &mux, entry, worker, &key, global_config, &notifier) {
                 Ok((state, targets)) => {
                     display_results.push(state.clone());
                     prune_targets.extend(targets);
@@ -148,7 +148,7 @@ impl MonitorActor {
     #[allow(clippy::too_many_arguments)]
     fn process_worker(
         &self,
-        dirs: &JigDirs,
+        paths: &AppPaths,
         mux: &dyn Mux,
         repo_entry: &RepoEntry,
         worker: &Worker,
@@ -160,7 +160,7 @@ impl MonitorActor {
         let repo_name = worker.repo_name();
 
         // 1. Reduce event log
-        let log = worker.log(dirs);
+        let log = worker.log(paths);
         let mut state: WorkerState = log.reduce()?;
         state.check_silence(global_config);
 
@@ -246,7 +246,7 @@ impl MonitorActor {
                         attempts = failures,
                         "resume exhausted, marking failed"
                     );
-                    let event_log = events::event_log_for_worker(dirs, &repo_name, &worker_name);
+                    let event_log = events::event_log_for_worker(paths, &repo_name, &worker_name);
                     let _ = event_log.append(&Event::now(EventKind::Terminal {
                         terminal: TerminalKind::Failed,
                         reason: Some(format!(
@@ -258,7 +258,7 @@ impl MonitorActor {
                     state.check_silence(global_config);
                 } else {
                     actions.retain(|a| !matches!(a, DispatchAction::Nudge { .. }));
-                    match try_resume_worker(dirs, &repo_entry.path, &worker_name, mux) {
+                    match try_resume_worker(paths, &repo_entry.path, &worker_name, mux) {
                         Ok(true) => {
                             tracing::info!(worker = key, "worker resumed");
                             self.resume_failures.lock().unwrap().remove(key);
@@ -302,9 +302,9 @@ impl MonitorActor {
 
         // Execute actions
         let branch: Branch = state.branch.as_deref().unwrap_or(&worker_name).into();
-        let event_log = events::event_log_for_worker(dirs, &repo_name, &worker_name);
+        let event_log = events::event_log_for_worker(paths, &repo_name, &worker_name);
         let prune_targets = self.execute_actions(
-            dirs,
+            paths,
             &actions,
             key,
             &repo_name,
@@ -426,7 +426,7 @@ impl MonitorActor {
     #[allow(clippy::too_many_arguments)]
     fn execute_actions(
         &self,
-        dirs: &JigDirs,
+        paths: &AppPaths,
         actions: &[DispatchAction],
         key: &str,
         repo_name: &str,
@@ -454,7 +454,7 @@ impl MonitorActor {
                             continue;
                         }
                         let prompt = jig_core::prompt::Prompt::new(message).named(nudge_key);
-                        match w.nudge(dirs, prompt, mux) {
+                        match w.nudge(paths, prompt, mux) {
                             Ok(()) => {
                                 tracing::info!(worker = key, nudge_key = %nudge_key, "nudge delivered")
                             }
@@ -488,7 +488,7 @@ impl MonitorActor {
                     });
                 }
                 DispatchAction::Restart => {
-                    match try_resume_worker(dirs, repo_path, worker_name, mux) {
+                    match try_resume_worker(paths, repo_path, worker_name, mux) {
                         Ok(true) => tracing::info!(worker = key, "worker resumed via restart"),
                         Ok(false) => {}
                         Err(e) => tracing::warn!(worker = key, "restart failed: {}", e),
@@ -630,7 +630,7 @@ fn dispatch_actions(
 // ── Free functions ──────────────────────────────────────────────────
 
 fn try_resume_worker(
-    dirs: &JigDirs,
+    paths: &AppPaths,
     repo_root: &std::path::Path,
     worker_name: &str,
     mux: &dyn Mux,
@@ -648,7 +648,7 @@ fn try_resume_worker(
     )
     .unwrap_or_else(|| jig_core::agents::Agent::from_config("claude", None, &[]).unwrap());
     let prompt = crate::prompts::resume_task("You were interrupted. Resume your previous task.");
-    Worker::resume(dirs, &wt, &agent, prompt, mux)?;
+    Worker::resume(paths, &wt, &agent, prompt, mux)?;
     Ok(true)
 }
 

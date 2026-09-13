@@ -7,7 +7,7 @@ use crate::terminal::check_dep;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 use crate::context::RepoCtx;
 
 /// Show terminal and dependency status
@@ -23,15 +23,15 @@ pub enum HealthError {
 }
 
 impl Op for Health {
-    type Context = JigDirs;
+    type Context = AppPaths;
     type Error = HealthError;
     type Output = NoOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, HealthError> {
-        Ok(dirs.clone())
+    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, HealthError> {
+        Ok(paths.clone())
     }
 
-    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
+    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
         let version = env!("CARGO_PKG_VERSION");
         let mut all_passed = true;
 
@@ -95,7 +95,7 @@ impl Op for Health {
 
         // Section 2: Repository
         eprintln!();
-        let ctx = RepoCtx::from_cwd(&dirs).ok();
+        let ctx = RepoCtx::from_cwd(&paths).ok();
         let global = ctx.as_ref().map(|c| &c.config);
 
         let repo = ctx.as_ref().map(|c| &c.repo);

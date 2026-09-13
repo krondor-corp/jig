@@ -10,7 +10,7 @@ use jig_core::issues::{self, Issue as CoreIssue, IssueFilter, IssuePriority, Iss
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 use crate::context::{Context, ScopedCtx};
 
 #[derive(Debug)]
@@ -265,8 +265,8 @@ impl Op for List {
     type Error = ListError;
     type Output = ListOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<ScopedCtx, ListError> {
-        Ok(ScopedCtx::from_global(dirs, self.global)?)
+    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, ListError> {
+        Ok(ScopedCtx::from_global(paths, self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {

@@ -14,7 +14,7 @@ use crate::daemon::ipc::{self, IpcError, Liveness, STUCK_ACTOR_SECS};
 use crate::daemon::pidfile::PidFile;
 
 use super::display_path;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 
 /// Show whether the daemon is running, ticking, and unstuck
 #[derive(Args, Debug, Clone)]
@@ -33,18 +33,18 @@ pub enum StatusError {
 }
 
 impl Op for Status {
-    type Context = JigDirs;
+    type Context = AppPaths;
     type Error = StatusError;
     type Output = NoOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, StatusError> {
-        Ok(dirs.clone())
+    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, StatusError> {
+        Ok(paths.clone())
     }
 
-    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
+    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
         let now = chrono::Utc::now().timestamp();
-        let Some(info) = ipc::ping(&dirs)? else {
-            report_not_running(&dirs);
+        let Some(info) = ipc::ping(&paths)? else {
+            report_not_running(&paths);
             return Err(StatusError::NotRunning);
         };
 
@@ -105,8 +105,8 @@ impl Op for Status {
 /// Nothing answered the socket. A PID file still claiming a live process
 /// means the daemon is up but its listener is gone — worth saying, since
 /// "not running" would send the user to start a second one.
-fn report_not_running(dirs: &JigDirs) {
-    match PidFile::running_pid(dirs) {
+fn report_not_running(paths: &AppPaths) {
+    match PidFile::running_pid(paths) {
         Ok(Some(pid)) => {
             ui::failure(&format!(
                 "daemon not answering — pid {pid} is alive but its socket is gone"
@@ -118,7 +118,7 @@ fn report_not_running(dirs: &JigDirs) {
         }
         _ => {
             ui::failure("daemon not running");
-            if let Some(stopped) = last_stop(dirs) {
+            if let Some(stopped) = last_stop(paths) {
                 ui::detail(&stopped);
             }
             ui::detail(&format!(
@@ -151,8 +151,8 @@ fn describe(actor: &ActorActivity, now: i64, ago: &dyn Fn(i64) -> String) -> Str
 }
 
 /// "last stopped 3h ago (normal)", from the lifecycle log, when it is readable.
-fn last_stop(dirs: &JigDirs) -> Option<String> {
-    let state = crate::daemon::events::global(dirs).reduce().ok()?;
+fn last_stop(paths: &AppPaths) -> Option<String> {
+    let state = crate::daemon::events::global(paths).reduce().ok()?;
     let stopped_at = state.stopped_at?;
     let ago = (chrono::Utc::now().timestamp() - stopped_at).max(0) as u64;
     Some(format!(

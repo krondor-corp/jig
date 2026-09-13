@@ -25,8 +25,8 @@ pub struct RepoRegistry {
 
 impl RepoRegistry {
     /// Load registry from disk, returning empty registry if file doesn't exist
-    pub fn load(dirs: &super::JigDirs) -> Result<Self, super::ContextError> {
-        Self::load_from(&dirs.repo_registry())
+    pub fn load(paths: &super::AppPaths) -> Result<Self, super::ContextError> {
+        Self::load_from(&paths.repo_registry())
     }
 
     /// [`Self::load`] from an explicit file.
@@ -40,8 +40,8 @@ impl RepoRegistry {
     }
 
     /// Save registry to disk
-    pub fn save(&self, dirs: &super::JigDirs) -> Result<(), super::ContextError> {
-        self.save_to(&dirs.repo_registry())
+    pub fn save(&self, paths: &super::AppPaths) -> Result<(), super::ContextError> {
+        self.save_to(&paths.repo_registry())
     }
 
     /// [`Self::save`] to an explicit file.

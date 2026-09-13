@@ -6,7 +6,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::paths::JigDirs;
+use super::paths::AppPaths;
 use super::ContextError;
 
 /// Notification configuration.
@@ -92,8 +92,8 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn load(dirs: &JigDirs) -> Result<Self, ContextError> {
-        Self::load_from(&dirs.config_file())
+    pub fn load(paths: &AppPaths) -> Result<Self, ContextError> {
+        Self::load_from(&paths.config_file())
     }
 
     pub fn load_from(path: &Path) -> Result<Self, ContextError> {
@@ -105,8 +105,8 @@ impl Config {
         Ok(config)
     }
 
-    pub fn save(&self, dirs: &JigDirs) -> Result<(), ContextError> {
-        self.save_to(&dirs.config_file())
+    pub fn save(&self, paths: &AppPaths) -> Result<(), ContextError> {
+        self.save_to(&paths.config_file())
     }
 
     pub fn save_to(&self, path: &Path) -> Result<(), ContextError> {
@@ -121,9 +121,9 @@ impl Config {
 
     /// Initialize global config at ~/.config/jig/config.toml.
     /// Returns the path if created, None if it already exists (and force is false).
-    pub fn init(dirs: &JigDirs, force: bool) -> Result<Option<std::path::PathBuf>, ContextError> {
-        let config_dir = dirs.config_dir();
-        let config_path = dirs.config_file();
+    pub fn init(paths: &AppPaths, force: bool) -> Result<Option<std::path::PathBuf>, ContextError> {
+        let config_dir = paths.config_dir();
+        let config_path = paths.config_file();
 
         if config_path.exists() && !force {
             return Ok(None);

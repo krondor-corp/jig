@@ -6,7 +6,7 @@ use clap::Args;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 use crate::context::{RepoConfig, RepoCtx};
 use crate::worker::events::{self, WorkerState};
 use jig_core::git::{Branch, Repo};
@@ -53,8 +53,8 @@ impl Op for Create {
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<RepoCtx, CreateError> {
-        Ok(RepoCtx::from_cwd(dirs)?)
+    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CreateError> {
+        Ok(RepoCtx::from_cwd(paths)?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
@@ -63,7 +63,7 @@ impl Op for Create {
             .current_branch()
             .map_err(|_| CreateError::NoBranch)?;
 
-        let base = resolve_base(&ctx.dirs, &ctx.repo, &ctx.config)?;
+        let base = resolve_base(&ctx.paths, &ctx.repo, &ctx.config)?;
         let base_str: &str = &base;
         let base_for_gh = base_str.strip_prefix("origin/").unwrap_or(base_str);
 
@@ -92,7 +92,7 @@ impl Op for Create {
 }
 
 fn resolve_base(
-    dirs: &JigDirs,
+    paths: &AppPaths,
     repo: &RepoConfig,
     global: &crate::context::Config,
 ) -> Result<Branch, CreateError> {
@@ -103,7 +103,7 @@ fn resolve_base(
 
     let repo_name = repo.name();
 
-    let log = events::event_log_for_worker(dirs, &repo_name, &worktree_name);
+    let log = events::event_log_for_worker(paths, &repo_name, &worktree_name);
     let state: WorkerState = match log.reduce() {
         Ok(s) => s,
         Err(_) => return Ok(repo.base_branch(global)),

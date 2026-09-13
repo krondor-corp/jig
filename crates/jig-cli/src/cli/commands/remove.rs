@@ -9,7 +9,7 @@ use jig_core::Worktree;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 
 /// Remove worktree(s)
 #[derive(Args, Debug, Clone)]
@@ -45,8 +45,8 @@ impl Op for Remove {
     type Error = RemoveError;
     type Output = NoOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<ScopedCtx, RemoveError> {
-        Ok(ScopedCtx::from_global(dirs, self.global)?)
+    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, RemoveError> {
+        Ok(ScopedCtx::from_global(paths, self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {

@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::context::{Config, Context, ContextError, JigDirs, JigToml, RepoEntry, RepoRegistry};
+use crate::context::{AppPaths, Config, Context, ContextError, JigToml, RepoEntry, RepoRegistry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
@@ -33,7 +33,7 @@ pub enum DaemonError {
 /// Shared context built once per daemon tick, passed to all actors.
 #[derive(Clone)]
 pub struct TickContext {
-    pub dirs: JigDirs,
+    pub paths: AppPaths,
     pub config: Arc<Config>,
     pub repos: Arc<Vec<RepoEntry>>,
     pub session_prefix: String,
@@ -110,7 +110,7 @@ pub struct Daemon {
     pub spawn: ActorHandle<SpawnActor>,
     pub triage: ActorHandle<TriageActor>,
 
-    dirs: JigDirs,
+    paths: AppPaths,
     config: Config,
     registry: RepoRegistry,
     last_poll: Instant,
@@ -135,9 +135,9 @@ impl Daemon {
 
     fn new(cfg: Context, persistent: bool) -> Result<Self, DaemonError> {
         if persistent {
-            log_startup(&cfg.dirs);
+            log_startup(&cfg.paths);
         }
-        recover_orphans(&cfg.dirs, &cfg.config, &cfg.registry);
+        recover_orphans(&cfg.paths, &cfg.config, &cfg.registry);
 
         let last_poll = Instant::now() - Duration::from_secs(cfg.config.poll_interval + 1);
         let started_at = chrono::Utc::now().timestamp();
@@ -172,7 +172,7 @@ impl Daemon {
             prune,
             spawn,
             triage,
-            dirs: cfg.dirs,
+            paths: cfg.paths,
             config: cfg.config,
             registry: cfg.registry,
             last_poll,
@@ -241,7 +241,7 @@ impl Daemon {
             }
         }
         if self.persistent {
-            log_shutdown(&self.dirs, "normal");
+            log_shutdown(&self.paths, "normal");
         }
     }
 
@@ -269,7 +269,7 @@ impl Daemon {
     /// Execute a single tick of the daemon.
     pub fn tick(&mut self) -> Result<(), DaemonError> {
         let ctx = TickContext {
-            dirs: self.dirs.clone(),
+            paths: self.paths.clone(),
             config: Arc::new(self.config.clone()),
             repos: Arc::new(self.registry.repos().to_vec()),
             session_prefix: self.config.session_prefix.clone(),
@@ -283,7 +283,7 @@ impl Daemon {
         let prune_targets: Vec<_> = self.monitor.drain().into_iter().flatten().collect();
         if !prune_targets.is_empty() {
             self.prune.send(actors::prune::PruneRequest {
-                dirs: self.dirs.clone(),
+                paths: self.paths.clone(),
                 targets: prune_targets,
             });
         }
@@ -311,7 +311,7 @@ impl Daemon {
 
 /// Try to resume a worker whose mux window is dead.
 fn try_resume_worker(
-    dirs: &JigDirs,
+    paths: &AppPaths,
     repo_root: &std::path::Path,
     worker_name: &str,
     mux: &dyn jig_core::mux::Mux,
@@ -329,13 +329,13 @@ fn try_resume_worker(
     )
     .unwrap_or_else(|| jig_core::agents::Agent::from_config("claude", None, &[]).unwrap());
     let prompt = crate::prompts::resume_task("You were interrupted. Resume your previous task.");
-    Worker::resume(dirs, &wt, &agent, prompt, mux)?;
+    Worker::resume(paths, &wt, &agent, prompt, mux)?;
     Ok(true)
 }
 
 /// Log the Started lifecycle event, noting if the previous run crashed.
-fn log_startup(dirs: &JigDirs) {
-    let log = events::global(dirs);
+fn log_startup(paths: &AppPaths) {
+    let log = events::global(paths);
 
     match log.reduce() {
         Ok(state) => {
@@ -358,7 +358,7 @@ fn log_startup(dirs: &JigDirs) {
 }
 
 /// Resume workers whose mux window died, if `auto_recover` is on.
-fn recover_orphans(dirs: &JigDirs, global_config: &Config, registry: &RepoRegistry) {
+fn recover_orphans(paths: &AppPaths, global_config: &Config, registry: &RepoRegistry) {
     if global_config.auto_recover {
         let mut recovered = Vec::new();
         for entry in registry.repos() {
@@ -373,9 +373,9 @@ fn recover_orphans(dirs: &JigDirs, global_config: &Config, registry: &RepoRegist
             };
             let mux = jig_core::mux::for_repo(global_config.mux, &repo_name);
             for worker in Worker::discover(&repo) {
-                if worker.is_orphaned(dirs, &mux) {
+                if worker.is_orphaned(paths, &mux) {
                     let branch = worker.branch().to_string();
-                    match try_resume_worker(dirs, &entry.path, &branch, &mux) {
+                    match try_resume_worker(paths, &entry.path, &branch, &mux) {
                         Ok(true) => {
                             tracing::info!(repo = %repo_name, worker = %branch, "recovered");
                             recovered.push((repo_name.clone(), branch));
@@ -398,8 +398,8 @@ fn recover_orphans(dirs: &JigDirs, global_config: &Config, registry: &RepoRegist
 }
 
 /// Log a graceful shutdown event.
-fn log_shutdown(dirs: &JigDirs, reason: &str) {
-    if let Err(e) = events::global(dirs).append(&events::stopped(reason)) {
+fn log_shutdown(paths: &AppPaths, reason: &str) {
+    if let Err(e) = events::global(paths).append(&events::stopped(reason)) {
         tracing::warn!("failed to write daemon Stopped event: {}", e);
     }
 }

@@ -6,7 +6,7 @@ use clap::Args;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 use jig_core::git::Repo;
 use jig_core::github::{GitHubClient, ReviewComment, ReviewState};
 
@@ -48,7 +48,7 @@ impl Op for Comments {
     type Error = CommentsError;
     type Output = CommentsOutput;
 
-    fn build_context(&self, _dirs: &JigDirs) -> Result<(), CommentsError> {
+    fn build_context(&self, _paths: &AppPaths) -> Result<(), CommentsError> {
         Ok(())
     }
 

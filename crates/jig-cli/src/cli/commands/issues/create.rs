@@ -6,7 +6,7 @@ use clap::Args;
 use jig_core::issues::{IssuePriority, IssueStatus};
 
 use crate::cli::op::Op;
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 use crate::context::{RepoConfig, RepoCtx};
 
 /// Create a new issue
@@ -108,8 +108,8 @@ impl Op for Create {
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<RepoCtx, CreateError> {
-        Ok(RepoCtx::from_cwd(dirs)?)
+    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CreateError> {
+        Ok(RepoCtx::from_cwd(paths)?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {

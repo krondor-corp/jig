@@ -32,7 +32,7 @@ use super::actors::triage::TriageEntry;
 use super::actors::ActorActivity;
 use super::checks::PrHealth;
 use super::DaemonShared;
-use crate::context::{JigDirs, RepoEntry};
+use crate::context::{AppPaths, RepoEntry};
 use crate::worker::events::WorkerState;
 use crate::worker::{MuxStatus, WorkerStatus};
 
@@ -296,8 +296,8 @@ pub enum IpcError {
 ///
 /// `Err(IpcError::NotRunning)` means nothing is listening — callers treat
 /// that as "do it in-process", not as a failure.
-pub fn request(dirs: &JigDirs, req: &Request) -> Result<Response, IpcError> {
-    let path = dirs.socket();
+pub fn request(paths: &AppPaths, req: &Request) -> Result<Response, IpcError> {
+    let path = paths.socket();
     let stream = UnixStream::connect(&path).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
             IpcError::NotRunning
@@ -316,8 +316,8 @@ pub fn request(dirs: &JigDirs, req: &Request) -> Result<Response, IpcError> {
 }
 
 /// Identity of the running daemon, or `None` when none answers.
-pub fn ping(dirs: &JigDirs) -> Result<Option<DaemonInfo>, IpcError> {
-    match request(dirs, &Request::Ping) {
+pub fn ping(paths: &AppPaths) -> Result<Option<DaemonInfo>, IpcError> {
+    match request(paths, &Request::Ping) {
         Ok(Response::Pong(info)) => Ok(Some(info)),
         Ok(other) => Err(IpcError::Protocol(format!("expected pong, got {other:?}"))),
         Err(IpcError::NotRunning) => Ok(None),
@@ -326,8 +326,8 @@ pub fn ping(dirs: &JigDirs) -> Result<Option<DaemonInfo>, IpcError> {
 }
 
 /// The daemon's current frame, or `None` when no daemon is running.
-pub fn status(dirs: &JigDirs) -> Result<Option<DaemonStatus>, IpcError> {
-    match request(dirs, &Request::GetStatus) {
+pub fn status(paths: &AppPaths) -> Result<Option<DaemonStatus>, IpcError> {
+    match request(paths, &Request::GetStatus) {
         Ok(Response::Status(status)) => Ok(Some(*status)),
         Ok(other) => Err(IpcError::Protocol(format!(
             "expected status, got {other:?}"
@@ -338,8 +338,8 @@ pub fn status(dirs: &JigDirs) -> Result<Option<DaemonStatus>, IpcError> {
 }
 
 /// Cheap "is anyone listening?" — used to pick IPC over an in-process tick.
-pub fn is_running(dirs: &JigDirs) -> bool {
-    matches!(ping(dirs), Ok(Some(_)))
+pub fn is_running(paths: &AppPaths) -> bool {
+    matches!(ping(paths), Ok(Some(_)))
 }
 
 // ── Framing ─────────────────────────────────────────────────────────
@@ -375,8 +375,8 @@ impl Server {
     /// A socket file whose owner is gone still exists on disk but refuses
     /// connections, so `connect()` is the liveness test: it succeeding means
     /// a real daemon is there and we must not steal its address.
-    pub fn bind(dirs: &JigDirs) -> Result<Self, IpcError> {
-        let path = dirs.socket();
+    pub fn bind(paths: &AppPaths) -> Result<Self, IpcError> {
+        let path = paths.socket();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -385,7 +385,7 @@ impl Server {
             match UnixStream::connect(&path) {
                 // Reached only when the PID file did not already stop us —
                 // someone is listening without holding the daemon slot.
-                Ok(_) => match super::pidfile::PidFile::running_pid(dirs).ok().flatten() {
+                Ok(_) => match super::pidfile::PidFile::running_pid(paths).ok().flatten() {
                     Some(pid) => return Err(IpcError::AlreadyRunning(pid)),
                     None => return Err(IpcError::SocketInUse(path)),
                 },

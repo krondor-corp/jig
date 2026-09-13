@@ -39,7 +39,7 @@ pub fn init_repo(dir: &Path) -> git2::Repository {
 /// repos made by [`init_repo`]. Everything is removed on drop.
 ///
 /// It only hands out directories. Unit tests turn it into jig's path layout
-/// (`JigDirs::from(&fixture)` in jig-cli); integration tests pass the roots
+/// (`AppPaths::from(&fixture)` in jig-cli); integration tests pass the roots
 /// to the `jig` binary as environment variables.
 pub struct Fixture {
     config: tempfile::TempDir,

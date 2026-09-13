@@ -11,7 +11,7 @@ use crate::cli::ui;
 use crate::context::log::{tail_lines, LogTailer};
 
 use super::{current_daemon_log, display_path};
-use crate::context::JigDirs;
+use crate::context::AppPaths;
 
 /// Print the daemon's log
 #[derive(Args, Debug, Clone)]
@@ -48,16 +48,16 @@ impl std::fmt::Display for LogsOutput {
 }
 
 impl Op for Logs {
-    type Context = JigDirs;
+    type Context = AppPaths;
     type Error = LogsError;
     type Output = LogsOutput;
 
-    fn build_context(&self, dirs: &JigDirs) -> Result<JigDirs, LogsError> {
-        Ok(dirs.clone())
+    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, LogsError> {
+        Ok(paths.clone())
     }
 
-    fn run(&self, dirs: JigDirs) -> Result<Self::Output, Self::Error> {
-        let path = current_daemon_log(&dirs).ok_or(LogsError::NoLog)?;
+    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
+        let path = current_daemon_log(&paths).ok_or(LogsError::NoLog)?;
         if self.path {
             return Ok(LogsOutput(path.display().to_string()));
         }
@@ -68,13 +68,13 @@ impl Op for Logs {
         }
 
         ui::progress(&format!("following {}", display_path(&path)));
-        let _ = follow(&dirs, path, lines);
+        let _ = follow(&paths, path, lines);
         Ok(LogsOutput::default())
     }
 }
 
 /// Stream lines until interrupted or stdout closes (e.g. piped into `head`).
-fn follow(dirs: &JigDirs, path: PathBuf, backlog: Vec<String>) -> std::io::Result<()> {
+fn follow(paths: &AppPaths, path: PathBuf, backlog: Vec<String>) -> std::io::Result<()> {
     let mut out = std::io::stdout().lock();
     for line in backlog {
         writeln!(out, "{line}")?;
@@ -89,7 +89,7 @@ fn follow(dirs: &JigDirs, path: PathBuf, backlog: Vec<String>) -> std::io::Resul
         out.flush()?;
 
         // A restarted daemon writes a fresh log; move over to it.
-        if let Some(newer) = current_daemon_log(dirs).filter(|p| is_newer(p, tailer.path())) {
+        if let Some(newer) = current_daemon_log(paths).filter(|p| is_newer(p, tailer.path())) {
             ui::progress(&format!(
                 "daemon restarted — following {}",
                 display_path(&newer)
