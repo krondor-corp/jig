@@ -418,24 +418,11 @@ pub fn resolve_base_branch_for(repo_root: &Path) -> Result<Branch, ContextError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
-    /// A git repo with one empty commit on `main`.
+    /// A temp git repo on `main` with one commit.
     fn init_repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        for args in [
-            &["init", "-q", "-b", "main"][..],
-            &["config", "user.email", "test@test.com"],
-            &["config", "user.name", "Test"],
-            &["config", "commit.gpgsign", "false"],
-            &["commit", "--allow-empty", "-m", "init", "-q"],
-        ] {
-            Command::new("git")
-                .args(args)
-                .current_dir(dir.path())
-                .output()
-                .unwrap();
-        }
+        jig_core::test_support::init_repo(dir.path());
         dir
     }
 

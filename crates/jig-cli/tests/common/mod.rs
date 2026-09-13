@@ -39,14 +39,11 @@ impl Sandbox {
         }
     }
 
-    /// A sandbox whose working directory is a fresh git repo on `main`
-    /// (identity set, signing off, no commits yet).
+    /// A sandbox whose working directory is a git repo on `main` with one
+    /// commit — see [`jig_core::test_support::init_repo`].
     pub fn with_repo() -> Self {
         let sandbox = Self::new();
-        sandbox.git(&["init", "-q", "-b", "main"]);
-        sandbox.git(&["config", "user.email", "test@test.com"]);
-        sandbox.git(&["config", "user.name", "Test User"]);
-        sandbox.git(&["config", "commit.gpgsign", "false"]);
+        jig_core::test_support::init_repo(sandbox.work_dir());
 
         let legacy_config = sandbox.jig_dir().join("config");
         std::fs::create_dir_all(legacy_config.parent().unwrap()).unwrap();

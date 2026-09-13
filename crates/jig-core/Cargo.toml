@@ -29,5 +29,9 @@ strum = { version = "0.28.0", features = ["derive"] }
 [target.'cfg(unix)'.dependencies]
 nix.workspace = true
 
+[features]
+# Test fixtures (`jig_core::test_support`) for other crates' tests.
+test-support = []
+
 [dev-dependencies]
 tempfile.workspace = true
