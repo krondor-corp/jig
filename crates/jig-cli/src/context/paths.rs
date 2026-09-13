@@ -1,24 +1,41 @@
 //! Path helpers — all jig directories and file paths.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
-/// `~/.config/jig/`
-pub fn global_config_dir() -> Result<PathBuf, std::io::Error> {
-    let config_dir = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(xdg).join("jig")
-    } else {
-        dirs::home_dir()
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "could not find home directory",
-                )
-            })?
-            .join(".config")
-            .join("jig")
-    };
+/// `$<var>/jig` when the XDG base-directory variable `var` is set, else
+/// `fallback()`. The single place jig reads an XDG variable.
+fn xdg_jig_dir(
+    var: &str,
+    fallback: impl FnOnce() -> Result<PathBuf, std::io::Error>,
+) -> Result<PathBuf, std::io::Error> {
+    jig_dir_from(std::env::var_os(var), fallback)
+}
 
-    Ok(config_dir)
+/// [`xdg_jig_dir`] with the variable's value passed in, so tests can cover
+/// the resolution without touching the process environment. An empty value
+/// counts as unset, as the XDG spec requires.
+fn jig_dir_from(
+    value: Option<OsString>,
+    fallback: impl FnOnce() -> Result<PathBuf, std::io::Error>,
+) -> Result<PathBuf, std::io::Error> {
+    match value {
+        Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir).join("jig")),
+        _ => fallback(),
+    }
+}
+
+/// `$XDG_CONFIG_HOME/jig/`, else `~/.config/jig/`
+pub fn global_config_dir() -> Result<PathBuf, std::io::Error> {
+    xdg_jig_dir("XDG_CONFIG_HOME", || {
+        let home = dirs::home_dir().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "could not find home directory",
+            )
+        })?;
+        Ok(home.join(".config").join("jig"))
+    })
 }
 
 /// `~/.config/jig/config.toml`
@@ -56,10 +73,7 @@ pub fn daemon_log_path() -> Result<PathBuf, std::io::Error> {
 /// socket behind. Falls back to `~/.config/jig/state/` otherwise (macOS
 /// sets no `XDG_RUNTIME_DIR`).
 pub fn daemon_runtime_dir() -> Result<PathBuf, std::io::Error> {
-    match std::env::var("XDG_RUNTIME_DIR") {
-        Ok(dir) if !dir.is_empty() => Ok(PathBuf::from(dir).join("jig")),
-        _ => global_state_dir(),
-    }
+    xdg_jig_dir("XDG_RUNTIME_DIR", global_state_dir)
 }
 
 /// `$XDG_RUNTIME_DIR/jig/daemon.sock` (or `~/.config/jig/state/daemon.sock`)
@@ -165,18 +179,16 @@ mod tests {
     }
 
     #[test]
-    fn ensure_global_dirs_creates_structure() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("XDG_CONFIG_HOME", tmp.path());
+    fn xdg_value_wins_over_the_fallback() {
+        let dir = jig_dir_from(Some("/run/user/501".into()), || panic!("not used")).unwrap();
+        assert_eq!(dir, PathBuf::from("/run/user/501/jig"));
+    }
 
-        ensure_global_dirs().unwrap();
-
-        assert!(tmp.path().join("jig").is_dir());
-        assert!(tmp.path().join("jig/state").is_dir());
-        assert!(tmp.path().join("jig/hooks").is_dir());
-        assert!(tmp.path().join("jig/state/events").is_dir());
-        assert!(tmp.path().join("jig/state/logs").is_dir());
-
-        std::env::remove_var("XDG_CONFIG_HOME");
+    #[test]
+    fn unset_or_empty_xdg_value_uses_the_fallback() {
+        for value in [None, Some(OsString::new())] {
+            let dir = jig_dir_from(value, || Ok(PathBuf::from("/fallback"))).unwrap();
+            assert_eq!(dir, PathBuf::from("/fallback"));
+        }
     }
 }

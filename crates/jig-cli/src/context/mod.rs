@@ -213,18 +213,29 @@ impl Context {
     pub fn from_cwd() -> Result<Self, ContextError> {
         let config = Config::load().unwrap_or_default();
         let repo = RepoConfig::from_cwd()?;
-        // Side-effect: persist this repo in the global registry so daemon/-g commands see it.
-        // last-writer-wins under concurrent jig processes — acceptable for a path list.
-        let mut global = RepoRegistry::load().unwrap_or_default();
-        global.register(repo.repo_root.clone());
-        let _ = global.save(); // best-effort; don't fail unrelated commands on FS issues
+        let registry_file = repo_registry_path().ok();
+        Ok(Self::for_repo(repo, config, registry_file.as_deref()))
+    }
+
+    /// A single-repo context for `repo`, recording it in the global registry
+    /// at `registry_file` so daemon/-g commands see it.
+    ///
+    /// Recording is best-effort — last-writer-wins under concurrent jig
+    /// processes, which is acceptable for a path list, and a filesystem
+    /// problem must not fail an unrelated command.
+    fn for_repo(repo: RepoConfig, config: Config, registry_file: Option<&Path>) -> Self {
+        if let Some(file) = registry_file {
+            let mut global = RepoRegistry::load_from(file).unwrap_or_default();
+            global.register(repo.repo_root.clone());
+            let _ = global.save_to(file);
+        }
         let mut registry = RepoRegistry::default();
         registry.register(repo.repo_root.clone());
-        Ok(Self {
+        Self {
             config,
             registry,
             repos: vec![repo],
-        })
+        }
     }
 
     /// All tracked repos.
@@ -409,51 +420,34 @@ mod tests {
     use super::*;
     use std::process::Command;
 
-    #[test]
-    fn test_from_cwd_in_git_repo() {
+    /// A git repo with one empty commit on `main`.
+    fn init_repo() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["config", "user.email", "test@test.com"],
+            &["config", "user.name", "Test"],
+            &["config", "commit.gpgsign", "false"],
+            &["commit", "--allow-empty", "-m", "init", "-q"],
+        ] {
+            Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn test_single_repo_context_registers_the_repo() {
+        let dir = init_repo();
         let config_dir = tempfile::tempdir().unwrap();
+        let registry_file = config_dir.path().join("repos.json");
 
-        Command::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
+        let repo = RepoConfig::from_path(dir.path()).unwrap();
+        let ctx = Context::for_repo(repo, Config::default(), Some(&registry_file));
 
-        Command::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "commit.gpgsign", "false"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["commit", "--allow-empty", "-m", "init", "-q"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        std::env::set_var("XDG_CONFIG_HOME", config_dir.path());
-
-        let original = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-
-        let ctx = Context::from_cwd();
-
-        std::env::set_current_dir(&original).unwrap();
-
-        let ctx = ctx.expect("from_cwd should succeed in a git repo");
         let repo = ctx.repo().unwrap();
         assert_eq!(
             repo.repo_root.canonicalize().unwrap(),
@@ -463,8 +457,7 @@ mod tests {
         assert!(repo.session_name().starts_with("jig-"));
         assert_eq!(repo.base_branch(&ctx.config), "origin/main");
 
-        // from_cwd must include the current repo in the registry so that
-        // global commands (-g flags, daemon) can iterate it.
+        // The context's own registry holds just this repo...
         assert_eq!(
             ctx.registry.repos().len(),
             1,
@@ -472,6 +465,14 @@ mod tests {
         );
         assert_eq!(
             ctx.registry.repos()[0].path.canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
+
+        // ...and it is persisted globally so -g commands and the daemon see it.
+        let global = RepoRegistry::load_from(&registry_file).unwrap();
+        assert_eq!(global.repos().len(), 1);
+        assert_eq!(
+            global.repos()[0].path.canonicalize().unwrap(),
             dir.path().canonicalize().unwrap()
         );
     }
@@ -499,45 +500,14 @@ mod tests {
 
     #[test]
     fn test_base_branch_from_jig_toml() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_dir = tempfile::tempdir().unwrap();
-
-        Command::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "commit.gpgsign", "false"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["commit", "--allow-empty", "-m", "init", "-q"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
+        let dir = init_repo();
         std::fs::write(
             dir.path().join("jig.toml"),
             "[worktree]\nbase = \"origin/develop\"\n",
         )
         .unwrap();
 
-        std::env::set_var("XDG_CONFIG_HOME", config_dir.path());
-
         let repo = RepoConfig::from_path(dir.path()).unwrap();
-        let config = Config::load().unwrap_or_default();
-        assert_eq!(repo.base_branch(&config), "origin/develop");
+        assert_eq!(repo.base_branch(&Config::default()), "origin/develop");
     }
 }

@@ -33,7 +33,12 @@ pub struct PidFile {
 impl PidFile {
     /// Claim the slot for this process, taking over a stale claim.
     pub fn acquire() -> Result<Self, PidFileError> {
-        let path = daemon_pid_path()?;
+        Self::acquire_at(daemon_pid_path()?)
+    }
+
+    /// [`Self::acquire`] against an explicit path. Taking the path rather than
+    /// resolving it from the environment is what lets tests run in parallel.
+    pub fn acquire_at(path: PathBuf) -> Result<Self, PidFileError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -124,45 +129,20 @@ pub fn pid_alive(_pid: u32) -> bool {
 mod tests {
     use super::*;
 
-    /// Point `daemon_pid_path()` at a temp dir for the duration of a test.
-    /// Serialized, because the env var it sets is process-wide.
-    struct Sandbox {
-        _tmp: tempfile::TempDir,
-        _guard: std::sync::MutexGuard<'static, ()>,
-        previous: Option<String>,
-    }
-
-    impl Sandbox {
-        fn new() -> Self {
-            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-            let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let previous = std::env::var("XDG_RUNTIME_DIR").ok();
-            let tmp = tempfile::tempdir().unwrap();
-            std::env::set_var("XDG_RUNTIME_DIR", tmp.path());
-            Self {
-                _tmp: tmp,
-                _guard: guard,
-                previous,
-            }
-        }
-    }
-
-    impl Drop for Sandbox {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
-                None => std::env::remove_var("XDG_RUNTIME_DIR"),
-            }
-        }
+    /// A pid file path in a fresh temp dir, which the caller keeps alive.
+    fn temp_pid_path() -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("jig").join("daemon.pid");
+        (tmp, path)
     }
 
     #[test]
     fn acquire_writes_our_pid() {
-        let _sandbox = Sandbox::new();
-        let held = PidFile::acquire().unwrap();
+        let (_tmp, path) = temp_pid_path();
+        let held = PidFile::acquire_at(path.clone()).unwrap();
         assert_eq!(held.pid(), std::process::id());
         assert_eq!(
-            PidFile::running_pid().unwrap(),
+            read_live_pid(&path).unwrap(),
             Some(std::process::id()),
             "a held slot should report its pid as running"
         );
@@ -170,22 +150,20 @@ mod tests {
 
     #[test]
     fn drop_releases_the_slot() {
-        let _sandbox = Sandbox::new();
-        let path = daemon_pid_path().unwrap();
-        drop(PidFile::acquire().unwrap());
+        let (_tmp, path) = temp_pid_path();
+        drop(PidFile::acquire_at(path.clone()).unwrap());
         assert!(!path.exists(), "drop should remove our own pid file");
-        assert_eq!(PidFile::running_pid().unwrap(), None);
+        assert_eq!(read_live_pid(&path).unwrap(), None);
     }
 
     #[test]
     fn a_live_foreign_pid_blocks_acquire() {
-        let _sandbox = Sandbox::new();
-        let path = daemon_pid_path().unwrap();
+        let (_tmp, path) = temp_pid_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         // PID 1 always exists and is never us.
         std::fs::write(&path, "1").unwrap();
 
-        match PidFile::acquire() {
+        match PidFile::acquire_at(path.clone()) {
             Err(PidFileError::AlreadyRunning(1)) => {}
             other => panic!("expected AlreadyRunning(1), got {other:?}"),
         }
@@ -193,25 +171,24 @@ mod tests {
 
     #[test]
     fn a_stale_pid_is_taken_over() {
-        let _sandbox = Sandbox::new();
-        let path = daemon_pid_path().unwrap();
+        let (_tmp, path) = temp_pid_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         // Above the pid_max ceiling on every platform we run on, so it is
         // guaranteed to belong to nobody.
         std::fs::write(&path, "4294967290").unwrap();
 
-        let held = PidFile::acquire().expect("a dead pid must not block a restart");
+        let held = PidFile::acquire_at(path.clone()).expect("a dead pid must not block a restart");
         assert_eq!(held.pid(), std::process::id());
     }
 
     #[test]
     fn a_garbage_pid_file_is_taken_over() {
-        let _sandbox = Sandbox::new();
-        let path = daemon_pid_path().unwrap();
+        let (_tmp, path) = temp_pid_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "not a pid").unwrap();
 
-        let held = PidFile::acquire().expect("an unparseable pid file must not wedge the daemon");
+        let held = PidFile::acquire_at(path.clone())
+            .expect("an unparseable pid file must not wedge the daemon");
         assert_eq!(held.pid(), std::process::id());
     }
 

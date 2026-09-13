@@ -26,21 +26,31 @@ pub struct RepoRegistry {
 impl RepoRegistry {
     /// Load registry from disk, returning empty registry if file doesn't exist
     pub fn load() -> Result<Self, super::ContextError> {
-        let path = Self::registry_path()?;
+        Self::load_from(&Self::registry_path()?)
+    }
+
+    /// [`Self::load`] from an explicit file.
+    pub fn load_from(path: &Path) -> Result<Self, super::ContextError> {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let content = fs::read_to_string(&path)?;
+        let content = fs::read_to_string(path)?;
         let registry: Self = serde_json::from_str(&content)?;
         Ok(registry)
     }
 
     /// Save registry to disk
     pub fn save(&self) -> Result<(), super::ContextError> {
-        let path = Self::registry_path()?;
-        fs::create_dir_all(path.parent().unwrap())?;
+        self.save_to(&Self::registry_path()?)
+    }
+
+    /// [`Self::save`] to an explicit file.
+    pub fn save_to(&self, path: &Path) -> Result<(), super::ContextError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let content = serde_json::to_string_pretty(self)?;
-        fs::write(&path, content)?;
+        fs::write(path, content)?;
         Ok(())
     }
 
