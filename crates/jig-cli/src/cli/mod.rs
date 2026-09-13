@@ -70,9 +70,37 @@ crate::command_enum! {
     (ShellSetup, commands::ShellSetup),
 }
 
-impl Command {
-    /// Whether this invocation runs the long-running daemon loop.
-    pub fn hosts_daemon(&self) -> bool {
-        matches!(self, Command::Ps(ps) if ps.watch.is_some())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::op::{LogSink, Op};
+
+    fn sink(args: &[&str]) -> LogSink {
+        Cli::parse_from(args)
+            .command
+            .expect("a subcommand")
+            .log_sink()
+    }
+
+    #[test]
+    fn only_watch_and_daemon_start_log_to_a_file() {
+        assert_eq!(sink(&["jig", "ps", "-gw"]), LogSink::File);
+        assert_eq!(sink(&["jig", "daemon", "start"]), LogSink::File);
+    }
+
+    #[test]
+    fn everything_else_logs_to_stderr() {
+        for args in [
+            &["jig", "ps"][..],
+            &["jig", "ps", "-g"],
+            &["jig", "daemon"],
+            &["jig", "daemon", "status"],
+            &["jig", "daemon", "logs"],
+            &["jig", "pr", "comments"],
+            &["jig", "list"],
+            &["jig", "version"],
+        ] {
+            assert_eq!(sink(args), LogSink::Stderr, "{args:?}");
+        }
     }
 }

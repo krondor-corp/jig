@@ -752,35 +752,13 @@ fn remote_callbacks() -> git2::RemoteCallbacks<'static> {
 #[cfg(test)]
 mod remote_tests {
     use super::*;
+    use crate::test_support::init_repo;
     use tempfile::TempDir;
-
-    fn init_repo_with_commit(dir: &Path) -> git2::Repository {
-        let repo = git2::Repository::init(dir).unwrap();
-        {
-            let mut config = repo.config().unwrap();
-            config.set_str("user.email", "test@test.com").unwrap();
-            config.set_str("user.name", "Test").unwrap();
-            config.set_bool("commit.gpgsign", false).unwrap();
-        }
-        {
-            let mut index = repo.index().unwrap();
-            let tree_oid = index.write_tree().unwrap();
-            let tree = repo.find_tree(tree_oid).unwrap();
-            let sig = git2::Signature::now("Test", "test@test.com").unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-                .unwrap();
-        }
-        repo.head()
-            .unwrap()
-            .rename("refs/heads/main", true, "init main")
-            .unwrap();
-        repo
-    }
 
     #[test]
     fn has_remote_true_when_configured() {
         let tmp = TempDir::new().unwrap();
-        let git = init_repo_with_commit(tmp.path());
+        let git = init_repo(tmp.path());
         let path = tmp.path().to_str().unwrap();
         git.remote("origin", path).unwrap();
 
@@ -791,7 +769,7 @@ mod remote_tests {
     #[test]
     fn has_remote_false_when_not_configured() {
         let tmp = TempDir::new().unwrap();
-        let _ = init_repo_with_commit(tmp.path());
+        let _ = init_repo(tmp.path());
 
         let repo = Repo::open(tmp.path()).unwrap();
         assert!(!repo.has_remote("origin"));
@@ -801,7 +779,7 @@ mod remote_tests {
     #[test]
     fn find_valid_start_point_no_head_fallback() {
         let tmp = TempDir::new().unwrap();
-        let _ = init_repo_with_commit(tmp.path());
+        let _ = init_repo(tmp.path());
 
         let repo = Repo::open(tmp.path()).unwrap();
         // "origin/main" doesn't exist, no remote configured, no HEAD fallback
@@ -816,7 +794,7 @@ mod remote_tests {
     #[test]
     fn find_valid_start_point_resolves_local_branch() {
         let tmp = TempDir::new().unwrap();
-        let _ = init_repo_with_commit(tmp.path());
+        let _ = init_repo(tmp.path());
 
         let repo = Repo::open(tmp.path()).unwrap();
         let result = repo.find_valid_start_point("main");
@@ -839,7 +817,7 @@ mod remote_tests {
     #[test]
     fn foreign_worktrees_are_ignored_not_fatal() {
         let tmp = TempDir::new().unwrap();
-        let git = init_repo_with_commit(tmp.path());
+        let git = init_repo(tmp.path());
         let repo = Repo::open(tmp.path()).unwrap();
         repo.create_worktree(&"feat/mine".into(), &"main".into())
             .unwrap();
@@ -870,7 +848,7 @@ mod remote_tests {
     #[test]
     fn branch_in_foreign_worktree_still_counts_as_checked_out() {
         let tmp = TempDir::new().unwrap();
-        let git = init_repo_with_commit(tmp.path());
+        let git = init_repo(tmp.path());
         add_foreign_worktree(&git, tmp.path());
 
         let repo = Repo::open(tmp.path()).unwrap();
@@ -883,7 +861,7 @@ mod remote_tests {
     #[test]
     fn create_worktree_uses_remote_branch_when_exists() {
         let tmp = TempDir::new().unwrap();
-        let git = init_repo_with_commit(tmp.path());
+        let git = init_repo(tmp.path());
 
         // Create feat/xyz locally, then expose it via self-remote
         let head = git.head().unwrap().peel_to_commit().unwrap();
@@ -939,7 +917,7 @@ mod remote_tests {
     #[test]
     fn create_worktree_case1_local_and_remote_sets_auto_push_and_upstream() {
         let tmp = TempDir::new().unwrap();
-        let git = init_repo_with_commit(tmp.path());
+        let git = init_repo(tmp.path());
 
         // Simulate create_and_push_branch: local branch + push to self-remote.
         let head = git.head().unwrap().peel_to_commit().unwrap();
@@ -984,7 +962,7 @@ mod remote_tests {
     #[test]
     fn new_branch_does_not_set_base_as_git_upstream() {
         let tmp = TempDir::new().unwrap();
-        let _ = init_repo_with_commit(tmp.path());
+        let _ = init_repo(tmp.path());
 
         let repo = Repo::open(tmp.path()).unwrap();
         let branch: Branch = "feature/x".into();
@@ -1021,31 +999,13 @@ mod remote_tests {
 #[cfg(test)]
 mod shallow_tests {
     use super::*;
+    use crate::test_support::init_repo;
     use tempfile::TempDir;
-
-    fn init_test_repo(dir: &Path) -> git2::Repository {
-        let repo = git2::Repository::init(dir).unwrap();
-        {
-            let mut config = repo.config().unwrap();
-            config.set_str("user.email", "test@test.com").unwrap();
-            config.set_str("user.name", "Test").unwrap();
-            config.set_bool("commit.gpgsign", false).unwrap();
-        }
-        {
-            let mut index = repo.index().unwrap();
-            let tree_oid = index.write_tree().unwrap();
-            let tree = repo.find_tree(tree_oid).unwrap();
-            let sig = git2::Signature::now("Test", "test@test.com").unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-                .unwrap();
-        }
-        repo
-    }
 
     #[test]
     fn open_creates_shallow_marker_when_missing() {
         let tmp = TempDir::new().unwrap();
-        let _ = init_test_repo(tmp.path());
+        let _ = init_repo(tmp.path());
         let shallow = tmp.path().join(".git").join("shallow");
         assert!(!shallow.exists(), "fresh repo should have no shallow file");
 
@@ -1064,7 +1024,7 @@ mod shallow_tests {
     #[test]
     fn open_preserves_existing_shallow_file() {
         let tmp = TempDir::new().unwrap();
-        let repo = init_test_repo(tmp.path());
+        let repo = init_repo(tmp.path());
 
         let head_oid = repo.head().unwrap().target().unwrap().to_string();
         let shallow_contents = format!("{}\n", head_oid);
