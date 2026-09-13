@@ -13,7 +13,7 @@ use std::io::IsTerminal;
 
 use clap::{CommandFactory, Parser};
 
-use cli::op::Op;
+use cli::op::{LogSink, Op};
 use cli::ui;
 use cli::Cli;
 
@@ -24,38 +24,37 @@ fn main() {
     }
 }
 
-fn init_tracing(log_file: Option<std::path::PathBuf>, is_daemon: bool) {
+/// Route tracing per the command's [`LogSink`]. `RUST_LOG` overrides the
+/// level either way.
+fn init_tracing(sink: LogSink, dirs: &context::JigDirs) {
     use tracing_subscriber::prelude::*;
 
-    let default_level = if log_file.is_some() { "info" } else { "warn" };
+    let file = match sink {
+        LogSink::Stderr => None,
+        LogSink::File => {
+            let path = dirs.new_session_log();
+            let file = std::fs::File::create(&path).ok();
+            if file.is_some() {
+                context::log::set_session_log(path);
+            }
+            file
+        }
+    };
+
+    let default_level = if file.is_some() { "info" } else { "warn" };
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level));
 
-    // The daemon's log exists from the start so `jig daemon logs` can find
-    // it; one-off commands only create a file if they actually log.
-    let writer: Option<Box<dyn std::io::Write + Send>> = log_file.and_then(|path| {
-        let writer: Box<dyn std::io::Write + Send> = if is_daemon {
-            Box::new(std::fs::File::create(&path).ok()?)
-        } else {
-            Box::new(context::log::LazyFile::new(path.clone()))
-        };
-        context::log::set_session_log(path);
-        Some(writer)
-    });
-    let file_layer = writer.map(|writer| {
+    let file_layer = file.map(|file| {
         tracing_subscriber::fmt::layer()
-            .with_writer(std::sync::Mutex::new(writer))
+            .with_writer(std::sync::Mutex::new(file))
             .with_ansi(false)
     });
-
-    // Only write to stderr when there's no log file — the watch mode
-    // reads logs from the file via LogTailer, and stderr output corrupts
-    // the table display.
-    let stderr_layer = if file_layer.is_none() {
-        Some(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-    } else {
-        None
-    };
+    // Never both: a file sink exists because stderr is unusable (the watch
+    // view's table) or unwatched (a daemon).
+    let stderr_layer = file_layer
+        .is_none()
+        .then(|| tracing_subscriber::fmt::layer().with_writer(std::io::stderr));
 
     tracing_subscriber::registry()
         .with(env_filter)
@@ -82,18 +81,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Best-effort global directory setup
     let _ = dirs.ensure();
 
-    // Every command gets a session log file; only one that runs the daemon
-    // loop gets the `-daemon.log` name that `jig daemon logs` looks for.
-    let is_daemon = cli
+    let sink = cli
         .command
         .as_ref()
-        .is_some_and(|c| c.runs_daemon_loop(&dirs));
-    let log_file = if is_daemon {
-        dirs.new_daemon_log()
-    } else {
-        dirs.new_session_log()
-    };
-    init_tracing(Some(log_file), is_daemon);
+        .map_or(LogSink::Stderr, |c| c.log_sink());
+    init_tracing(sink, &dirs);
 
     match cli.command {
         None => {

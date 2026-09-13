@@ -148,11 +148,10 @@ fn ps_without_a_daemon_still_works() {
         .stderr(predicate::str::contains("No spawned sessions"));
 }
 
-/// A `ps --watch` that is only a client must not leave a `-daemon.log`.
-///
-/// `jig daemon logs` falls back to the newest `-daemon.log` when no daemon
-/// is up to name its own, so an empty file from a client shadows the real
-/// daemon's log the moment that daemon exits.
+/// A `ps --watch` client writes a log of its own, newer than the daemon's.
+/// After the daemon exits, `jig daemon logs` must still resolve to the
+/// daemon's log — which it finds through the daemon's `Started` event, not
+/// by picking the newest file.
 #[test]
 fn a_watching_client_does_not_shadow_the_daemon_log() {
     let sandbox = Sandbox::new();
@@ -169,7 +168,7 @@ fn a_watching_client_does_not_shadow_the_daemon_log() {
     .unwrap()
     .trim()
     .to_string();
-    assert!(real_log.ends_with("-daemon.log"), "got {real_log:?}");
+    assert!(real_log.ends_with(".log"), "got {real_log:?}");
 
     // Run `ps -gw` against the daemon, then kill it the way a user's ctrl-c
     // would not (no cleanup), which is the harshest case for stray files.

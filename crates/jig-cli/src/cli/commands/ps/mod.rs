@@ -22,7 +22,7 @@ use crate::daemon::ipc::{self, DaemonStatus};
 use crate::daemon::pidfile::PidFile;
 use crate::daemon::{Daemon, TriageEntry, WorkerState};
 
-use crate::cli::op::{NoOutput, Op};
+use crate::cli::op::{LogSink, NoOutput, Op};
 use crate::cli::ui;
 
 /// Show status of spawned sessions
@@ -72,6 +72,16 @@ impl Op for Ps {
             ScopedCtx::Global(g) => Context::from(g),
         };
         self.execute_ps(cfg, global)
+    }
+
+    /// The watch view owns the terminal, so its logs go to a file (which
+    /// its `l` view tails). A one-shot table logs to stderr like anything else.
+    fn log_sink(&self) -> LogSink {
+        if self.watch.is_some() {
+            LogSink::File
+        } else {
+            LogSink::Stderr
+        }
     }
 }
 

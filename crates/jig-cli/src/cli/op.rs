@@ -9,6 +9,18 @@ use std::fmt::Display;
 
 use crate::context::JigDirs;
 
+/// Where a command's tracing output goes. Decided per invocation by
+/// [`Op::log_sink`], before the command runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogSink {
+    /// `warn` and above to stderr: one-off commands, where a warning should
+    /// be seen by the person who ran it. The default.
+    Stderr,
+    /// `info` and above to a log file under `state/logs/`: processes that
+    /// own the terminal (`ps --watch`) or run without one (`daemon start`).
+    File,
+}
+
 /// Trait for CLI operations.
 pub trait Op {
     type Context;
@@ -19,6 +31,12 @@ pub trait Op {
     /// resolved from the environment once by `main`.
     fn build_context(&self, dirs: &JigDirs) -> Result<Self::Context, Self::Error>;
     fn run(&self, ctx: Self::Context) -> Result<Self::Output, Self::Error>;
+
+    /// Where this invocation's tracing output goes. Override only when
+    /// stderr would be wrong — see [`LogSink::File`].
+    fn log_sink(&self) -> LogSink {
+        LogSink::Stderr
+    }
 }
 
 /// Unit output for commands that only produce stderr
@@ -80,6 +98,12 @@ macro_rules! command_enum {
                                 .map_err(OpError::$variant)
                         },
                     )*
+                }
+            }
+
+            fn log_sink(&self) -> $crate::cli::op::LogSink {
+                match self {
+                    $(Command::$variant(op) => op.log_sink(),)*
                 }
             }
         }

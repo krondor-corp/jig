@@ -8,8 +8,6 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-const DAEMON_LOG_SUFFIX: &str = "-daemon.log";
-
 /// jig's config/state root and its runtime root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JigDirs {
@@ -124,36 +122,11 @@ impl JigDirs {
         self.state_dir().join("logs")
     }
 
-    /// A new log for a one-off command: `logs/<YYYYMMDDTHHMMSSZ>.log`
+    /// A new log file: `logs/<YYYYMMDDTHHMMSSZ>.log`. Only processes whose
+    /// `Op::log_sink` is `File` write one.
     pub fn new_session_log(&self) -> PathBuf {
         let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
         self.logs_dir().join(format!("{ts}.log"))
-    }
-
-    /// A new log for a daemon run: `logs/<YYYYMMDDTHHMMSSZ>-daemon.log`
-    ///
-    /// The suffix keeps daemon logs findable among one-off command logs.
-    pub fn new_daemon_log(&self) -> PathBuf {
-        let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-        self.logs_dir().join(format!("{ts}{DAEMON_LOG_SUFFIX}"))
-    }
-
-    /// The most recent daemon run's log (lexicographic sort on ISO timestamps).
-    pub fn latest_daemon_log(&self) -> Result<Option<PathBuf>, std::io::Error> {
-        let dir = self.logs_dir();
-        if !dir.exists() {
-            return Ok(None);
-        }
-        let mut logs: Vec<_> = std::fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .is_some_and(|n| n.to_string_lossy().ends_with(DAEMON_LOG_SUFFIX))
-            })
-            .collect();
-        logs.sort();
-        Ok(logs.pop())
     }
 
     // ── runtime ──────────────────────────────────────────────────

@@ -42,4 +42,11 @@ impl Op for Pr {
             None => Command::Create(self.create.clone()).run(dirs),
         }
     }
+
+    fn log_sink(&self) -> crate::cli::op::LogSink {
+        match &self.command {
+            Some(cmd) => cmd.log_sink(),
+            None => Command::Create(self.create.clone()).log_sink(),
+        }
+    }
 }

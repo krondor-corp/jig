@@ -351,7 +351,8 @@ fn log_startup(dirs: &JigDirs) {
         }
     }
 
-    if let Err(e) = log.append(&events::started()) {
+    let session_log = crate::context::log::session_log().map(Into::into);
+    if let Err(e) = log.append(&events::started(session_log)) {
         tracing::warn!("failed to write daemon Started event: {}", e);
     }
 }

@@ -101,6 +101,8 @@ impl Op for Create {
   - Data that might be piped to other tools
   - Never include ANSI color codes in stdout
 
+- **Tracing**: `tracing::warn!` and friends go where `Op::log_sink` says — stderr (level `warn`) by default, so warnings from one-off commands are seen. Only commands that own the terminal or have none (`ps --watch`, `daemon start`) override it to `LogSink::File`. `RUST_LOG` overrides the level.
+
 - **`--plain` flag**: Global flag for scriptable output
   - Disables all colors and decorations
   - Tables output as tab-separated values

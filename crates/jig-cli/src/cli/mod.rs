@@ -70,87 +70,37 @@ crate::command_enum! {
     (ShellSetup, commands::ShellSetup),
 }
 
-impl Command {
-    /// Whether this invocation will run the daemon's tick loop.
-    ///
-    /// This decides which log file the process writes, and a `-daemon.log`
-    /// is a claim `jig daemon logs` trusts later: it picks the newest one
-    /// when no daemon is up to name its own. So only an invocation that
-    /// really runs the loop may write one, or a client leaves an empty file
-    /// that shadows the real daemon's log.
-    pub fn runs_daemon_loop(&self, dirs: &crate::context::JigDirs) -> bool {
-        self.runs_daemon_loop_with(|| crate::daemon::ipc::is_running(dirs))
-    }
-
-    /// `daemon_is_running` is injected so the decision is testable without a
-    /// live socket.
-    fn runs_daemon_loop_with(&self, daemon_is_running: impl Fn() -> bool) -> bool {
-        match self {
-            Command::Daemon(d) => matches!(d.command, Some(commands::daemon::Command::Start(_))),
-            // `ps --watch` hosts a daemon only when none is already
-            // listening — which the parsed arguments cannot tell us, so ask.
-            // Against a running daemon it is a plain client.
-            Command::Ps(ps) => ps.watch.is_some() && !daemon_is_running(),
-            _ => false,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::op::{LogSink, Op};
 
-    fn command_from(args: &[&str]) -> Command {
-        Cli::parse_from(args).command.expect("a subcommand")
+    fn sink(args: &[&str]) -> LogSink {
+        Cli::parse_from(args)
+            .command
+            .expect("a subcommand")
+            .log_sink()
     }
 
     #[test]
-    fn daemon_start_runs_the_loop() {
-        assert!(command_from(&["jig", "daemon", "start"]).runs_daemon_loop_with(|| false));
-        // Even with one already up: `start` refuses later, but while it runs
-        // it is the daemon, not a client.
-        assert!(command_from(&["jig", "daemon", "start"]).runs_daemon_loop_with(|| true));
+    fn only_watch_and_daemon_start_log_to_a_file() {
+        assert_eq!(sink(&["jig", "ps", "-gw"]), LogSink::File);
+        assert_eq!(sink(&["jig", "daemon", "start"]), LogSink::File);
     }
 
     #[test]
-    fn other_daemon_subcommands_do_not() {
+    fn everything_else_logs_to_stderr() {
         for args in [
-            vec!["jig", "daemon", "status"],
-            vec!["jig", "daemon", "stop"],
-            vec!["jig", "daemon", "logs"],
-            vec!["jig", "daemon"],
+            &["jig", "ps"][..],
+            &["jig", "ps", "-g"],
+            &["jig", "daemon"],
+            &["jig", "daemon", "status"],
+            &["jig", "daemon", "logs"],
+            &["jig", "pr", "comments"],
+            &["jig", "list"],
+            &["jig", "version"],
         ] {
-            assert!(
-                !command_from(&args).runs_daemon_loop_with(|| false),
-                "{args:?} should not claim the daemon log"
-            );
+            assert_eq!(sink(args), LogSink::Stderr, "{args:?}");
         }
-    }
-
-    #[test]
-    fn watch_hosts_only_when_no_daemon_is_listening() {
-        let watch = command_from(&["jig", "ps", "-gw"]);
-        assert!(
-            watch.runs_daemon_loop_with(|| false),
-            "with no daemon up, `ps --watch` hosts one"
-        );
-        assert!(
-            !watch.runs_daemon_loop_with(|| true),
-            "against a running daemon, `ps --watch` is a client and must not \
-             write a -daemon.log that shadows the real one"
-        );
-    }
-
-    #[test]
-    fn plain_ps_never_runs_the_loop() {
-        // A one-shot tick is not the daemon loop, and leaves no daemon log.
-        assert!(!command_from(&["jig", "ps"]).runs_daemon_loop_with(|| false));
-        assert!(!command_from(&["jig", "ps", "-g"]).runs_daemon_loop_with(|| false));
-    }
-
-    #[test]
-    fn unrelated_commands_never_run_the_loop() {
-        assert!(!command_from(&["jig", "list"]).runs_daemon_loop_with(|| false));
-        assert!(!command_from(&["jig", "version"]).runs_daemon_loop_with(|| true));
     }
 }

@@ -49,16 +49,22 @@ impl Op for Daemon {
             None => Command::Status(status::Status).run(dirs),
         }
     }
+
+    fn log_sink(&self) -> crate::cli::op::LogSink {
+        match &self.command {
+            Some(cmd) => cmd.log_sink(),
+            None => Command::Status(status::Status).log_sink(),
+        }
+    }
 }
 
-/// The log of the running daemon, else of the most recent daemon run.
+/// The running daemon's log, else the one the last daemon run recorded in
+/// its `Started` event.
 fn current_daemon_log(dirs: &JigDirs) -> Option<PathBuf> {
-    ipc::ping(dirs)
-        .ok()
-        .flatten()
-        .and_then(|info| info.log)
+    let running = ipc::ping(dirs).ok().flatten().and_then(|info| info.log);
+    running
+        .or_else(|| crate::daemon::events::global(dirs).reduce().ok()?.log)
         .filter(|p| p.exists())
-        .or_else(|| dirs.latest_daemon_log().ok().flatten())
 }
 
 /// Display a path with the home directory collapsed to `~`.

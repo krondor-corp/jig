@@ -54,4 +54,11 @@ impl Op for Issues {
             None => Command::List(self.list.clone()).run(dirs),
         }
     }
+
+    fn log_sink(&self) -> crate::cli::op::LogSink {
+        match &self.command {
+            Some(cmd) => cmd.log_sink(),
+            None => Command::List(self.list.clone()).log_sink(),
+        }
+    }
 }

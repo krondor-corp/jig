@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use clap::Args;
 
-use crate::cli::op::{NoOutput, Op};
+use crate::cli::op::{LogSink, NoOutput, Op};
 use crate::cli::ui;
 use crate::context::Context;
 use crate::context::JigDirs;
@@ -105,6 +105,12 @@ impl Op for Start {
 
         ui::success("daemon stopped");
         Ok(NoOutput)
+    }
+
+    /// A daemon usually has no terminal worth writing to; `jig daemon logs`
+    /// finds this file through the `Started` event.
+    fn log_sink(&self) -> LogSink {
+        LogSink::File
     }
 }
 

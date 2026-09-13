@@ -107,7 +107,7 @@ of life. Useful when workers seem to have stopped being nudged or spawned:
 ```text
 ✓ daemon running  pid 72706 · up 3h12m · v0.5.2
   → last tick 1s ago (every 2s)
-  → log ~/.config/jig/state/logs/20260910T195104Z-daemon.log
+  → log ~/.config/jig/state/logs/20260910T195104Z.log
   → jig-monitor  last finished 1s ago
   → jig-sync     last finished 1m40s ago
   → jig-spawn    busy 45s (last finished 2m ago)
@@ -123,6 +123,8 @@ It reports one of:
 It also flags any actor that has been busy for over 10 minutes (e.g. a `git fetch` hung on auth), since the tick loop keeps running while a wedged actor silently skips its work. The command exits non-zero unless the daemon is healthy.
 
 `jig daemon logs` prints the daemon's own log; `-f` follows it (and moves to the new log when the daemon restarts), `-n` sets how many lines, `--path` prints the file path.
+
+Only the daemon and `jig ps --watch` write log files (`~/.config/jig/state/logs/`). Every other command prints warnings straight to stderr; set `RUST_LOG=info` (or `debug`) to see more.
 
 ## Nudges
 
