@@ -6,12 +6,19 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+name = "jig_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "jig"
 path = "src/main.rs"
 
 [dependencies]
 jig-core.workspace = true
+# Test fixtures (`jig_cli::test_support`), compiled only for tests.
+tempfile = { workspace = true, optional = true }
+assert_cmd = { workspace = true, optional = true }
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -39,8 +46,13 @@ which.workspace = true
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["process", "signal"] }
 
+[features]
+# Fixtures for this crate's tests; enabled by the self dev-dependency below
+# so `tests/` can use them, never by a release build.
+test-support = ["dep:tempfile", "dep:assert_cmd"]
+
 [dev-dependencies]
-jig-core = { workspace = true, features = ["test-support"] }
+jig-cli = { path = ".", features = ["test-support"] }
 tempfile.workspace = true
 assert_cmd.workspace = true
 predicates.workspace = true

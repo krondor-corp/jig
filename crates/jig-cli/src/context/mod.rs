@@ -430,13 +430,13 @@ pub fn resolve_base_branch_for(repo_root: &Path, config: &Config) -> Result<Bran
 mod tests {
     use super::*;
 
-    use jig_core::test_support::Fixture;
+    use crate::test_support::Sandbox;
 
     #[test]
     fn test_single_repo_context_registers_the_repo() {
-        let fixture = Fixture::with_repos(1);
-        let paths = AppPaths::from(&fixture);
-        let dir = fixture.repo(0);
+        let sandbox = Sandbox::with_repos(1);
+        let paths = sandbox.paths();
+        let dir = sandbox.repo(0);
 
         let repo = RepoConfig::from_path(dir).unwrap();
         let ctx = Context::for_repo(&paths, repo, Config::default());
@@ -493,8 +493,8 @@ mod tests {
 
     #[test]
     fn test_base_branch_from_jig_toml() {
-        let fixture = Fixture::with_repos(1);
-        let dir = fixture.repo(0);
+        let sandbox = Sandbox::with_repos(1);
+        let dir = sandbox.repo(0);
         std::fs::write(
             dir.join("jig.toml"),
             "[worktree]\nbase = \"origin/develop\"\n",

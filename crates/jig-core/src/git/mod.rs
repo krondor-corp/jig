@@ -53,9 +53,12 @@ pub fn ensure_excluded(git_common_dir: &Path, dir_name: &str) -> Result<()> {
 }
 
 #[cfg(test)]
+pub(crate) mod test_repo;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::init_repo;
+    use crate::git::test_repo::seeded as init_repo;
     use tempfile::TempDir;
 
     fn sig() -> git2::Signature<'static> {

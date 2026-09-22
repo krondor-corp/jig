@@ -4,11 +4,9 @@
 //! Every test gets its own `XDG_CONFIG_HOME` *and* `XDG_RUNTIME_DIR`, so the
 //! daemons they start cannot see each other or the developer's own.
 
-mod common;
-
 use std::time::Duration;
 
-use common::{pid_in, Sandbox};
+use jig_cli::test_support::{pid_in, Sandbox};
 use predicates::prelude::*;
 
 #[test]
@@ -44,11 +42,11 @@ fn start_once_runs_a_tick_and_cleans_up() {
         .stderr(predicate::str::contains("daemon started"));
 
     assert!(
-        !sandbox.socket().exists(),
+        !sandbox.paths().socket().exists(),
         "a clean exit must unlink its socket"
     );
     assert!(
-        !sandbox.pid_file().exists(),
+        !sandbox.paths().pid_file().exists(),
         "a clean exit must release its pid file"
     );
 }
@@ -57,7 +55,7 @@ fn start_once_runs_a_tick_and_cleans_up() {
 fn a_second_daemon_refuses_to_start() {
     let sandbox = Sandbox::new();
     let mut daemon = sandbox.start_daemon();
-    let pid = pid_in(&sandbox.pid_file());
+    let pid = pid_in(&sandbox.paths().pid_file());
 
     sandbox
         .jig()
@@ -76,7 +74,7 @@ fn a_second_daemon_refuses_to_start() {
 fn status_answers_over_the_socket() {
     let sandbox = Sandbox::new();
     let mut daemon = sandbox.start_daemon();
-    let pid = pid_in(&sandbox.pid_file());
+    let pid = pid_in(&sandbox.paths().pid_file());
 
     sandbox
         .jig()
@@ -104,9 +102,12 @@ fn stop_shuts_the_daemon_down_and_clears_its_files() {
         .stderr(predicate::str::contains("daemon stopping"));
 
     daemon.wait_for_exit();
-    assert!(!sandbox.socket().exists(), "stop must unlink the socket");
     assert!(
-        !sandbox.pid_file().exists(),
+        !sandbox.paths().socket().exists(),
+        "stop must unlink the socket"
+    );
+    assert!(
+        !sandbox.paths().pid_file().exists(),
         "stop must release the pid file"
     );
 
@@ -121,13 +122,13 @@ fn stop_shuts_the_daemon_down_and_clears_its_files() {
 #[test]
 fn a_socket_left_by_a_crashed_daemon_does_not_block_a_restart() {
     let sandbox = Sandbox::new();
-    let dir = sandbox.runtime_jig_dir();
+    let dir = sandbox.paths().runtime_dir().to_path_buf();
     std::fs::create_dir_all(&dir).unwrap();
 
     // What SIGKILL leaves: a socket file nobody is listening on, and a pid
     // file naming a process that is gone.
-    std::os::unix::net::UnixListener::bind(sandbox.socket()).unwrap();
-    std::fs::write(sandbox.pid_file(), "4294967290").unwrap();
+    std::os::unix::net::UnixListener::bind(sandbox.paths().socket()).unwrap();
+    std::fs::write(sandbox.paths().pid_file(), "4294967290").unwrap();
 
     sandbox
         .jig()

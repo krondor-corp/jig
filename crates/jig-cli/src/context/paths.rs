@@ -164,14 +164,6 @@ impl AppPaths {
     }
 }
 
-/// A test fixture's roots, laid out exactly as the binary would lay them out.
-#[cfg(test)]
-impl From<&jig_core::test_support::Fixture> for AppPaths {
-    fn from(fixture: &jig_core::test_support::Fixture) -> Self {
-        Self::under(fixture.config_home(), fixture.runtime_home())
-    }
-}
-
 /// `<repo_root>/.jig/hooks/hooks.json`
 pub fn hook_registry_path(repo_root: &Path) -> PathBuf {
     repo_root

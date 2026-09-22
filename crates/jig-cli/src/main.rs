@@ -1,21 +1,14 @@
-//! jig CLI - Git worktree manager for parallel Claude Code sessions
-
-mod cli;
-pub mod context;
-pub mod daemon;
-pub mod hooks;
-pub mod notify;
-pub mod prompts;
-pub mod terminal;
-pub mod worker;
+//! The `jig` binary — argument parsing, logging setup, and dispatch. The
+//! work lives in the `jig_cli` library beside it.
 
 use std::io::IsTerminal;
 
 use clap::{CommandFactory, Parser};
 
-use cli::op::{LogSink, Op};
-use cli::ui;
-use cli::Cli;
+use jig_cli::cli::op::{LogSink, Op};
+use jig_cli::cli::ui;
+use jig_cli::cli::Cli;
+use jig_cli::context;
 
 fn main() {
     if let Err(e) = run() {

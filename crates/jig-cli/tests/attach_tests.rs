@@ -1,6 +1,4 @@
-mod common;
-
-use common::Sandbox;
+use jig_cli::test_support::Sandbox;
 use predicates::prelude::*;
 
 // ============================================================================

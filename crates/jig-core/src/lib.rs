@@ -8,8 +8,6 @@ pub mod github;
 pub mod issues;
 pub mod mux;
 pub mod prompt;
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_support;
 
 pub use agents::Agent;
 pub use events::{Event, EventLog, Reducible, ReducibleKind};

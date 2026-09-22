@@ -124,19 +124,19 @@ pub fn pid_alive(_pid: u32) -> bool {
 mod tests {
     use super::*;
 
-    use jig_core::test_support::Fixture;
+    use crate::test_support::Sandbox;
 
-    /// Fresh dirs for one test, plus where their pid file lives.
-    fn sandbox() -> (Fixture, AppPaths, PathBuf) {
-        let fixture = Fixture::new();
-        let paths = AppPaths::from(&fixture);
+    /// A fresh sandbox, its paths, and where its pid file lives.
+    fn sandbox() -> (Sandbox, AppPaths, PathBuf) {
+        let sandbox = Sandbox::new();
+        let paths = sandbox.paths();
         let path = paths.pid_file();
-        (fixture, paths, path)
+        (sandbox, paths, path)
     }
 
     #[test]
     fn acquire_writes_our_pid() {
-        let (_fixture, paths, path) = sandbox();
+        let (_sandbox, paths, path) = sandbox();
         let held = PidFile::acquire(&paths).unwrap();
         assert_eq!(held.pid(), std::process::id());
         assert_eq!(
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn drop_releases_the_slot() {
-        let (_fixture, paths, path) = sandbox();
+        let (_sandbox, paths, path) = sandbox();
         drop(PidFile::acquire(&paths).unwrap());
         assert!(!path.exists(), "drop should remove our own pid file");
         assert_eq!(read_live_pid(&path).unwrap(), None);
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn a_live_foreign_pid_blocks_acquire() {
-        let (_fixture, paths, path) = sandbox();
+        let (_sandbox, paths, path) = sandbox();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         // PID 1 always exists and is never us.
         std::fs::write(&path, "1").unwrap();
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn a_stale_pid_is_taken_over() {
-        let (_fixture, paths, path) = sandbox();
+        let (_sandbox, paths, path) = sandbox();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         // Above the pid_max ceiling on every platform we run on, so it is
         // guaranteed to belong to nobody.
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn a_garbage_pid_file_is_taken_over() {
-        let (_fixture, paths, path) = sandbox();
+        let (_sandbox, paths, path) = sandbox();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "not a pid").unwrap();
 

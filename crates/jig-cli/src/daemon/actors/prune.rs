@@ -72,6 +72,7 @@ fn prune_single(paths: &AppPaths, target: &PruneTarget) -> std::result::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::Sandbox;
 
     #[test]
     fn prune_single_missing_worktree_succeeds() {
@@ -83,8 +84,8 @@ mod tests {
             repo_name: "test-repo".to_string(),
             worker_name: "nonexistent-worker".to_string(),
         };
-        let fixture = jig_core::test_support::Fixture::new();
-        let _ = prune_single(&AppPaths::from(&fixture), &target);
+        let sandbox = Sandbox::new();
+        let _ = prune_single(&sandbox.paths(), &target);
     }
 
     #[test]
@@ -97,7 +98,7 @@ mod tests {
             repo_name: "repo".to_string(),
             worker_name: "worker".to_string(),
         };
-        let fixture = jig_core::test_support::Fixture::new();
-        let _ = prune_single(&AppPaths::from(&fixture), &target);
+        let sandbox = Sandbox::new();
+        let _ = prune_single(&sandbox.paths(), &target);
     }
 }

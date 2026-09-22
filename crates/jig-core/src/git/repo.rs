@@ -25,6 +25,17 @@ impl Repo {
         Ok(Self::wrap(inner))
     }
 
+    /// Create a repository at `path`, with `main` as the initial branch.
+    ///
+    /// `path` is created if it doesn't exist; an existing repository there
+    /// is reinitialized, as `git init` does.
+    pub fn init(path: &Path) -> Result<Self> {
+        let mut opts = git2::RepositoryInitOptions::new();
+        opts.initial_head("main");
+        let inner = git2::Repository::init_opts(path, &opts)?;
+        Ok(Self::wrap(inner))
+    }
+
     fn wrap(inner: git2::Repository) -> Self {
         let repo = Self { inner };
         repo.ensure_shallow_marker();
@@ -752,7 +763,7 @@ fn remote_callbacks() -> git2::RemoteCallbacks<'static> {
 #[cfg(test)]
 mod remote_tests {
     use super::*;
-    use crate::test_support::init_repo;
+    use crate::git::test_repo::seeded as init_repo;
     use tempfile::TempDir;
 
     #[test]
@@ -999,13 +1010,15 @@ mod remote_tests {
 #[cfg(test)]
 mod shallow_tests {
     use super::*;
-    use crate::test_support::init_repo;
+    use crate::git::test_repo::seeded as init_repo;
     use tempfile::TempDir;
 
     #[test]
     fn open_creates_shallow_marker_when_missing() {
+        // Raw git2, not `Repo::init`: this is about opening a repo jig did
+        // not create, which therefore has no marker yet.
         let tmp = TempDir::new().unwrap();
-        let _ = init_repo(tmp.path());
+        git2::Repository::init(tmp.path()).unwrap();
         let shallow = tmp.path().join(".git").join("shallow");
         assert!(!shallow.exists(), "fresh repo should have no shallow file");
 

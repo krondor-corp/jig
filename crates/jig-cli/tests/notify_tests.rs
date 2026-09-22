@@ -1,8 +1,6 @@
 //! Integration tests for `jig notify` subcommands.
 
-mod common;
-
-use common::Sandbox;
+use jig_cli::test_support::Sandbox;
 use predicates::prelude::*;
 use std::fs;
 
@@ -27,7 +25,11 @@ impl TestEnv {
     }
 
     fn queue_path(&self) -> std::path::PathBuf {
-        self.jig_dir().join("state").join("notifications.jsonl")
+        self.paths()
+            .config_dir()
+            .to_path_buf()
+            .join("state")
+            .join("notifications.jsonl")
     }
 
     fn seed_queue(&self, lines: &[&str]) {

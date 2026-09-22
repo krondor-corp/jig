@@ -106,6 +106,7 @@ fn open_worktree(repo_path: &Path) -> Option<Worktree> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::Sandbox;
 
     #[test]
     fn open_worktree_not_in_worktree() {
@@ -157,15 +158,15 @@ mod tests {
 
     #[test]
     fn post_commit_outside_worktree_is_noop() {
-        let fixture = jig_core::test_support::Fixture::new();
+        let sandbox = Sandbox::new();
         let tmp = tempfile::tempdir().unwrap();
-        assert!(handle_post_commit(&AppPaths::from(&fixture), tmp.path()).is_ok());
+        assert!(handle_post_commit(&sandbox.paths(), tmp.path()).is_ok());
     }
 
     #[test]
     fn post_merge_outside_worktree_is_noop() {
-        let fixture = jig_core::test_support::Fixture::new();
+        let sandbox = Sandbox::new();
         let tmp = tempfile::tempdir().unwrap();
-        assert!(handle_post_merge(&AppPaths::from(&fixture), tmp.path()).is_ok());
+        assert!(handle_post_merge(&sandbox.paths(), tmp.path()).is_ok());
     }
 }
