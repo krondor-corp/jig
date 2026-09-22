@@ -11,7 +11,6 @@ use jig_core::git::Branch;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
 use crate::context::RepoCtx;
 
 /// Create worktree and launch Claude in tmux
@@ -54,8 +53,8 @@ impl Op for Spawn {
     type Error = SpawnError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, SpawnError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self) -> Result<RepoCtx, SpawnError> {
+        Ok(RepoCtx::from_cwd()?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
@@ -156,7 +155,6 @@ impl Op for Spawn {
         let repo_name = repo.name();
         let mux = jig_core::mux::for_repo(ctx.config.mux, &repo_name);
         let _worker = Worker::spawn(
-            &ctx.paths,
             &git_repo,
             &branch,
             &base_branch,

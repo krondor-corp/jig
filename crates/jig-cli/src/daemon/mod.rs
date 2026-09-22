@@ -8,15 +8,13 @@
 pub mod actors;
 pub mod checks;
 pub mod events;
-pub mod ipc;
-pub mod pidfile;
+pub mod heartbeat;
 
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::context::{AppPaths, Config, Context, ContextError, JigToml, RepoEntry, RepoRegistry};
+use crate::context::{Config, Context, ContextError, JigToml, RepoEntry, RepoRegistry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
@@ -33,7 +31,6 @@ pub enum DaemonError {
 /// Shared context built once per daemon tick, passed to all actors.
 #[derive(Clone)]
 pub struct TickContext {
-    pub paths: AppPaths,
     pub config: Arc<Config>,
     pub repos: Arc<Vec<RepoEntry>>,
     pub session_prefix: String,
@@ -46,61 +43,11 @@ use actors::prune::PruneActor;
 use actors::spawn::SpawnActor;
 use actors::sync::SyncActor;
 use actors::triage::TriageActor;
-use actors::{ActivityProbe, ActorHandle};
+use actors::ActorHandle;
 
 pub use crate::worker::events::WorkerState;
 pub use actors::triage::TriageEntry;
 pub use checks::{PrChecks, PrHealth};
-pub use ipc::{DaemonInfo, DaemonStatus, WorkerSnapshot};
-
-/// Everything the IPC listener needs, without the `Daemon` itself.
-///
-/// The listener runs on its own thread and must never block a tick (nor be
-/// blocked by one). Actors already hold their state behind interior
-/// mutability, so sharing the `Arc`s plus a couple of atomics is enough —
-/// no `Arc<Mutex<Daemon>>`, and no chance of a slow status request wedging
-/// the loop.
-#[derive(Clone)]
-pub struct DaemonShared {
-    monitor: Arc<MonitorActor>,
-    triage: Arc<TriageActor>,
-    spawn: Arc<SpawnActor>,
-    probes: Arc<Vec<ActivityProbe>>,
-    /// Unix timestamp of the last completed tick.
-    ticked_at: Arc<AtomicI64>,
-    /// Unix timestamp the next poll tick is due.
-    poll_deadline: Arc<AtomicI64>,
-    started_at: i64,
-    tick_interval: u64,
-    log: Option<PathBuf>,
-}
-
-impl DaemonShared {
-    /// Identity and liveness — the answer to `Request::Ping`.
-    pub fn info(&self) -> DaemonInfo {
-        DaemonInfo {
-            pid: std::process::id(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            started_at: self.started_at,
-            ticked_at: self.ticked_at.load(Ordering::Relaxed),
-            tick_interval: self.tick_interval,
-            log: self.log.clone(),
-            actors: self.probes.iter().map(ActivityProbe::activity).collect(),
-        }
-    }
-
-    /// The full frame `jig ps` renders — the answer to `Request::GetStatus`.
-    pub fn status(&self) -> DaemonStatus {
-        let now = chrono::Utc::now().timestamp();
-        DaemonStatus {
-            info: self.info(),
-            workers: self.monitor.workers().iter().map(Into::into).collect(),
-            triages: self.triage.active_entries(),
-            spawning: self.spawn.spawning_workers(),
-            poll_remaining: (self.poll_deadline.load(Ordering::Relaxed) - now).max(0) as u64,
-        }
-    }
-}
 
 /// The daemon — owns actors and drives the tick loop.
 pub struct Daemon {
@@ -110,109 +57,52 @@ pub struct Daemon {
     pub spawn: ActorHandle<SpawnActor>,
     pub triage: ActorHandle<TriageActor>,
 
-    paths: AppPaths,
     config: Config,
     registry: RepoRegistry,
     last_poll: Instant,
-    /// Long-running (`jig daemon start`, `ps --watch`) rather than a single
-    /// one-shot tick. Only long-running daemons record lifecycle events.
+    /// Long-running (`ps --watch`) rather than a single one-shot tick. Only
+    /// long-running daemons record lifecycle events and a heartbeat.
     persistent: bool,
-    shared: DaemonShared,
+    started_at: i64,
 }
 
 impl Daemon {
     /// Start a long-running daemon: records lifecycle events in
-    /// `daemon.jsonl` and can serve IPC via [`Self::shared`].
+    /// `daemon.jsonl` and keeps the heartbeat `jig daemon status` reads.
     pub fn start(cfg: Context) -> Result<Self, DaemonError> {
         Self::new(cfg, true)
     }
 
-    /// Start a daemon for a one-shot tick (plain `jig ps` with no daemon
-    /// running). Leaves the lifecycle log to any long-running daemon.
+    /// Start a daemon for a one-shot tick (plain `jig ps`). Leaves the
+    /// lifecycle log and heartbeat to any long-running daemon.
     pub fn oneshot(cfg: Context) -> Result<Self, DaemonError> {
         Self::new(cfg, false)
     }
 
     fn new(cfg: Context, persistent: bool) -> Result<Self, DaemonError> {
         if persistent {
-            log_startup(&cfg.paths);
+            log_startup();
         }
-        recover_orphans(&cfg.paths, &cfg.config, &cfg.registry);
+        recover_orphans(&cfg.config, &cfg.registry);
+        let _notifier = make_notifier(&cfg.config)?;
 
         let last_poll = Instant::now() - Duration::from_secs(cfg.config.poll_interval + 1);
-        let started_at = chrono::Utc::now().timestamp();
-
-        let sync = ActorHandle::<SyncActor>::new();
-        let monitor = ActorHandle::<MonitorActor>::new();
-        let prune = ActorHandle::<PruneActor>::new();
-        let spawn = ActorHandle::<SpawnActor>::new();
-        let triage = ActorHandle::<TriageActor>::new();
-
-        let shared = DaemonShared {
-            monitor: monitor.shared(),
-            triage: triage.shared(),
-            spawn: spawn.shared(),
-            probes: Arc::new(vec![
-                monitor.probe(),
-                sync.probe(),
-                prune.probe(),
-                spawn.probe(),
-                triage.probe(),
-            ]),
-            ticked_at: Arc::new(AtomicI64::new(started_at)),
-            poll_deadline: Arc::new(AtomicI64::new(started_at)),
-            started_at,
-            tick_interval: cfg.config.tick_interval,
-            log: crate::context::log::session_log().map(Into::into),
-        };
-
         Ok(Self {
-            sync,
-            monitor,
-            prune,
-            spawn,
-            triage,
-            paths: cfg.paths,
+            sync: ActorHandle::new(),
+            monitor: ActorHandle::new(),
+            prune: ActorHandle::new(),
+            spawn: ActorHandle::new(),
+            triage: ActorHandle::new(),
             config: cfg.config,
             registry: cfg.registry,
             last_poll,
             persistent,
-            shared,
+            started_at: chrono::Utc::now().timestamp(),
         })
     }
 
     pub fn config(&self) -> &Config {
         &self.config
-    }
-
-    /// A handle the IPC listener can hold while the tick loop keeps running.
-    pub fn shared(&self) -> DaemonShared {
-        self.shared.clone()
-    }
-
-    /// The frame `jig ps` renders, as the daemon would answer it over IPC.
-    pub fn snapshot(&self) -> DaemonStatus {
-        self.shared.status()
-    }
-
-    /// Default bound on [`Self::wait_for_monitor`].
-    pub const MONITOR_WAIT: Duration = Duration::from_secs(30);
-
-    /// Block until the monitor pass `tick()` dispatched finishes, or
-    /// `timeout` elapses. Returns whether it finished.
-    ///
-    /// A caller that reads worker state after a single tick must do this:
-    /// the pass runs on the monitor's own thread, so returning immediately
-    /// reads the pre-tick (empty) state.
-    pub fn wait_for_monitor(&self, timeout: Duration) -> bool {
-        let start = Instant::now();
-        while self.monitor.is_pending() {
-            if start.elapsed() >= timeout {
-                return false;
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        true
     }
 
     /// Run the tick loop. Checks `quit` between ticks; calls `on_tick` after
@@ -241,7 +131,8 @@ impl Daemon {
             }
         }
         if self.persistent {
-            log_shutdown(&self.paths, "normal");
+            heartbeat::Heartbeat::clear(std::process::id());
+            log_shutdown("normal");
         }
     }
 
@@ -253,10 +144,6 @@ impl Daemon {
     /// Mark that a poll tick just fired.
     fn mark_polled(&mut self) {
         self.last_poll = Instant::now();
-        self.shared.poll_deadline.store(
-            chrono::Utc::now().timestamp() + self.config.poll_interval as i64,
-            Ordering::Relaxed,
-        );
     }
 
     /// Seconds until the next poll tick.
@@ -269,7 +156,6 @@ impl Daemon {
     /// Execute a single tick of the daemon.
     pub fn tick(&mut self) -> Result<(), DaemonError> {
         let ctx = TickContext {
-            paths: self.paths.clone(),
             config: Arc::new(self.config.clone()),
             repos: Arc::new(self.registry.repos().to_vec()),
             session_prefix: self.config.session_prefix.clone(),
@@ -283,7 +169,6 @@ impl Daemon {
         let prune_targets: Vec<_> = self.monitor.drain().into_iter().flatten().collect();
         if !prune_targets.is_empty() {
             self.prune.send(actors::prune::PruneRequest {
-                paths: self.paths.clone(),
                 targets: prune_targets,
             });
         }
@@ -299,19 +184,36 @@ impl Daemon {
             self.mark_polled();
         }
 
-        // Published last, so a stale `ticked_at` over IPC means the tick
-        // itself wedged rather than that we simply have not started one.
-        self.shared
-            .ticked_at
-            .store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
+        if self.persistent {
+            if let Err(e) = self.heartbeat().write() {
+                tracing::warn!("failed to write daemon heartbeat: {}", e);
+            }
+        }
 
         Ok(())
+    }
+
+    fn heartbeat(&self) -> heartbeat::Heartbeat {
+        heartbeat::Heartbeat {
+            pid: std::process::id(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            started_at: self.started_at,
+            ticked_at: chrono::Utc::now().timestamp(),
+            tick_interval: self.config.tick_interval,
+            log: crate::context::log::session_log().map(Into::into),
+            actors: vec![
+                self.monitor.activity(),
+                self.sync.activity(),
+                self.prune.activity(),
+                self.spawn.activity(),
+                self.triage.activity(),
+            ],
+        }
     }
 }
 
 /// Try to resume a worker whose mux window is dead.
 fn try_resume_worker(
-    paths: &AppPaths,
     repo_root: &std::path::Path,
     worker_name: &str,
     mux: &dyn jig_core::mux::Mux,
@@ -329,13 +231,28 @@ fn try_resume_worker(
     )
     .unwrap_or_else(|| jig_core::agents::Agent::from_config("claude", None, &[]).unwrap());
     let prompt = crate::prompts::resume_task("You were interrupted. Resume your previous task.");
-    Worker::resume(paths, &wt, &agent, prompt, mux)?;
+    Worker::resume(&wt, &agent, prompt, mux)?;
     Ok(true)
 }
 
+/// Build a Notifier from global config.
+fn make_notifier(global_config: &Config) -> Result<crate::notify::Notifier, DaemonError> {
+    let queue = crate::notify::NotificationQueue::global()?;
+    Ok(crate::notify::Notifier::new(
+        global_config.notify.clone(),
+        queue,
+    ))
+}
+
 /// Log the Started lifecycle event, noting if the previous run crashed.
-fn log_startup(paths: &AppPaths) {
-    let log = events::global(paths);
+fn log_startup() {
+    let log = match events::global() {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!("failed to open daemon event log: {}", e);
+            return;
+        }
+    };
 
     match log.reduce() {
         Ok(state) => {
@@ -351,14 +268,13 @@ fn log_startup(paths: &AppPaths) {
         }
     }
 
-    let session_log = crate::context::log::session_log().map(Into::into);
-    if let Err(e) = log.append(&events::started(session_log)) {
+    if let Err(e) = log.append(&events::started()) {
         tracing::warn!("failed to write daemon Started event: {}", e);
     }
 }
 
 /// Resume workers whose mux window died, if `auto_recover` is on.
-fn recover_orphans(paths: &AppPaths, global_config: &Config, registry: &RepoRegistry) {
+fn recover_orphans(global_config: &Config, registry: &RepoRegistry) {
     if global_config.auto_recover {
         let mut recovered = Vec::new();
         for entry in registry.repos() {
@@ -373,9 +289,9 @@ fn recover_orphans(paths: &AppPaths, global_config: &Config, registry: &RepoRegi
             };
             let mux = jig_core::mux::for_repo(global_config.mux, &repo_name);
             for worker in Worker::discover(&repo) {
-                if worker.is_orphaned(paths, &mux) {
+                if worker.is_orphaned(&mux) {
                     let branch = worker.branch().to_string();
-                    match try_resume_worker(paths, &entry.path, &branch, &mux) {
+                    match try_resume_worker(&entry.path, &branch, &mux) {
                         Ok(true) => {
                             tracing::info!(repo = %repo_name, worker = %branch, "recovered");
                             recovered.push((repo_name.clone(), branch));
@@ -398,8 +314,15 @@ fn recover_orphans(paths: &AppPaths, global_config: &Config, registry: &RepoRegi
 }
 
 /// Log a graceful shutdown event.
-fn log_shutdown(paths: &AppPaths, reason: &str) {
-    if let Err(e) = events::global(paths).append(&events::stopped(reason)) {
+fn log_shutdown(reason: &str) {
+    let log = match events::global() {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!("failed to open daemon event log: {}", e);
+            return;
+        }
+    };
+    if let Err(e) = log.append(&events::stopped(reason)) {
         tracing::warn!("failed to write daemon Stopped event: {}", e);
     }
 }

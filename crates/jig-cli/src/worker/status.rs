@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Multiplexer-level status of a worker's window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MuxStatus {
     Running,
     Exited,

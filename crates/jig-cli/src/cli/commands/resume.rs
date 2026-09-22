@@ -8,7 +8,6 @@ use jig_core::Worktree;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
 use crate::context::RepoCtx;
 
 /// Resume a dead worker by relaunching its agent session
@@ -39,8 +38,8 @@ impl Op for Resume {
     type Error = ResumeError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, ResumeError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self) -> Result<RepoCtx, ResumeError> {
+        Ok(RepoCtx::from_cwd()?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
@@ -85,7 +84,7 @@ impl Op for Resume {
         .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
 
         let prompt = crate::prompts::resume_task(&effective_context);
-        Worker::resume(&ctx.paths, &wt, &agent, prompt, &mux)?;
+        Worker::resume(&wt, &agent, prompt, &mux)?;
 
         ui::success(&format!("Resumed worker '{}'", ui::highlight(&self.branch)));
 

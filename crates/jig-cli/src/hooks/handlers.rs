@@ -5,7 +5,6 @@
 
 use std::path::Path;
 
-use crate::context::AppPaths;
 use crate::worker::events::{self, Event, EventKind};
 use jig_core::git::conventional::ValidationConfig;
 use jig_core::git::Worktree;
@@ -13,7 +12,7 @@ use jig_core::git::Worktree;
 /// Handle post-commit hook: emit a Commit event with the HEAD SHA.
 ///
 /// Silently does nothing if not in a jig-managed worktree.
-pub fn handle_post_commit(paths: &AppPaths, repo_path: &Path) -> Result<(), super::HookError> {
+pub fn handle_post_commit(repo_path: &Path) -> Result<(), super::HookError> {
     let Some(wt) = open_worktree(repo_path) else {
         return Ok(());
     };
@@ -22,7 +21,7 @@ pub fn handle_post_commit(paths: &AppPaths, repo_path: &Path) -> Result<(), supe
     let worker_name = wt.branch_name().to_string();
     let sha = wt.head_sha().unwrap_or_default();
 
-    let log = events::event_log_for_worker(paths, &repo_name, &worker_name);
+    let log = events::event_log_for_worker(&repo_name, &worker_name)?;
     log.append(&Event::now(EventKind::Commit {
         sha,
         repo: repo_name,
@@ -32,7 +31,7 @@ pub fn handle_post_commit(paths: &AppPaths, repo_path: &Path) -> Result<(), supe
 }
 
 /// Handle post-merge hook: emit a Push event.
-pub fn handle_post_merge(paths: &AppPaths, repo_path: &Path) -> Result<(), super::HookError> {
+pub fn handle_post_merge(repo_path: &Path) -> Result<(), super::HookError> {
     let Some(wt) = open_worktree(repo_path) else {
         return Ok(());
     };
@@ -41,7 +40,7 @@ pub fn handle_post_merge(paths: &AppPaths, repo_path: &Path) -> Result<(), super
     let worker_name = wt.branch_name().to_string();
     let sha = wt.head_sha().unwrap_or_default();
 
-    let log = events::event_log_for_worker(paths, &repo_name, &worker_name);
+    let log = events::event_log_for_worker(&repo_name, &worker_name)?;
     log.append(&Event::now(EventKind::Push {
         sha,
         repo: repo_name,
@@ -157,15 +156,13 @@ mod tests {
 
     #[test]
     fn post_commit_outside_worktree_is_noop() {
-        let fixture = jig_core::test_support::Fixture::new();
         let tmp = tempfile::tempdir().unwrap();
-        assert!(handle_post_commit(&AppPaths::from(&fixture), tmp.path()).is_ok());
+        assert!(handle_post_commit(tmp.path()).is_ok());
     }
 
     #[test]
     fn post_merge_outside_worktree_is_noop() {
-        let fixture = jig_core::test_support::Fixture::new();
         let tmp = tempfile::tempdir().unwrap();
-        assert!(handle_post_merge(&AppPaths::from(&fixture), tmp.path()).is_ok());
+        assert!(handle_post_merge(tmp.path()).is_ok());
     }
 }

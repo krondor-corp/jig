@@ -1,39 +1,73 @@
+#![allow(deprecated)]
 //! Integration tests for `jig notify` subcommands.
 
-mod common;
-
-use common::Sandbox;
+use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+use std::process::Command as StdCommand;
+use tempfile::TempDir;
 
-/// A repo sandbox plus the notification queue these tests read and seed.
-struct TestEnv(Sandbox);
-
-impl std::ops::Deref for TestEnv {
-    type Target = Sandbox;
-    fn deref(&self) -> &Sandbox {
-        &self.0
-    }
+struct TestEnv {
+    dir: TempDir,
+    config_dir: TempDir,
 }
 
 impl TestEnv {
     fn new() -> Self {
-        Self(Sandbox::with_repo())
+        let dir = TempDir::new().expect("create temp dir");
+        let config_dir = TempDir::new().expect("create config dir");
+
+        // Create a minimal git repo so jig doesn't error on repo detection
+        StdCommand::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(dir.path())
+            .output()
+            .expect("git init");
+
+        StdCommand::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(dir.path())
+            .output()
+            .expect("set email");
+
+        StdCommand::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(dir.path())
+            .output()
+            .expect("set name");
+
+        let config_file = config_dir.path().join("jig").join("config");
+        fs::create_dir_all(config_file.parent().unwrap()).unwrap();
+        fs::write(&config_file, "_default=main\n").unwrap();
+
+        Self { dir, config_dir }
     }
 
     fn with_notify_config(self, toml_content: &str) -> Self {
-        self.write_global_config(toml_content);
+        let config_file = self.config_dir.path().join("jig").join("config.toml");
+        fs::write(&config_file, toml_content).unwrap();
         self
     }
 
     fn queue_path(&self) -> std::path::PathBuf {
-        self.jig_dir().join("state").join("notifications.jsonl")
+        self.config_dir
+            .path()
+            .join("jig")
+            .join("state")
+            .join("notifications.jsonl")
     }
 
     fn seed_queue(&self, lines: &[&str]) {
         let queue_path = self.queue_path();
         fs::create_dir_all(queue_path.parent().unwrap()).unwrap();
         fs::write(&queue_path, lines.join("\n") + "\n").unwrap();
+    }
+
+    fn jig(&self) -> Command {
+        let mut cmd = Command::cargo_bin("jig").unwrap();
+        cmd.current_dir(self.dir.path());
+        cmd.env("XDG_CONFIG_HOME", self.config_dir.path());
+        cmd
     }
 }
 
@@ -115,7 +149,7 @@ fn test_emits_notification_to_queue() {
 #[test]
 fn test_with_exec_hook_writes_to_file() {
     let env = TestEnv::new();
-    let output_path = env.work_dir().join("hook-output.json");
+    let output_path = env.dir.path().join("hook-output.json");
 
     let toml = format!("[notify]\nexec = \"cat > '{}'\"\n", output_path.display());
     let env = env.with_notify_config(&toml);

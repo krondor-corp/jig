@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
-use crate::context::AppPaths;
+use crate::context::notifications_path;
 
 use super::{Notification, NotificationEvent};
 
@@ -15,8 +15,10 @@ pub struct NotificationQueue {
 
 impl NotificationQueue {
     /// Queue at the global state dir (`~/.config/jig/state/notifications.jsonl`).
-    pub fn global(paths: &AppPaths) -> Self {
-        Self::new(paths.notifications())
+    pub fn global() -> Result<Self, super::NotifyError> {
+        Ok(Self {
+            path: notifications_path()?,
+        })
     }
 
     /// Queue at a specific path (useful for testing).

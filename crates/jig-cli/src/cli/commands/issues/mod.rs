@@ -10,7 +10,6 @@ mod update;
 use clap::Args;
 
 use crate::cli::op::Op;
-use crate::context::AppPaths;
 
 pub use list::List;
 
@@ -40,25 +39,18 @@ crate::command_enum! {
 }
 
 impl Op for Issues {
-    type Context = AppPaths;
+    type Context = ();
     type Output = OpOutput;
     type Error = OpError;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, Self::Error> {
-        Ok(paths.clone())
+    fn build_context(&self) -> Result<(), Self::Error> {
+        Ok(())
     }
 
-    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
+    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(cmd) => cmd.run(paths),
-            None => Command::List(self.list.clone()).run(paths),
-        }
-    }
-
-    fn log_sink(&self) -> crate::cli::op::LogSink {
-        match &self.command {
-            Some(cmd) => cmd.log_sink(),
-            None => Command::List(self.list.clone()).log_sink(),
+            Some(cmd) => cmd.run(()),
+            None => Command::List(self.list.clone()).run(()),
         }
     }
 }
