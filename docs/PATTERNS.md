@@ -123,6 +123,8 @@ println!("cd '{}'", canonical.display());
 
 - **No process-wide state in tests**: never `std::env::set_var` or `set_current_dir` — tests run in parallel. Code under test takes an `AppPaths` instead of reading the environment.
 
+- **Tests that touch the filesystem live in `tests/`**, not in a `#[cfg(test)]` module. Unit tests are for pure logic: reducers, parsing, wire round-trips, decisions. The exception is a test that can only reach a private helper — keep that one beside the code and say why.
+
 - **Unit tests**: Inline in source files with `#[cfg(test)]` modules
   - Test pure functions and internal logic
   - Located at bottom of the file being tested

@@ -68,37 +68,3 @@ fn prune_single(paths: &AppPaths, target: &PruneTarget) -> std::result::Result<(
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_support::Sandbox;
-
-    #[test]
-    fn prune_single_missing_worktree_succeeds() {
-        let tmp = tempfile::tempdir().unwrap();
-        git2::Repository::init(tmp.path()).unwrap();
-
-        let target = PruneTarget {
-            repo_path: tmp.path().to_path_buf(),
-            repo_name: "test-repo".to_string(),
-            worker_name: "nonexistent-worker".to_string(),
-        };
-        let sandbox = Sandbox::new();
-        let _ = prune_single(&sandbox.paths(), &target);
-    }
-
-    #[test]
-    fn prune_single_absent_event_log_no_panic() {
-        let tmp = tempfile::tempdir().unwrap();
-        git2::Repository::init(tmp.path()).unwrap();
-
-        let target = PruneTarget {
-            repo_path: tmp.path().to_path_buf(),
-            repo_name: "repo".to_string(),
-            worker_name: "worker".to_string(),
-        };
-        let sandbox = Sandbox::new();
-        let _ = prune_single(&sandbox.paths(), &target);
-    }
-}

@@ -207,21 +207,4 @@ mod tests {
         let from_env = AppPaths::resolve(Some("/c".into()), Some("/r".into()), None).unwrap();
         assert_eq!(AppPaths::under(Path::new("/c"), Path::new("/r")), from_env);
     }
-
-    #[test]
-    fn ensure_creates_every_dir() {
-        let root = tempfile::tempdir().unwrap();
-        let paths = AppPaths::under(&root.path().join("config"), &root.path().join("run"));
-        paths.ensure().unwrap();
-        for dir in [
-            paths.config_dir().to_path_buf(),
-            paths.hooks_dir(),
-            paths.state_dir(),
-            paths.events_dir(),
-            paths.logs_dir(),
-            paths.runtime_dir().to_path_buf(),
-        ] {
-            assert!(dir.is_dir(), "missing {}", dir.display());
-        }
-    }
 }

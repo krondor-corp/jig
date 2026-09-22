@@ -1,5 +1,6 @@
 //! Global directory setup, which every `jig` invocation does on startup.
 
+use jig_cli::context::AppPaths;
 use jig_cli::test_support::Sandbox;
 
 #[test]
@@ -36,4 +37,21 @@ fn one_off_commands_leave_no_log_files() {
         logs.is_empty(),
         "one-off commands log to stderr, not files: {logs:?}"
     );
+}
+
+#[test]
+fn ensure_creates_every_dir() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = AppPaths::under(&root.path().join("config"), &root.path().join("run"));
+    paths.ensure().unwrap();
+    for dir in [
+        paths.config_dir().to_path_buf(),
+        paths.hooks_dir(),
+        paths.state_dir(),
+        paths.events_dir(),
+        paths.logs_dir(),
+        paths.runtime_dir().to_path_buf(),
+    ] {
+        assert!(dir.is_dir(), "missing {}", dir.display());
+    }
 }
