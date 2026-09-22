@@ -39,6 +39,28 @@ struct Timings {
     last_finished: AtomicI64,
 }
 
+/// A cloneable read-only view of one actor's timings.
+///
+/// The IPC listener answers `jig daemon status` from its own thread, so it
+/// cannot borrow the `ActorHandle` the tick loop owns. A probe carries only
+/// the atomics, which the actor thread writes and anyone may read.
+#[derive(Clone)]
+pub struct ActivityProbe {
+    name: &'static str,
+    timings: Arc<Timings>,
+}
+
+impl ActivityProbe {
+    pub fn activity(&self) -> ActorActivity {
+        let since = |t: &AtomicI64| Some(t.load(Ordering::Relaxed)).filter(|&ts| ts != 0);
+        ActorActivity {
+            name: self.name.to_string(),
+            busy_since: since(&self.timings.busy_since),
+            last_finished: since(&self.timings.last_finished),
+        }
+    }
+}
+
 fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
     panic
         .downcast_ref::<&str>()
@@ -153,16 +175,25 @@ impl<A: Actor> ActorHandle<A> {
         &self.inner
     }
 
+    /// Share the actor itself, for readers outside the tick loop (the IPC
+    /// listener). Actor state is behind interior mutability already.
+    pub fn shared(&self) -> Arc<A> {
+        Arc::clone(&self.inner)
+    }
+
+    /// A probe on this actor's timings that outlives the borrow.
+    pub fn probe(&self) -> ActivityProbe {
+        ActivityProbe {
+            name: A::NAME,
+            timings: Arc::clone(&self.timings),
+        }
+    }
+
     /// What the actor thread is doing right now. `busy_since` makes a wedged
     /// actor visible even while the tick loop keeps going — `send()` just
     /// drops requests while one is in flight, so a hung `handle` is silent.
     pub fn activity(&self) -> ActorActivity {
-        let since = |t: &AtomicI64| Some(t.load(Ordering::Relaxed)).filter(|&ts| ts != 0);
-        ActorActivity {
-            name: A::NAME.to_string(),
-            busy_since: since(&self.timings.busy_since),
-            last_finished: since(&self.timings.last_finished),
-        }
+        self.probe().activity()
     }
 }
 

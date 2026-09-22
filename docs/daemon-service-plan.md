@@ -6,11 +6,16 @@ Turn the in-process daemon into a persistent background service with IPC, manage
 > mux snapshot batching before daemonizing, `agent_state` in IPC status, and the
 > `WorkerSnapshot` type doubling as the fleet sync frame. Read the spec first.
 
-> **Already shipped (pre-IPC):** `jig daemon status` and `jig daemon logs` work
-> from files — the long-running daemon rewrites `state/daemon-heartbeat.json`
-> each tick (pid, last tick, per-actor busy/finished times, log path) and logs to
-> `state/logs/<ts>-daemon.log`. Phase 2's PID file should subsume the heartbeat,
-> and `status` should switch to `Request::Ping` once the socket exists.
+> **Status: phases 1–4 are shipped.** The daemon binds
+> `$XDG_RUNTIME_DIR/jig/daemon.sock`, enforces one instance per user via
+> `daemon.pid` beside it, and answers `Ping`/`GetStatus`/`Shutdown`.
+> `jig daemon start [--once] | stop | status` and `jig ps` / `ps --watch` are
+> all clients of it. The `daemon-heartbeat.json` file is gone — the PID file
+> subsumed it and its per-actor busy/finished times ride in `DaemonInfo`.
+>
+> **Remaining: phases 5–6** — OS service integration, and the supervisor /
+> watchdog that restarts a daemon whose `ticked_at` goes stale or whose actor
+> has been busy past a hard limit.
 
 ## Design Decisions
 
@@ -20,7 +25,7 @@ Turn the in-process daemon into a persistent background service with IPC, manage
 - **Client fallback**: `jig ps` without `--watch` falls back to in-process behavior when daemon isn't running. `jig ps --watch` suggests `jig daemon start`.
 - **Config reload**: Re-read from disk each poll cycle (every ~120s). No hot-reload signal.
 
-## Phase 1 — Wire Protocol & Serializable Types
+## Phase 1 — Wire Protocol & Serializable Types ✅
 
 No behavior changes. Everything still compiles and works as before.
 
@@ -32,26 +37,27 @@ No behavior changes. Everything still compiles and works as before.
 
 **1.4** Wire into `daemon/mod.rs` as `pub mod ipc;`. Unit tests for serialization round-trips.
 
-## Phase 2 — Server-Side IPC Listener
+## Phase 2 — Server-Side IPC Listener ✅
 
 **2.1** Add `Daemon::snapshot()` — packages actor state into `Response::Status` using the same reads `ps.rs` does today.
 
-**2.2** Introduce `DaemonShared` — holds `Arc<MonitorActor>`, `Arc<TriageActor>`, `Arc<SpawnActor>`, `Arc<AtomicU64>` (poll_remaining), `Arc<Config>`. The tick loop updates atomics; the IPC listener reads without blocking ticks. This avoids `Arc<Mutex<Daemon>>`.
+**2.2** Introduce `DaemonShared` — holds `Arc<MonitorActor>`, `Arc<TriageActor>`, `Arc<SpawnActor>`, `ActivityProbe`s for the per-actor timings, and atomics for `ticked_at` / the next poll deadline. The tick loop updates the atomics; the IPC listener reads without blocking ticks. This avoids `Arc<Mutex<Daemon>>`.
 
 **2.3** IPC listener thread in `ipc.rs` — binds `UnixListener`, accepts connections with 500ms non-blocking poll, reads one `Request`, dispatches via `DaemonShared`, writes one `Response`, closes connection. Checks `quit` flag between accepts. Removes stale socket on startup (verify via PID file).
 
 **2.4** PID file — `daemon_pid_path()` in `paths.rs`. Write on startup, remove on shutdown. Stale detection reuses existing `previous_run_crashed()` logic.
 
-## Phase 3 — `jig daemon` Command
+## Phase 3 — `jig daemon` Command ✅
 
 **3.1** Restructure `cli/commands/daemon.rs` into subcommands:
 
 ```
-jig daemon start [--once]    # foreground, with IPC listener
-jig daemon stop              # sends Shutdown via IPC
-jig daemon status            # sends Ping, reports PID/uptime
-jig daemon install           # registers OS service
-jig daemon uninstall         # removes OS service
+jig daemon start [--once]    # foreground, with IPC listener   ✅
+jig daemon stop              # sends Shutdown via IPC          ✅
+jig daemon status            # sends Ping, reports PID/uptime   ✅
+jig daemon logs              # prints the daemon's log          ✅
+jig daemon install           # registers OS service            (phase 5)
+jig daemon uninstall         # removes OS service              (phase 5)
 ```
 
 **3.2** `start` handler — check PID for existing instance, create `Context::from_global()`, start `Daemon`, spawn IPC listener thread with `DaemonShared`, install SIGINT/SIGTERM handlers, run tick loop, clean up socket+PID on exit.
@@ -80,9 +86,13 @@ jig daemon uninstall         # removes OS service
 
 ## Phase 6 — Testing
 
-- Integration tests: `daemon start --once`, `daemon status` when not running, socket cleanup on crash, PID lifecycle.
-- Unit tests: IPC round-trips, `WorkerSnapshot` conversion, socket path resolution.
-- Backwards compat: `jig ps` output identical with and without daemon running.
+Shipped in `crates/jig-cli/tests/daemon_ipc_tests.rs` (lifecycle, single
+instance, stale socket + PID recovery, `ps` on both paths) and unit tests in
+`daemon/ipc.rs` and `daemon/pidfile.rs` (protocol round-trips, `WorkerSnapshot`
+conversion, stale/garbage PID takeover).
+
+Still open: a test that `jig ps` renders identical output with and without a
+daemon running — it needs a repo fixture with real workers.
 
 ## Risk Areas
 
@@ -103,10 +113,13 @@ jig daemon uninstall         # removes OS service
 | File | Change |
 |------|--------|
 | `daemon/ipc.rs` | New — protocol types, socket helpers, client/server |
+| `daemon/pidfile.rs` | New — single-instance claim, stale takeover |
 | `daemon/mod.rs` | `snapshot()`, `DaemonShared`, IPC listener integration |
-| `cli/commands/daemon.rs` | Restructure into subcommands |
-| `cli/commands/ps.rs` | IPC client with in-process fallback |
-| `context/paths.rs` | `socket_path()`, `daemon_pid_path()` |
+| `daemon/heartbeat.rs` | Deleted — subsumed by the PID file and `DaemonInfo` |
+| `daemon/actors/actor.rs` | `ActivityProbe`, `ActorHandle::shared()` |
+| `cli/commands/daemon/` | `start`, `stop`; `status` over IPC |
+| `cli/commands/ps/mod.rs` | IPC client with in-process fallback |
+| `context/paths.rs` | `daemon_runtime_dir()`, `daemon_socket_path()`, `daemon_pid_path()` |
 | `worker/status.rs` | Serde derives on `MuxStatus` |
 | `daemon/checks.rs` | Serde derives on `PrHealth`, `PrChecks` |
-| `Cargo.toml` (workspace + jig-cli) | Add `service-manager` |
+| `Cargo.toml` (workspace + jig-cli) | Add `service-manager` (phase 5) |

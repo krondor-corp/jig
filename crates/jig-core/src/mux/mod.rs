@@ -135,7 +135,7 @@ pub enum MuxError {
 /// notion of it. Orthogonal to jig's event-derived worker status: this is
 /// what the terminal looks like *right now*, not where the worker is in
 /// its pipeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentState {
     Idle,

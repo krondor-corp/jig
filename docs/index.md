@@ -23,7 +23,7 @@ Find the right doc by what you're working on. The **Sources** column tells you w
 | [daemon.md](./daemon.md) | Tick loop, actor threads, nudging, auto-spawn, auto-prune, PR monitoring | `crates/jig-cli/src/daemon/` |
 | [STDOUT-FORMATTING.md](./STDOUT-FORMATTING.md) | Op trait pattern, Display impls, comfy-table usage, color conventions | `crates/jig-cli/src/cli/op.rs`, `crates/jig-cli/src/cli/ui/`, `crates/jig-cli/src/cli/commands/*.rs` |
 | [fleet-spec.md](./fleet-spec.md) | jig's identity + fleet direction: delivery loop across machines, hub + daemons over iroh, mux-agnostic (tmux/herdr per device), model switching, `ps --fleet` | `crates/jig-core/src/mux/`, `crates/jig-cli/src/daemon/` |
-| [daemon-service-plan.md](./daemon-service-plan.md) | Daemon-to-service refactor: IPC over unix socket, `jig daemon` subcommands, `service-manager` OS integration (Phase 1 of the fleet spec) | `crates/jig-cli/src/daemon/`, `crates/jig-cli/src/cli/commands/ps/` |
+| [daemon-service-plan.md](./daemon-service-plan.md) | Daemon-to-service refactor: IPC over unix socket, `jig daemon` subcommands, `service-manager` OS integration (Phase 1 of the fleet spec). Phases 1–4 shipped; 5–6 open | `crates/jig-cli/src/daemon/`, `crates/jig-cli/src/cli/commands/ps/` |
 
 ### Product Direction
 

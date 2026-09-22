@@ -55,33 +55,11 @@ pub fn ensure_excluded(git_common_dir: &Path, dir_name: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::init_repo;
     use tempfile::TempDir;
 
     fn sig() -> git2::Signature<'static> {
         git2::Signature::now("Test", "test@test.com").unwrap()
-    }
-
-    fn init_repo(dir: &Path) -> git2::Repository {
-        let repo = git2::Repository::init(dir).unwrap();
-        {
-            let mut config = repo.config().unwrap();
-            config.set_str("user.email", "test@test.com").unwrap();
-            config.set_str("user.name", "Test").unwrap();
-            config.set_bool("commit.gpgsign", false).unwrap();
-        }
-        {
-            let mut index = repo.index().unwrap();
-            let tree_oid = index.write_tree().unwrap();
-            let tree = repo.find_tree(tree_oid).unwrap();
-            let sig = sig();
-            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-                .unwrap();
-        }
-        repo.head()
-            .unwrap()
-            .rename("refs/heads/main", true, "init main")
-            .unwrap();
-        repo
     }
 
     fn empty_commit(repo: &git2::Repository, msg: &str) -> git2::Oid {
