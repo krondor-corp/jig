@@ -235,7 +235,6 @@ impl MonitorActor {
         let (commits_ahead, is_dirty) = git_stats(&repo_entry.path, &worker_name, global_config);
         state.commits_ahead = commits_ahead;
         state.is_dirty = is_dirty;
-        state.parsed_pr_url = state.pr_url.as_deref().and_then(|u| Url::parse(u).ok());
         state.pr_health = pr_health;
         state.is_draft = is_draft;
         state.nudge_cooldown_remaining = nudge_cooldown(&state, global_config);
@@ -361,7 +360,7 @@ impl MonitorActor {
                 event: NotificationEvent::WorkCompleted {
                     repo: repo_name.to_string(),
                     worker: worker_name.to_string(),
-                    pr_url: state.pr_url.clone(),
+                    pr_url: state.pr_url.as_ref().map(Url::to_string),
                 },
             });
 
@@ -409,7 +408,7 @@ impl MonitorActor {
                     event: NotificationEvent::FeedbackReceived {
                         repo: repo_name.to_string(),
                         worker: worker_name.to_string(),
-                        pr_url: state.pr_url.clone().unwrap_or_default(),
+                        pr_url: url_text(&state.pr_url),
                     },
                 });
             }
@@ -624,7 +623,7 @@ fn dispatch_actions(
 
     // PR opened
     if old_state.pr_url.is_none() && new_state.pr_url.is_some() {
-        let pr_url = new_state.pr_url.clone().unwrap_or_default();
+        let pr_url = url_text(&new_state.pr_url);
         actions.push(DispatchAction::Notify {
             event: NotificationEvent::PrOpened {
                 repo: repo_name.to_string(),
@@ -671,6 +670,11 @@ fn try_resume_worker(
     let prompt = crate::prompts::resume_task("You were interrupted. Resume your previous task.");
     Worker::resume(paths, &wt, &agent, prompt, mux)?;
     Ok(true)
+}
+
+/// A PR URL as the notification events carry it: text, empty when absent.
+fn url_text(pr_url: &Option<Url>) -> String {
+    pr_url.as_ref().map(Url::to_string).unwrap_or_default()
 }
 
 fn git_stats(repo_path: &std::path::Path, worker_name: &str, config: &Config) -> (usize, bool) {
@@ -803,7 +807,7 @@ mod tests {
     fn pr_opened_triggers_notify() {
         let old = WorkerState::default();
         let new = WorkerState {
-            pr_url: Some("https://github.com/pr/1".to_string()),
+            pr_url: Url::parse("https://github.com/pr/1").ok(),
             ..Default::default()
         };
 

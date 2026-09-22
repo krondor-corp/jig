@@ -104,7 +104,7 @@ pub struct DaemonStatus {
     pub workers: Vec<WorkerSnapshot>,
     pub triages: Vec<TriageEntry>,
     /// Workers the spawn actor is bringing up right now.
-    pub spawning: Vec<String>,
+    pub spawning: Vec<Branch>,
     /// Seconds until the next poll tick.
     pub poll_remaining: u64,
 }
@@ -155,7 +155,7 @@ pub struct WorkerSnapshot {
     pub branch: Option<String>,
     pub commit_count: u32,
     pub last_commit_at: Option<i64>,
-    pub pr_url: Option<String>,
+    pub pr_url: Option<Url>,
     pub nudge_counts: HashMap<String, u32>,
     pub last_nudge_at: HashMap<String, i64>,
     pub issue_ref: Option<IssueRef>,
@@ -251,9 +251,6 @@ impl WorkerSnapshot {
             mux_agent_state: self.mux_agent_state,
             commits_ahead: self.commits_ahead,
             is_dirty: self.is_dirty,
-            // Re-derived rather than sent: it is `pr_url` parsed, and one
-            // of the two would eventually disagree with the other.
-            parsed_pr_url: self.pr_url.as_deref().and_then(|u| Url::parse(u).ok()),
             pr_health: self.pr_health.clone(),
             nudge_cooldown_remaining: self.nudge_cooldown_remaining,
         }
@@ -518,8 +515,7 @@ mod tests {
             is_dirty: true,
             mux_status: MuxStatus::Running,
             mux_agent_state: Some(AgentState::Working),
-            parsed_pr_url: Some(Url::parse("https://github.com/o/r/pull/12").unwrap()),
-            pr_url: Some("https://github.com/o/r/pull/12".into()),
+            pr_url: Url::parse("https://github.com/o/r/pull/12").ok(),
             issue_ref: Some(IssueRef::new("KRO-213")),
             nudge_cooldown_remaining: Some(90),
             pr_health: PrHealth {
@@ -551,7 +547,7 @@ mod tests {
                     repo_name: "jig".into(),
                     model: "triage-1".into(),
                 }],
-                spawning: vec!["feat/x".into()],
+                spawning: vec![Branch::new("feat/x")],
                 poll_remaining: 42,
             })),
             Response::Ok,
@@ -575,10 +571,7 @@ mod tests {
         assert_eq!(restored.is_dirty, worker.is_dirty);
         assert_eq!(restored.mux_status, worker.mux_status);
         assert_eq!(restored.mux_agent_state, worker.mux_agent_state);
-        assert_eq!(
-            restored.parsed_pr_url, worker.parsed_pr_url,
-            "parsed_pr_url is re-derived from pr_url, not carried"
-        );
+        assert_eq!(restored.pr_url, worker.pr_url);
         assert_eq!(restored.issue_ref, worker.issue_ref);
         assert_eq!(restored.pr_health, worker.pr_health);
         assert_eq!(

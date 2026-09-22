@@ -18,6 +18,8 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{self, disable_raw_mode};
 
 use crate::context::{AppPaths, Context, ScopedCtx};
+use jig_core::git::Branch;
+
 use crate::daemon::ipc::{self, DaemonStatus};
 use crate::daemon::pidfile::PidFile;
 use crate::daemon::{Daemon, TriageEntry, WorkerState};
@@ -90,7 +92,7 @@ impl Op for Ps {
 struct Frame {
     workers: Vec<WorkerState>,
     triages: Vec<TriageEntry>,
-    spawning: Vec<String>,
+    spawning: Vec<Branch>,
     poll_remaining: u64,
 }
 
@@ -346,7 +348,7 @@ impl Watch {
                 let spawning_section = if frame.spawning.is_empty() {
                     String::new()
                 } else {
-                    let names: Vec<&str> = frame.spawning.iter().map(|s| s.as_str()).collect();
+                    let names: Vec<String> = frame.spawning.iter().map(Branch::to_string).collect();
                     format!(
                         "\n\x1B[2mspawning:\x1B[0m \x1B[33m{}\x1B[0m\n",
                         names.join(", ")

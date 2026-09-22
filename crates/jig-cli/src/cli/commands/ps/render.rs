@@ -173,7 +173,7 @@ fn worker_row(w: &WorkerState) -> Vec<Cell> {
     };
 
     let pr = w
-        .parsed_pr_url
+        .pr_url
         .as_ref()
         .map(|url| {
             url.path_segments()

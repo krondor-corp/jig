@@ -21,11 +21,11 @@ pub struct SpawnRequest {
 
 #[derive(Default)]
 pub struct SpawnActor {
-    spawning_workers: Mutex<Vec<String>>,
+    spawning_workers: Mutex<Vec<Branch>>,
 }
 
 impl SpawnActor {
-    pub fn spawning_workers(&self) -> Vec<String> {
+    pub fn spawning_workers(&self) -> Vec<Branch> {
         self.spawning_workers.lock().unwrap().clone()
     }
 }
@@ -186,27 +186,21 @@ impl Actor for SpawnActor {
                     continue;
                 }
 
-                let worker_name = issue.branch().to_string();
-                spawning.push(worker_name.clone());
+                let branch = issue.branch().clone();
+                spawning.push(branch.clone());
 
                 let mux = jig_core::mux::for_repo(global.mux, &repo_name);
                 match spawn_worker_for_issue(
-                    &req.ctx,
-                    &repo_root,
-                    &issue,
-                    &worker_name,
-                    &cfg,
-                    &provider,
-                    &mux,
+                    &req.ctx, &repo_root, &issue, &branch, &cfg, &provider, &mux,
                 ) {
                     Ok(_worker) => {
-                        tracing::info!(worker = %worker_name, "auto-spawned worker");
+                        tracing::info!(worker = %branch, "auto-spawned worker");
                     }
                     Err(msg) => {
-                        tracing::warn!(worker = %worker_name, "auto-spawn failed: {}", msg);
+                        tracing::warn!(worker = %branch, "auto-spawn failed: {}", msg);
                     }
                 }
-                spawning.retain(|s| s != &worker_name);
+                spawning.retain(|b| b != &branch);
                 repo_spawned += 1;
             }
         }

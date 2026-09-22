@@ -4,9 +4,10 @@
 
 mod reducer;
 mod schema;
+mod worker_state;
 
-pub use reducer::WorkerState;
 pub use schema::{Event, EventKind, EventType, TerminalKind};
+pub use worker_state::WorkerState;
 
 /// Worker event log — wraps the core `EventLog` with a `for_worker` constructor.
 pub type EventLog = jig_core::EventLog<Event>;
