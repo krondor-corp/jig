@@ -6,7 +6,6 @@ use crate::context::JigToml;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
 use crate::context::RepoCtx;
 
 /// Manage hook integrations
@@ -74,8 +73,8 @@ impl Op for Hooks {
     type Error = HooksError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, HooksError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self) -> Result<RepoCtx, HooksError> {
+        Ok(RepoCtx::from_cwd()?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
@@ -186,11 +185,11 @@ impl Op for Hooks {
                 Ok(NoOutput)
             }
             HooksCommands::PostCommit { .. } => {
-                crate::hooks::handle_post_commit(&ctx.paths, &ctx.repo.repo_root)?;
+                crate::hooks::handle_post_commit(&ctx.repo.repo_root)?;
                 Ok(NoOutput)
             }
             HooksCommands::PostMerge { .. } => {
-                crate::hooks::handle_post_merge(&ctx.paths, &ctx.repo.repo_root)?;
+                crate::hooks::handle_post_merge(&ctx.repo.repo_root)?;
                 Ok(NoOutput)
             }
             HooksCommands::CommitMsg { file, .. } => {

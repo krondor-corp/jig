@@ -13,7 +13,7 @@ use std::io::IsTerminal;
 
 use clap::{CommandFactory, Parser};
 
-use cli::op::{LogSink, Op};
+use cli::op::Op;
 use cli::ui;
 use cli::Cli;
 
@@ -24,37 +24,38 @@ fn main() {
     }
 }
 
-/// Route tracing per the command's [`LogSink`]. `RUST_LOG` overrides the
-/// level either way.
-fn init_tracing(sink: LogSink, paths: &context::AppPaths) {
+fn init_tracing(log_file: Option<std::path::PathBuf>, is_daemon: bool) {
     use tracing_subscriber::prelude::*;
 
-    let file = match sink {
-        LogSink::Stderr => None,
-        LogSink::File => {
-            let path = paths.new_session_log();
-            let file = std::fs::File::create(&path).ok();
-            if file.is_some() {
-                context::log::set_session_log(path);
-            }
-            file
-        }
-    };
-
-    let default_level = if file.is_some() { "info" } else { "warn" };
+    let default_level = if log_file.is_some() { "info" } else { "warn" };
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level));
 
-    let file_layer = file.map(|file| {
+    // The daemon's log exists from the start so `jig daemon logs` can find
+    // it; one-off commands only create a file if they actually log.
+    let writer: Option<Box<dyn std::io::Write + Send>> = log_file.and_then(|path| {
+        let writer: Box<dyn std::io::Write + Send> = if is_daemon {
+            Box::new(std::fs::File::create(&path).ok()?)
+        } else {
+            Box::new(context::log::LazyFile::new(path.clone()))
+        };
+        context::log::set_session_log(path);
+        Some(writer)
+    });
+    let file_layer = writer.map(|writer| {
         tracing_subscriber::fmt::layer()
-            .with_writer(std::sync::Mutex::new(file))
+            .with_writer(std::sync::Mutex::new(writer))
             .with_ansi(false)
     });
-    // Never both: a file sink exists because stderr is unusable (the watch
-    // view's table) or unwatched (a daemon).
-    let stderr_layer = file_layer
-        .is_none()
-        .then(|| tracing_subscriber::fmt::layer().with_writer(std::io::stderr));
+
+    // Only write to stderr when there's no log file — the watch mode
+    // reads logs from the file via LogTailer, and stderr output corrupts
+    // the table display.
+    let stderr_layer = if file_layer.is_none() {
+        Some(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+    } else {
+        None
+    };
 
     tracing_subscriber::registry()
         .with(env_filter)
@@ -75,17 +76,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         colored::control::set_override(true);
     }
 
-    // The one place jig reads XDG variables; everything below gets `paths`.
-    let paths = context::AppPaths::from_env()?;
-
     // Best-effort global directory setup
-    let _ = paths.ensure();
+    let _ = context::ensure_global_dirs();
 
-    let sink = cli
-        .command
-        .as_ref()
-        .map_or(LogSink::Stderr, |c| c.log_sink());
-    init_tracing(sink, &paths);
+    // Every command gets a session log file
+    let is_daemon = cli.command.as_ref().is_some_and(|c| c.hosts_daemon());
+    let log_file = if is_daemon {
+        context::new_daemon_log_path()
+    } else {
+        context::new_session_log_path()
+    };
+    init_tracing(log_file.ok(), is_daemon);
 
     match cli.command {
         None => {
@@ -94,8 +95,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Some(ref command) => {
-            let paths = command.build_context(&paths)?;
-            let output = command.run(paths)?;
+            command.build_context()?;
+            let output = command.run(())?;
             let output_str = output.to_string();
             if !output_str.is_empty() {
                 println!("{}", output_str);

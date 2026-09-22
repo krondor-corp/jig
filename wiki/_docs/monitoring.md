@@ -4,9 +4,7 @@ slug: monitoring
 date: 2025-05-09
 ---
 
-Monitor all your workers from the terminal with `jig ps`. A single background daemon (`jig daemon start`) does the supervising — monitoring workers, nudging stuck agents, tracking PR health — and `jig ps -gw` is the live dashboard onto it.
-
-With no daemon running, `jig ps` still works: it drives one in-process, exactly as it always did.
+Monitor all your workers from the terminal with `jig ps`. The global watch mode (`jig ps -gw`) is the primary way to supervise agents — it runs the daemon lifecycle inline, showing a live dashboard while actively monitoring workers, nudging stuck agents, and tracking PR health.
 
 ## The dashboard
 
@@ -17,7 +15,7 @@ jig ps -gw
 This starts the global live watch display — all workers across all repos, updating in real time:
 
 ```text
-jig ps --watch — 4 workers  (every 2s · daemon pid 72706)
+jig ps --watch — 4 workers  (every 2s)
 
 WORKER              STATE    COMMITS  PR     HEALTH  ISSUE
 ● jwt-auth          running        2  -      -       ENG-123
@@ -27,10 +25,6 @@ WORKER              STATE    COMMITS  PR     HEALTH  ISSUE
 
                                               [l]ogs  [q]uit
 ```
-
-The header says where the frames come from: `daemon pid N` when a daemon is
-answering, `hosting the daemon` when this view started one because none was
-running.
 
 ### Columns
 
@@ -66,65 +60,32 @@ Press `t` or `l` again to switch back. Press `q` to quit.
 
 ## The daemon
 
-Every 30 seconds, the daemon fetches repos, scans event logs to derive worker state, discovers PRs via GitHub, and dispatches actions (nudges, notifications, cleanup).
+`jig ps -gw` runs the daemon inline — the live display is a UI layer on top of the daemon's tick loop. Every 30 seconds, the daemon fetches repos, scans event logs to derive worker state, discovers PRs via GitHub, and dispatches actions (nudges, notifications, cleanup).
 
 The daemon uses background actor threads for blocking I/O: syncing repos, querying GitHub, polling for spawnable issues, creating worktrees, pruning merged workers, and delivering nudges through the configured mux backend.
 
-### Running it
-
-```bash
-jig daemon start     # run it in the foreground (ctrl-c to stop)
-jig daemon stop      # ask the running one to shut down
-jig daemon status    # is it alive, ticking, and unstuck?
-```
-
-`jig daemon start --once` runs a single tick and exits — useful in a cron job
-or a smoke test. It waits up to 30s for the monitor pass to finish so the tick
-is complete; `--timeout <SECONDS>` raises that when a pass has many repos to
-poll over a slow network.
-
-There is **one daemon per user**, always global — it watches every tracked
-repo. A second `jig daemon start` fails with `daemon already running (pid N)`
-rather than starting a rival that would fight over the same worktrees.
-
-It binds a unix socket at `$XDG_RUNTIME_DIR/jig/daemon.sock` (falling back to
-`~/.config/jig/state/daemon.sock`) and claims `daemon.pid` beside it. Both are
-removed on a clean exit; after a crash the next start finds them stale and
-takes them over, so there is nothing to clean up by hand.
-
-`jig ps` and `jig ps -gw` are clients of that socket. They render what the
-daemon reports instead of running a tick loop of their own, so you can have as
-many dashboards open as you like. When no daemon is listening, `jig ps -gw`
-starts one inline for the life of the view (and, in global mode, takes the
-socket so `jig daemon status` can see it) — which is how jig worked before the
-daemon had a socket.
-
 ### Checking on the daemon
 
-`jig daemon status` asks the daemon over the socket — an answer *is* the proof
-of life. Useful when workers seem to have stopped being nudged or spawned:
+`jig daemon status` tells you whether the daemon is actually alive — useful when workers seem to have stopped being nudged or spawned:
 
 ```text
 ✓ daemon running  pid 72706 · up 3h12m · v0.5.2
   → last tick 1s ago (every 2s)
-  → log ~/.config/jig/state/logs/20260910T195104Z.log
+  → log ~/.config/jig/state/logs/20260910T195104Z-daemon.log
   → jig-monitor  last finished 1s ago
   → jig-sync     last finished 1m40s ago
   → jig-spawn    busy 45s (last finished 2m ago)
 ```
 
-It reports one of:
+It reads a heartbeat the daemon rewrites every tick (`~/.config/jig/state/daemon-heartbeat.json`) and reports one of:
 
-- **running** — answering and ticking on schedule
-- **stalled** — answering, but the tick loop has stopped (the listener runs on
-  its own thread, so a wedged tick still gets a reply)
-- **not running** — nothing is listening on the socket
+- **running** — process alive, ticking on schedule
+- **stalled** — process alive but the tick loop stopped
+- **not running** — no daemon, or it exited without shutting down cleanly
 
 It also flags any actor that has been busy for over 10 minutes (e.g. a `git fetch` hung on auth), since the tick loop keeps running while a wedged actor silently skips its work. The command exits non-zero unless the daemon is healthy.
 
 `jig daemon logs` prints the daemon's own log; `-f` follows it (and moves to the new log when the daemon restarts), `-n` sets how many lines, `--path` prints the file path.
-
-Only the daemon and `jig ps --watch` write log files (`~/.config/jig/state/logs/`). Every other command prints warnings straight to stderr; set `RUST_LOG=info` (or `debug`) to see more.
 
 ## Nudges
 
@@ -231,9 +192,7 @@ Worker state is derived by replaying the event stream — there's no mutable sta
 ```bash
 jig ps                   # Status snapshot
 jig ps -w                # Watch mode (current repo)
-jig ps -gw               # Global watch — all repos, live dashboard
-jig daemon start         # Run the daemon (one per user, watches every repo)
-jig daemon stop          # Stop the running daemon
+jig ps -gw               # Global watch — all repos, runs daemon
 jig daemon status        # Is the daemon alive and ticking?
 jig daemon logs -f       # Follow the daemon's log
 ```

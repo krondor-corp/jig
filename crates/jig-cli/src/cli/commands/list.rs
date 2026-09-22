@@ -12,7 +12,6 @@ use jig_core::git::{Branch, Repo};
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::AppPaths;
 
 /// List worktrees
 #[derive(Args, Debug, Clone)]
@@ -53,8 +52,8 @@ impl Op for List {
     type Error = ListError;
     type Output = ListOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, ListError> {
-        Ok(ScopedCtx::from_global(paths, self.global)?)
+    fn build_context(&self) -> Result<ScopedCtx, ListError> {
+        Ok(ScopedCtx::from_global(self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
@@ -67,7 +66,7 @@ impl Op for List {
                 if self.plain || ui::is_plain() {
                     return self.run_global_plain(&g.repos, &g.config);
                 }
-                self.run_global_table(&g.paths, &g.repos, &g.config)
+                self.run_global_table(&g.repos, &g.config)
             }
             ScopedCtx::Repo(r) => {
                 let git_repo = Repo::open(&r.repo.repo_root)?;
@@ -87,8 +86,6 @@ impl Op for List {
 
                 let base_branch = r.repo.base_branch(&r.config);
                 let table = build_worktree_table(
-                    &r.paths,
-                    &r.config,
                     &names,
                     &r.repo.worktrees_path,
                     &base_branch,
@@ -144,7 +141,6 @@ impl List {
 
     fn run_global_table(
         &self,
-        paths: &AppPaths,
         repos: &[RepoConfig],
         global: &Config,
     ) -> Result<ListOutput, ListError> {
@@ -164,14 +160,8 @@ impl List {
             first = false;
             ui::header(&repo_name);
             let base_branch = cfg.base_branch(global);
-            let table = build_worktree_table(
-                paths,
-                global,
-                &worktrees,
-                &cfg.worktrees_path,
-                &base_branch,
-                &cfg.name(),
-            );
+            let table =
+                build_worktree_table(&worktrees, &cfg.worktrees_path, &base_branch, &cfg.name());
             eprintln!("{table}");
             note_foreign_worktrees(&git_repo, &cfg.repo_root);
         }
@@ -206,24 +196,18 @@ fn note_foreign_worktrees(repo: &Repo, repo_root: &Path) {
 }
 
 /// Get worker status from event log for a worktree.
-fn worktree_event_status(
-    paths: &AppPaths,
-    config: &Config,
-    repo_name: &str,
-    name: &str,
-) -> Option<WorkerStatus> {
-    let event_log = events::event_log_for_worker(paths, repo_name, name);
+fn worktree_event_status(repo_name: &str, name: &str) -> Option<WorkerStatus> {
+    let event_log = events::event_log_for_worker(repo_name, name).ok()?;
     if !event_log.exists() {
         return None;
     }
+    let config = Config::load().ok()?;
     let mut state: WorkerState = event_log.reduce().ok()?;
-    state.check_silence(config);
+    state.check_silence(&config);
     Some(state.status)
 }
 
 fn build_worktree_table(
-    paths: &AppPaths,
-    config: &Config,
     names: &[String],
     worktrees_path: &Path,
     base_branch: &Branch,
@@ -235,7 +219,7 @@ fn build_worktree_table(
         let wt_path = worktrees_path.join(name);
 
         // Check if worker is initializing or failed
-        let worker_status = worktree_event_status(paths, config, repo_name, name);
+        let worker_status = worktree_event_status(repo_name, name);
 
         let branch = Repo::open(&wt_path)
             .and_then(|r| r.current_branch())

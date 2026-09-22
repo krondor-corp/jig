@@ -1,8 +1,8 @@
-//! Session log files — where `ps --watch` and the daemon send their tracing
-//! output — and a tailer for following one as it grows.
+//! Session log files — the tracing sink for each jig invocation, and a
+//! tailer for following one as it grows (`ps --watch`, `daemon logs -f`).
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -16,6 +16,38 @@ pub fn set_session_log(path: PathBuf) {
 /// This process's tracing log, if it has one.
 pub fn session_log() -> Option<&'static Path> {
     SESSION_LOG.get().map(PathBuf::as_path)
+}
+
+/// A log file created on first write, so commands that log nothing leave
+/// nothing behind.
+pub struct LazyFile {
+    path: PathBuf,
+    file: Option<File>,
+}
+
+impl LazyFile {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path, file: None }
+    }
+}
+
+impl Write for LazyFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.file.is_none() {
+            self.file = Some(File::create(&self.path)?);
+        }
+        match self.file.as_mut() {
+            Some(file) => file.write(buf),
+            None => Ok(buf.len()),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self.file.as_mut() {
+            Some(file) => file.flush(),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Reads lines appended to a log file since the last poll.
@@ -99,7 +131,18 @@ pub fn tail_lines(path: &Path, n: usize) -> std::io::Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+
+    #[test]
+    fn lazy_file_not_created_until_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("session.log");
+        let mut file = LazyFile::new(path.clone());
+        file.flush().unwrap();
+        assert!(!path.exists());
+
+        writeln!(file, "hello").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello\n");
+    }
 
     #[test]
     fn tailer_returns_only_appended_complete_lines() {

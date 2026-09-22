@@ -3,7 +3,6 @@
 use clap::Args;
 
 use crate::cli::op::Op;
-use crate::context::AppPaths;
 use crate::terminal::shell::{Shell, ShellError};
 
 /// Print shell integration code
@@ -33,7 +32,7 @@ impl Op for ShellInit {
     type Error = ShellInitError;
     type Output = ShellInitOutput;
 
-    fn build_context(&self, _paths: &AppPaths) -> Result<(), ShellInitError> {
+    fn build_context(&self) -> Result<(), ShellInitError> {
         Ok(())
     }
 

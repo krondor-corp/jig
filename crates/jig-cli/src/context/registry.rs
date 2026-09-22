@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// A single registered repository
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoEntry {
     pub path: PathBuf,
     pub added: DateTime<Utc>,
@@ -25,32 +25,22 @@ pub struct RepoRegistry {
 
 impl RepoRegistry {
     /// Load registry from disk, returning empty registry if file doesn't exist
-    pub fn load(paths: &super::AppPaths) -> Result<Self, super::ContextError> {
-        Self::load_from(&paths.repo_registry())
-    }
-
-    /// [`Self::load`] from an explicit file.
-    pub fn load_from(path: &Path) -> Result<Self, super::ContextError> {
+    pub fn load() -> Result<Self, super::ContextError> {
+        let path = Self::registry_path()?;
         if !path.exists() {
             return Ok(Self::default());
         }
-        let content = fs::read_to_string(path)?;
+        let content = fs::read_to_string(&path)?;
         let registry: Self = serde_json::from_str(&content)?;
         Ok(registry)
     }
 
     /// Save registry to disk
-    pub fn save(&self, paths: &super::AppPaths) -> Result<(), super::ContextError> {
-        self.save_to(&paths.repo_registry())
-    }
-
-    /// [`Self::save`] to an explicit file.
-    pub fn save_to(&self, path: &Path) -> Result<(), super::ContextError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+    pub fn save(&self) -> Result<(), super::ContextError> {
+        let path = Self::registry_path()?;
+        fs::create_dir_all(path.parent().unwrap())?;
         let content = serde_json::to_string_pretty(self)?;
-        fs::write(path, content)?;
+        fs::write(&path, content)?;
         Ok(())
     }
 
@@ -111,5 +101,9 @@ impl RepoRegistry {
 
     fn find_mut(&mut self, path: &Path) -> Option<&mut RepoEntry> {
         self.repos.iter_mut().find(|e| e.path == path)
+    }
+
+    fn registry_path() -> Result<PathBuf, super::ContextError> {
+        Ok(super::paths::repo_registry_path()?)
     }
 }

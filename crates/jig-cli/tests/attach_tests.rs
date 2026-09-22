@@ -1,7 +1,8 @@
-mod common;
+#![allow(deprecated)] // Command::cargo_bin is deprecated but used across tests
 
-use common::Sandbox;
+use assert_cmd::Command;
 use predicates::prelude::*;
+use tempfile::TempDir;
 
 // ============================================================================
 // Attach Auto-Detection Tests
@@ -9,9 +10,13 @@ use predicates::prelude::*;
 
 #[test]
 fn test_attach_outside_repo_requires_branch() {
-    Sandbox::new()
-        .jig()
-        .args(["attach"])
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let config_dir = TempDir::new().expect("Failed to create config dir");
+
+    let mut cmd = Command::cargo_bin("jig").expect("Failed to find jig binary");
+    cmd.current_dir(dir.path());
+    cmd.env("XDG_CONFIG_HOME", config_dir.path());
+    cmd.args(["attach"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("nothing to target"));
@@ -19,9 +24,13 @@ fn test_attach_outside_repo_requires_branch() {
 
 #[test]
 fn test_attach_outside_repo_nonexistent_worktree() {
-    Sandbox::new()
-        .jig()
-        .args(["attach", "nonexistent-worker"])
+    let dir = TempDir::new().expect("Failed to create temp dir");
+    let config_dir = TempDir::new().expect("Failed to create config dir");
+
+    let mut cmd = Command::cargo_bin("jig").expect("Failed to find jig binary");
+    cmd.current_dir(dir.path());
+    cmd.env("XDG_CONFIG_HOME", config_dir.path());
+    cmd.args(["attach", "nonexistent-worker"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("not found"));

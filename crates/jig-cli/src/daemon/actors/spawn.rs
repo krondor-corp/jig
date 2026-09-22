@@ -191,7 +191,6 @@ impl Actor for SpawnActor {
 
                 let mux = jig_core::mux::for_repo(global.mux, &repo_name);
                 match spawn_worker_for_issue(
-                    &req.ctx,
                     &repo_root,
                     &issue,
                     &worker_name,
@@ -216,7 +215,6 @@ impl Actor for SpawnActor {
 }
 
 fn spawn_worker_for_issue(
-    ctx: &TickContext,
     repo_root: &Path,
     issue: &Issue,
     worker_name: &str,
@@ -235,7 +233,7 @@ fn spawn_worker_for_issue(
 
     let base = match &parent {
         Some(p) => Branch::new(format!("origin/{}", p.branch())),
-        None => context::resolve_base_branch_for(repo_root, &ctx.config)
+        None => context::resolve_base_branch_for(repo_root)
             .unwrap_or_else(|_| Branch::new(context::DEFAULT_BASE_BRANCH)),
     };
 
@@ -265,7 +263,6 @@ fn spawn_worker_for_issue(
     });
 
     let worker = Worker::spawn(
-        &ctx.paths,
         &repo,
         &branch,
         &base,

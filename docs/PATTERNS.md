@@ -38,8 +38,8 @@ impl Op for Create {
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CreateError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self) -> Result<RepoCtx, CreateError> {
+        Ok(RepoCtx::from_cwd()?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
@@ -101,8 +101,6 @@ impl Op for Create {
   - Data that might be piped to other tools
   - Never include ANSI color codes in stdout
 
-- **Tracing**: `tracing::warn!` and friends go where `Op::log_sink` says — stderr (level `warn`) by default, so warnings from one-off commands are seen. Only commands that own the terminal or have none (`ps --watch`, `daemon start`) override it to `LogSink::File`. `RUST_LOG` overrides the level.
-
 - **`--plain` flag**: Global flag for scriptable output
   - Disables all colors and decorations
   - Tables output as tab-separated values
@@ -121,22 +119,20 @@ println!("cd '{}'", canonical.display());
 
 ## Testing Patterns
 
-- **No process-wide state in tests**: never `std::env::set_var` or `set_current_dir` — tests run in parallel. Code under test takes an `AppPaths` instead of reading the environment.
-
 - **Unit tests**: Inline in source files with `#[cfg(test)]` modules
   - Test pure functions and internal logic
   - Located at bottom of the file being tested
-  - For anything touching jig's files, build paths from a fixture: `let fixture = Fixture::with_repos(2); let paths = AppPaths::from(&fixture);` (`jig_core::test_support`)
 
-- **Integration tests**: In `tests/` directory, sharing `tests/common/mod.rs` (`mod common;`)
-  - `Sandbox` wraps a `Fixture` — its own `XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR`, and any number of repos — and runs the binary against it with `assert_cmd`
-  - `Sandbox::with_repos(n)`, `sandbox.jig()` / `sandbox.jig_in(sandbox.repo(1))`, `sandbox.start_daemon()`
+- **Integration tests**: In `tests/` directory
+  - Use `assert_cmd` for CLI testing
+  - Use `tempfile` for isolated test repos
+  - Test helper: `TestRepo` struct creates isolated git repos
 
 ```rust
 #[test]
 fn test_create_worktree() {
-    let sandbox = Sandbox::with_repo();
-    sandbox.jig()
+    let repo = TestRepo::new();
+    repo.jig()
         .args(["create", "test1"])
         .assert()
         .success()
@@ -182,8 +178,6 @@ Key conventions:
   - `attach`/`attach_window` are default-method compositions of `focus`/`focus_window` (point the backend at a target) and `connect` (bring a client in front of the user) — implement the primitives, not the composed methods, when adding a backend
   - `agent_state(&self, name) -> Option<AgentState>` lets a backend report live `idle/working/blocked/done` classification; default `None` (tmux has no such signal)
 
-- **jig's own files**: `AppPaths` (`context/paths.rs`) is resolved from `XDG_CONFIG_HOME` / `XDG_RUNTIME_DIR` once, in `main`, and reaches commands through `Op::build_context(&self, paths)` and the context structs (`ctx.paths`). Anything that reads or writes jig state takes `&AppPaths` — don't read XDG variables anywhere else.
-
 - **Path handling**: Use `PathBuf` for owned paths, `&Path` for references
   - Canonicalize paths before displaying to users
   - Use `to_string_lossy()` when converting to string for git commands
@@ -192,10 +186,9 @@ Key conventions:
   - Check repo config first, fall back to global, then hardcoded default
 
 - **Context types**: Each command declares `type Context` in its `Op` impl
-  - `RepoCtx` — single repo from cwd (`RepoCtx::from_cwd(paths)`); fields: `paths`, `repo: RepoConfig`, `config: Config`, `jig_toml: JigToml`
-  - `GlobalCtx` — all tracked repos (`GlobalCtx::load(paths)`); fields: `paths`, `repos`, `config`, `registry`
-  - `ScopedCtx` — enum for commands with `--global`; use `ScopedCtx::from_global(paths, self.global)` in `build_context`
-  - `AppPaths` — for commands that need jig's files but no repo (`daemon`, `notify`, `attach`)
+  - `RepoCtx` — single repo from cwd (`RepoCtx::from_cwd()`); fields: `repo: RepoConfig`, `config: Config`, `jig_toml: JigToml`
+  - `GlobalCtx` — all tracked repos (`GlobalCtx::load()`); fields: `repos`, `config`, `registry`
+  - `ScopedCtx` — enum for commands with `--global`; use `ScopedCtx::from_global(self.global)` in `build_context`
   - `()` — no context needed (pure commands like `version`, `which`, `shell-init`)
   - Both `RepoCtx` and `GlobalCtx` convert to `Context` via `From` impls for daemon/legacy code
 

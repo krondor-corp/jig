@@ -5,7 +5,6 @@ use clap::Args;
 use jig_core::issues::IssueStatus;
 
 use crate::cli::op::Op;
-use crate::context::AppPaths;
 use crate::context::{RepoConfig, RepoCtx};
 
 /// Update issue status
@@ -65,8 +64,8 @@ impl Op for Status {
     type Error = StatusError;
     type Output = StatusOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, StatusError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self) -> Result<RepoCtx, StatusError> {
+        Ok(RepoCtx::from_cwd()?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {

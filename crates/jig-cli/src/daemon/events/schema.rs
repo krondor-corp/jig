@@ -1,7 +1,5 @@
 //! Typed event schema for the daemon event log.
 
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
 pub type Event = jig_core::Event<EventKind>;
@@ -9,23 +7,13 @@ pub type Event = jig_core::Event<EventKind>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventKind {
-    Started {
-        pid: u32,
-        /// This run's tracing log, so `jig daemon logs` can find it after
-        /// the daemon exits. Absent in events written by older daemons.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        log: Option<PathBuf>,
-    },
-    Stopped {
-        pid: u32,
-        reason: String,
-    },
+    Started { pid: u32 },
+    Stopped { pid: u32, reason: String },
 }
 
-pub fn started(log: Option<PathBuf>) -> Event {
+pub fn started() -> Event {
     Event::now(EventKind::Started {
         pid: std::process::id(),
-        log,
     })
 }
 
@@ -42,7 +30,7 @@ mod tests {
 
     #[test]
     fn started_serializes_flat() {
-        let event = started(None);
+        let event = started();
         let json = serde_json::to_string(&event).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
