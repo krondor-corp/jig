@@ -5,6 +5,7 @@ use clap::Args;
 use jig_core::issues::{Issue as CoreIssue, IssueFilter, IssuePriority, IssueStatus};
 
 use crate::cli::op::Op;
+use crate::context::AppPaths;
 use crate::context::{Context, RepoConfig, ScopedCtx};
 
 /// Show issue statistics
@@ -118,8 +119,8 @@ impl Op for Stats {
     type Error = StatsError;
     type Output = StatsOutput;
 
-    fn build_context(&self) -> Result<ScopedCtx, StatsError> {
-        Ok(ScopedCtx::from_global(self.global)?)
+    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, StatsError> {
+        Ok(ScopedCtx::from_global(paths, self.global)?)
     }
 
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {

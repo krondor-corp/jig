@@ -6,7 +6,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::paths::global_config_path;
+use super::paths::AppPaths;
 use super::ContextError;
 
 /// Notification configuration.
@@ -92,9 +92,8 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn load() -> Result<Self, ContextError> {
-        let path = global_config_path()?;
-        Self::load_from(&path)
+    pub fn load(paths: &AppPaths) -> Result<Self, ContextError> {
+        Self::load_from(&paths.config_file())
     }
 
     pub fn load_from(path: &Path) -> Result<Self, ContextError> {
@@ -106,13 +105,8 @@ impl Config {
         Ok(config)
     }
 
-    pub fn default_path() -> Result<std::path::PathBuf, ContextError> {
-        Ok(global_config_path()?)
-    }
-
-    pub fn save(&self) -> Result<(), ContextError> {
-        let path = global_config_path()?;
-        self.save_to(&path)
+    pub fn save(&self, paths: &AppPaths) -> Result<(), ContextError> {
+        self.save_to(&paths.config_file())
     }
 
     pub fn save_to(&self, path: &Path) -> Result<(), ContextError> {
@@ -127,15 +121,15 @@ impl Config {
 
     /// Initialize global config at ~/.config/jig/config.toml.
     /// Returns the path if created, None if it already exists (and force is false).
-    pub fn init(force: bool) -> Result<Option<std::path::PathBuf>, ContextError> {
-        let config_dir = super::paths::global_config_dir()?;
-        let config_path = config_dir.join("config.toml");
+    pub fn init(paths: &AppPaths, force: bool) -> Result<Option<std::path::PathBuf>, ContextError> {
+        let config_dir = paths.config_dir();
+        let config_path = paths.config_file();
 
         if config_path.exists() && !force {
             return Ok(None);
         }
 
-        fs::create_dir_all(&config_dir)?;
+        fs::create_dir_all(config_dir)?;
 
         let content = r#"# jig global configuration
 
