@@ -25,6 +25,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use jig_core::git::Branch;
 use jig_core::issues::issue::IssueRef;
 use jig_core::mux::AgentState;
 
@@ -172,12 +173,11 @@ pub struct WorkerSnapshot {
     // ── Runtime ─────────────────────────────────────────────────
     pub repo: Option<RepoEntry>,
     pub name: String,
-    pub resolved_branch: String,
+    pub resolved_branch: Branch,
     pub mux_status: MuxStatus,
     pub mux_agent_state: Option<AgentState>,
     pub commits_ahead: usize,
     pub is_dirty: bool,
-    pub parsed_pr_url: Option<String>,
     pub pr_health: PrHealth,
     pub nudge_cooldown_remaining: Option<u64>,
 }
@@ -206,12 +206,11 @@ impl From<&WorkerState> for WorkerSnapshot {
 
             repo: w.repo.clone(),
             name: w.name.clone(),
-            resolved_branch: w.resolved_branch.to_string(),
+            resolved_branch: w.resolved_branch.clone(),
             mux_status: w.mux_status,
             mux_agent_state: w.mux_agent_state,
             commits_ahead: w.commits_ahead,
             is_dirty: w.is_dirty,
-            parsed_pr_url: w.parsed_pr_url.as_ref().map(Url::to_string),
             pr_health: w.pr_health.clone(),
             nudge_cooldown_remaining: w.nudge_cooldown_remaining,
         }
@@ -247,15 +246,14 @@ impl WorkerSnapshot {
 
             repo: self.repo.clone(),
             name: self.name.clone(),
-            resolved_branch: jig_core::git::Branch::new(self.resolved_branch.clone()),
+            resolved_branch: self.resolved_branch.clone(),
             mux_status: self.mux_status,
             mux_agent_state: self.mux_agent_state,
             commits_ahead: self.commits_ahead,
             is_dirty: self.is_dirty,
-            parsed_pr_url: self
-                .parsed_pr_url
-                .as_deref()
-                .and_then(|u| Url::parse(u).ok()),
+            // Re-derived rather than sent: it is `pr_url` parsed, and one
+            // of the two would eventually disagree with the other.
+            parsed_pr_url: self.pr_url.as_deref().and_then(|u| Url::parse(u).ok()),
             pr_health: self.pr_health.clone(),
             nudge_cooldown_remaining: self.nudge_cooldown_remaining,
         }
@@ -577,7 +575,10 @@ mod tests {
         assert_eq!(restored.is_dirty, worker.is_dirty);
         assert_eq!(restored.mux_status, worker.mux_status);
         assert_eq!(restored.mux_agent_state, worker.mux_agent_state);
-        assert_eq!(restored.parsed_pr_url, worker.parsed_pr_url);
+        assert_eq!(
+            restored.parsed_pr_url, worker.parsed_pr_url,
+            "parsed_pr_url is re-derived from pr_url, not carried"
+        );
         assert_eq!(restored.issue_ref, worker.issue_ref);
         assert_eq!(restored.pr_health, worker.pr_health);
         assert_eq!(
