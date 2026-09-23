@@ -759,35 +759,3 @@ fn remote_callbacks() -> git2::RemoteCallbacks<'static> {
     });
     callbacks
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::git::test_repo::seeded as init_repo;
-    use tempfile::TempDir;
-
-    #[test]
-    fn find_valid_start_point_no_head_fallback() {
-        let tmp = TempDir::new().unwrap();
-        let _ = init_repo(tmp.path());
-
-        let repo = Repo::open(tmp.path()).unwrap();
-        // "origin/main" doesn't exist, no remote configured, no HEAD fallback
-        let result = repo.find_valid_start_point("origin/main");
-        assert!(
-            matches!(result, Err(GitError::BranchNotFound(ref s)) if s == "origin/main"),
-            "expected BranchNotFound, got {:?}",
-            result
-        );
-    }
-
-    #[test]
-    fn find_valid_start_point_resolves_local_branch() {
-        let tmp = TempDir::new().unwrap();
-        let _ = init_repo(tmp.path());
-
-        let repo = Repo::open(tmp.path()).unwrap();
-        let result = repo.find_valid_start_point("main");
-        assert!(result.is_ok(), "expected Ok for existing local branch");
-    }
-}

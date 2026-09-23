@@ -51,6 +51,3 @@ pub fn ensure_excluded(git_common_dir: &Path, dir_name: &str) -> Result<()> {
 
     Ok(())
 }
-
-#[cfg(test)]
-pub(crate) mod test_repo;

@@ -258,3 +258,33 @@ fn open_preserves_existing_shallow_file() {
         "existing shallow contents must not be clobbered"
     );
 }
+
+/// `find_valid_start_point` (private) falls back from `<base>` to
+/// `origin/<base>` and gives up rather than inventing a start point. Both
+/// halves are observable here.
+#[test]
+fn a_base_branch_that_resolves_nowhere_is_reported_missing() {
+    let tmp = TempDir::new().unwrap();
+    init_repo(tmp.path());
+    let repo = Repo::open(tmp.path()).unwrap();
+
+    // No remote, so "origin/main" resolves to nothing — and a base that
+    // already names a remote gets no second guess.
+    let result = repo.create_worktree(&Branch::new("feat/x"), &Branch::new("origin/main"));
+    assert!(
+        matches!(result, Err(GitError::BranchNotFound(ref s)) if s == "origin/main"),
+        "expected BranchNotFound, got {result:?}"
+    );
+}
+
+#[test]
+fn a_local_base_branch_is_a_valid_start_point() {
+    let tmp = TempDir::new().unwrap();
+    init_repo(tmp.path());
+    let repo = Repo::open(tmp.path()).unwrap();
+
+    let path = repo
+        .create_worktree(&Branch::new("feat/x"), &Branch::new("main"))
+        .expect("local main is a valid start point");
+    assert!(path.join(".git").exists());
+}
