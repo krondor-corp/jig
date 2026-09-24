@@ -1,10 +1,8 @@
 //! The PID file that keeps one daemon per user.
 
-mod common;
-
 use std::path::PathBuf;
 
-use common::Sandbox;
+use crate::common::Sandbox;
 use jig_cli::context::AppPaths;
 use jig_cli::daemon::pidfile::{PidFile, PidFileError};
 

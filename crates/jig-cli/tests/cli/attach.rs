@@ -1,5 +1,4 @@
-use common::Sandbox;
-mod common;
+use crate::common::Sandbox;
 
 use predicates::prelude::*;
 

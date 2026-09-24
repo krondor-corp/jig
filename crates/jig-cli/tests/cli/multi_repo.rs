@@ -1,8 +1,6 @@
 //! Commands that span every tracked repo.
 
-mod common;
-
-use common::Sandbox;
+use crate::common::Sandbox;
 use predicates::prelude::*;
 
 /// Base worktrees on the local `main` — sandbox repos have no `origin`.

@@ -130,7 +130,19 @@ println!("cd '{}'", canonical.display());
   - Located at bottom of the file being tested
   - For anything touching jig's files, build paths from a fixture: `let fixture = Fixture::with_repos(2); let paths = AppPaths::from(&fixture);` (`jig_core::test_support`)
 
-- **Integration tests**: In `tests/` directory, sharing `tests/common/mod.rs` (`mod common;`)
+- **Integration tests**: In `tests/`, grouped by area — one directory per area with a `main.rs` that declares its modules, so each area is a single test binary:
+
+```text
+tests/
+├── common/mod.rs          # Sandbox, pulled in per area with #[path]
+├── cli/                   # driving the binary: attach, commit, notify, startup…
+├── context/               # config, repo config, log tailer
+├── daemon/                # ipc, pidfile, actors/prune
+├── hooks/                 # install, uninstall, registry, handlers
+└── notify/                # queue, notifier
+```
+
+  A bare `tests/*.rs` file is fine when an area has just one; subdirectories without a `main.rs` are not compiled.
   - `Sandbox` wraps a `Fixture` — its own `XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR`, and any number of repos — and runs the binary against it with `assert_cmd`
   - `Sandbox::with_repos(n)`, `sandbox.jig()` / `sandbox.jig_in(sandbox.repo(1))`, `sandbox.start_daemon()`
 

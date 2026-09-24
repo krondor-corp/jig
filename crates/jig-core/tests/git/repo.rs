@@ -1,10 +1,8 @@
 //! `Repo` against real repositories on disk.
 
-mod common;
-
 use std::path::{Path, PathBuf};
 
-use common::seeded_repo as init_repo;
+use crate::common::seeded_repo as init_repo;
 use jig_core::git::{Branch, GitError, Repo};
 use tempfile::TempDir;
 

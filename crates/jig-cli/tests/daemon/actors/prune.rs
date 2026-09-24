@@ -1,8 +1,6 @@
 //! Pruning a worker's worktree and event log.
 
-mod common;
-
-use common::Sandbox;
+use crate::common::Sandbox;
 use jig_cli::daemon::actors::prune::{PruneActor, PruneRequest, PruneTarget};
 use jig_cli::daemon::actors::Actor;
 

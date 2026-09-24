@@ -1,8 +1,6 @@
 //! Building a context for a repo, and what it records globally.
 
-mod common;
-
-use common::Sandbox;
+use crate::common::Sandbox;
 use jig_cli::context::{Config, Context, RepoConfig, RepoRegistry, JIG_DIR};
 
 #[test]

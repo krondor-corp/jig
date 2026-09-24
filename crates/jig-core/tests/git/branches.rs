@@ -1,12 +1,10 @@
 //! Fast-forwarding and pushing branches against a real repo.
 
-mod common;
-
 use std::path::Path;
 
 use jig_core::git::Repo;
 
-use common::seeded_repo as init_repo;
+use crate::common::seeded_repo as init_repo;
 use tempfile::TempDir;
 
 fn sig() -> git2::Signature<'static> {

@@ -1,8 +1,6 @@
 //! Integration tests for `jig commit` commands.
 
-mod common;
-
-use common::Sandbox;
+use crate::common::Sandbox;
 use predicates::prelude::*;
 use std::fs;
 
