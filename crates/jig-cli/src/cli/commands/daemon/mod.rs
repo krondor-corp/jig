@@ -33,9 +33,9 @@ crate::command_enum! {
     (Status, status::Status),
     /// Print the daemon's log
     (Logs, logs::Logs),
-    /// Install the daemon as a user service (systemd or launchd)
+    /// Run the daemon as an OS service (Linux: system service, needs sudo)
     (Install, service::Install),
-    /// Remove the daemon's user service
+    /// Remove the daemon's OS service
     (Uninstall, service::Uninstall),
 }
 
