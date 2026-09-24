@@ -4,9 +4,11 @@
 //! Every test gets its own `XDG_CONFIG_HOME` *and* `XDG_RUNTIME_DIR`, so the
 //! daemons they start cannot see each other or the developer's own.
 
+mod common;
+
 use std::time::Duration;
 
-use jig_cli::test_support::{pid_in, Sandbox};
+use common::{pid_in, Sandbox};
 use predicates::prelude::*;
 
 #[test]

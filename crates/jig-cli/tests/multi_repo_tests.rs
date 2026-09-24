@@ -1,6 +1,8 @@
 //! Commands that span every tracked repo.
 
-use jig_cli::test_support::Sandbox;
+mod common;
+
+use common::Sandbox;
 use predicates::prelude::*;
 
 /// Base worktrees on the local `main` — sandbox repos have no `origin`.

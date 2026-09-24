@@ -1,8 +1,10 @@
 //! The git hook handlers that `jig hooks <name>` runs.
 
+mod common;
+
 use jig_cli::hooks::handlers::*;
 
-use jig_cli::test_support::Sandbox;
+use common::Sandbox;
 
 #[test]
 fn pre_commit_is_noop() {

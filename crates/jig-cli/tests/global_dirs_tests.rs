@@ -1,7 +1,9 @@
 //! Global directory setup, which every `jig` invocation does on startup.
 
+mod common;
+
+use common::Sandbox;
 use jig_cli::context::AppPaths;
-use jig_cli::test_support::Sandbox;
 
 #[test]
 fn any_command_creates_the_global_dirs() {

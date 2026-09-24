@@ -1,6 +1,8 @@
 //! Integration tests for `jig notify` subcommands.
 
-use jig_cli::test_support::Sandbox;
+mod common;
+
+use common::Sandbox;
 use predicates::prelude::*;
 use std::fs;
 

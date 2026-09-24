@@ -1,10 +1,12 @@
 //! The PID file that keeps one daemon per user.
 
+mod common;
+
 use std::path::PathBuf;
 
+use common::Sandbox;
 use jig_cli::context::AppPaths;
 use jig_cli::daemon::pidfile::{PidFile, PidFileError};
-use jig_cli::test_support::Sandbox;
 
 /// A fresh sandbox, its paths, and where its pid file lives.
 fn sandbox() -> (Sandbox, AppPaths, PathBuf) {

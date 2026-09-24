@@ -1,8 +1,10 @@
 //! Pruning a worker's worktree and event log.
 
+mod common;
+
+use common::Sandbox;
 use jig_cli::daemon::actors::prune::{PruneActor, PruneRequest, PruneTarget};
 use jig_cli::daemon::actors::Actor;
-use jig_cli::test_support::Sandbox;
 
 /// A target with nothing behind it: no worktree on disk, no event log.
 /// Pruning must report failure through its log, not panic.

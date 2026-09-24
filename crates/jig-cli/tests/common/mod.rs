@@ -1,8 +1,11 @@
-//! Fixtures for jig's tests.
+#![allow(dead_code)] // each test binary uses a different subset
+
+//! Shared setup for jig-cli's integration tests.
 //!
 //! A [`Sandbox`] owns temp config and runtime roots plus any number of git
 //! repos, and serves both kinds of test: [`Sandbox::paths`] for calling
-//! jig's code in-process, [`Sandbox::jig`] for driving the binary. Nothing
+//! jig's code in-process through the `jig_cli` library, [`Sandbox::jig`]
+//! for driving the binary. Nothing
 //! here touches the test process's own environment or working directory, so
 //! tests run in parallel — including the daemons they start, which get a
 //! socket of their own.
@@ -13,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
-use crate::context::AppPaths;
+use jig_cli::context::AppPaths;
 
 /// Temp roots and repos for one test. Everything is removed on drop.
 pub struct Sandbox {
