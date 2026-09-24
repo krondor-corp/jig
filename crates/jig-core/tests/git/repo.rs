@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::common::seeded_repo as init_repo;
-use jig_core::git::{Branch, GitError, Repo};
+use jig_core::git::{Branch, GitError, Repo, Worktree};
 use tempfile::TempDir;
 
 #[test]
@@ -285,4 +285,52 @@ fn a_local_base_branch_is_a_valid_start_point() {
         .create_worktree(&Branch::new("feat/x"), &Branch::new("main"))
         .expect("local main is a valid start point");
     assert!(path.join(".git").exists());
+}
+
+#[test]
+fn checked_out_branch_follows_a_rename_while_the_worker_name_does_not() {
+    let tmp = TempDir::new().unwrap();
+    let _ = init_repo(tmp.path());
+    let repo = Repo::open(tmp.path()).unwrap();
+    let path = repo
+        .create_worktree(&"al/triage-fixes".into(), &"main".into())
+        .unwrap();
+
+    git2::Repository::open(&path)
+        .unwrap()
+        .find_branch("al/triage-fixes", git2::BranchType::Local)
+        .unwrap()
+        .rename("fix/triage-timeout-and-budget", false)
+        .unwrap();
+
+    let wt = Worktree::open(&path).unwrap();
+
+    // The worker keeps its identity: event log, mux window, prune target.
+    assert_eq!(&*wt.branch_name(), "al/triage-fixes");
+    // GitHub must be asked about the branch, which has moved on.
+    assert_eq!(
+        wt.checked_out_branch().as_deref(),
+        Some("fix/triage-timeout-and-budget"),
+        "PR lookups must follow the branch, not the folder"
+    );
+}
+
+#[test]
+fn a_detached_worktree_has_no_checked_out_branch() {
+    let tmp = TempDir::new().unwrap();
+    let _ = init_repo(tmp.path());
+    let repo = Repo::open(tmp.path()).unwrap();
+    let path = repo
+        .create_worktree(&"al/detached".into(), &"main".into())
+        .unwrap();
+
+    let wt_git = git2::Repository::open(&path).unwrap();
+    let head = wt_git.head().unwrap().target().unwrap();
+    wt_git.set_head_detached(head).unwrap();
+
+    assert_eq!(
+        Worktree::open(&path).unwrap().checked_out_branch(),
+        None,
+        "a detached HEAD names no branch to look up"
+    );
 }
