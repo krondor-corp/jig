@@ -58,6 +58,28 @@ pub struct WorktreeConfig {
     pub base: Option<String>,
     pub on_create: Option<String>,
     pub copy: Vec<String>,
+    /// Seconds before the `on_create` hook is killed. Generous by default:
+    /// a cold `pnpm install` is slow but finite, and the point is to catch
+    /// the hook that never returns at all.
+    pub on_create_timeout: Option<u64>,
+}
+
+/// Default seconds allowed for the `on_create` hook.
+pub const DEFAULT_ON_CREATE_TIMEOUT: u64 = 600;
+
+impl WorktreeConfig {
+    /// The `on_create` hook, ready to run, if one is configured.
+    pub fn on_create_hook(&self) -> Option<jig_core::git::Hook> {
+        let command = self.on_create.as_ref()?;
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", command]);
+        Some(jig_core::git::Hook {
+            command: c,
+            timeout: std::time::Duration::from_secs(
+                self.on_create_timeout.unwrap_or(DEFAULT_ON_CREATE_TIMEOUT),
+            ),
+        })
+    }
 }
 
 /// Agent configuration in jig.toml

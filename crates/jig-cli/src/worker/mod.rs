@@ -207,7 +207,7 @@ impl Worker {
         auto: bool,
         issue_ref: Option<IssueRef>,
         copy_files: &[std::path::PathBuf],
-        on_create: Option<std::process::Command>,
+        on_create: Option<jig_core::git::Hook>,
         mux: &dyn Mux,
     ) -> Result<Self, WorkerError> {
         let repo_root = repo.clone_path();

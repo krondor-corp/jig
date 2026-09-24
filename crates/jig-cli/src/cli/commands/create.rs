@@ -90,11 +90,7 @@ impl Op for Create {
             .iter()
             .map(std::path::PathBuf::from)
             .collect();
-        let on_create = repo.repo.worktree.on_create.as_ref().map(|cmd| {
-            let mut c = std::process::Command::new("sh");
-            c.args(["-c", cmd]);
-            c
-        });
+        let on_create = repo.repo.worktree.on_create_hook();
         let wt = Worktree::create(&git_repo, &branch, &base_branch, &copy_files, on_create)?;
 
         let repo_name = repo.name();

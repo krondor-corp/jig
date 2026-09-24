@@ -40,6 +40,9 @@ pub enum GitError {
     #[error("hook failed: {0}")]
     HookFailed(String),
 
+    #[error("hook timed out after {}s — raise worktree.on_create_timeout to allow longer", .0.as_secs())]
+    HookTimedOut(std::time::Duration),
+
     #[error(transparent)]
     Git2(#[from] git2::Error),
 
