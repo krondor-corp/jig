@@ -1,16 +1,22 @@
-//! Daemon command — inspect the background daemon run by `jig ps --watch`.
+//! Daemon command — run and inspect the background daemon.
+//!
+//! The daemon is a single per-user process bound to a unix socket; `status`
+//! and `stop` are IPC clients rather than file readers.
 
 mod logs;
+mod start;
 mod status;
+mod stop;
 
 use std::path::PathBuf;
 
 use clap::Args;
 
 use crate::cli::op::Op;
-use crate::daemon::heartbeat::Heartbeat;
+use crate::context::AppPaths;
+use crate::daemon::ipc;
 
-/// Inspect the background daemon (status, logs)
+/// Run and inspect the background daemon (start, stop, status, logs)
 #[derive(Args, Debug, Clone)]
 pub struct Daemon {
     #[command(subcommand)]
@@ -18,6 +24,10 @@ pub struct Daemon {
 }
 
 crate::command_enum! {
+    /// Run the daemon in the foreground
+    (Start, start::Start),
+    /// Stop the running daemon
+    (Stop, stop::Stop),
     /// Show whether the daemon is running, ticking, and unstuck (default)
     (Status, status::Status),
     /// Print the daemon's log
@@ -25,30 +35,36 @@ crate::command_enum! {
 }
 
 impl Op for Daemon {
-    type Context = ();
+    type Context = AppPaths;
     type Output = OpOutput;
     type Error = OpError;
 
-    fn build_context(&self) -> Result<(), Self::Error> {
-        Ok(())
+    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, Self::Error> {
+        Ok(paths.clone())
     }
 
-    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
+    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(cmd) => cmd.run(()),
-            None => Command::Status(status::Status).run(()),
+            Some(cmd) => cmd.run(paths),
+            None => Command::Status(status::Status).run(paths),
+        }
+    }
+
+    fn log_sink(&self) -> crate::cli::op::LogSink {
+        match &self.command {
+            Some(cmd) => cmd.log_sink(),
+            None => Command::Status(status::Status).log_sink(),
         }
     }
 }
 
-/// The log of the running daemon, else of the most recent daemon run.
-fn current_daemon_log() -> Option<PathBuf> {
-    Heartbeat::read()
-        .ok()
-        .flatten()
-        .and_then(|hb| hb.log)
+/// The running daemon's log, else the one the last daemon run recorded in
+/// its `Started` event.
+fn current_daemon_log(paths: &AppPaths) -> Option<PathBuf> {
+    let running = ipc::ping(paths).ok().flatten().and_then(|info| info.log);
+    running
+        .or_else(|| crate::daemon::events::global(paths).reduce().ok()?.log)
         .filter(|p| p.exists())
-        .or_else(|| crate::context::latest_daemon_log().ok().flatten())
 }
 
 /// Display a path with the home directory collapsed to `~`.

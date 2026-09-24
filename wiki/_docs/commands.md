@@ -24,7 +24,9 @@ Quick reference for all jig commands.
 | `jig spawn <name>` | Create worktree + launch agent session (`--issue`, `--context`) |
 | `jig ps` | Show worker status dashboard |
 | `jig ps -w` | Watch mode with live updates |
-| `jig ps -gw` | Global watch — all repos, live updates, runs daemon lifecycle |
+| `jig ps -gw` | Global watch — all repos, live updates from the running daemon |
+| `jig daemon start` | Run the daemon in the foreground (`--once` for a single tick, `--timeout` to bound its wait) |
+| `jig daemon stop` | Stop the running daemon |
 | `jig daemon status` | Check the daemon is alive, ticking, and not stuck (default for `jig daemon`) |
 | `jig daemon logs` | Print the daemon's log (`-f` to follow, `-n` lines, `--path`) |
 | `jig attach <name>` | Attach to a worker's agent session (`-g` to search all repos, `--repo` to target one) |

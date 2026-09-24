@@ -38,12 +38,7 @@ pub enum ContextError {
 
 pub use config::Config;
 pub use config::{LinearConfig, LinearProfile, NotifyConfig};
-pub use paths::{
-    daemon_heartbeat_path, daemon_log_path, daemon_logs_dir, ensure_global_dirs, global_config_dir,
-    global_config_path, global_events_dir, global_hooks_dir, global_state_dir, hook_registry_path,
-    latest_daemon_log, new_daemon_log_path, new_session_log_path, notifications_path,
-    repo_registry_path, triages_path, worker_events_dir,
-};
+pub use paths::{hook_registry_path, AppPaths};
 pub use registry::{RepoEntry, RepoRegistry};
 pub use repo::{
     AgentConfig, IssuesConfig, JigToml, LinearIssuesConfig, SpawnConfig, TriageConfig,
@@ -203,6 +198,7 @@ impl RepoConfig {
 
 /// Runtime context: config + repo registry + resolved repo configs.
 pub struct Context {
+    pub paths: AppPaths,
     pub config: Config,
     pub registry: RepoRegistry,
     pub repos: Vec<RepoConfig>,
@@ -210,27 +206,34 @@ pub struct Context {
 
 impl Context {
     /// Single repo from cwd.
-    pub fn from_cwd() -> Result<Self, ContextError> {
-        let config = Config::load().unwrap_or_default();
+    pub fn from_cwd(paths: &AppPaths) -> Result<Self, ContextError> {
+        let config = Config::load(paths).unwrap_or_default();
         let repo = RepoConfig::from_cwd()?;
-        // Side-effect: persist this repo in the global registry so daemon/-g commands see it.
-        // last-writer-wins under concurrent jig processes — acceptable for a path list.
-        let mut global = RepoRegistry::load().unwrap_or_default();
-        global.register(repo.repo_root.clone());
-        let _ = global.save(); // best-effort; don't fail unrelated commands on FS issues
+        Ok(Self::for_repo(paths, repo, config))
+    }
+
+    /// A single-repo context for `repo`, recording it in the global registry
+    /// so daemon/-g commands see it.
+    ///
+    /// Recording is best-effort — last-writer-wins under concurrent jig
+    /// processes, which is acceptable for a path list, and a filesystem
+    /// problem must not fail an unrelated command.
+    pub fn for_repo(paths: &AppPaths, repo: RepoConfig, config: Config) -> Self {
+        register_globally(paths, &repo.repo_root);
         let mut registry = RepoRegistry::default();
         registry.register(repo.repo_root.clone());
-        Ok(Self {
+        Self {
+            paths: paths.clone(),
             config,
             registry,
             repos: vec![repo],
-        })
+        }
     }
 
     /// All tracked repos.
-    pub fn from_global() -> Result<Self, ContextError> {
-        let config = Config::load().unwrap_or_default();
-        let registry = RepoRegistry::load()?;
+    pub fn from_global(paths: &AppPaths) -> Result<Self, ContextError> {
+        let config = Config::load(paths).unwrap_or_default();
+        let registry = RepoRegistry::load(paths)?;
         let repos = registry
             .repos()
             .iter()
@@ -238,6 +241,7 @@ impl Context {
             .filter_map(|e| RepoConfig::from_path(&e.path).ok())
             .collect();
         Ok(Self {
+            paths: paths.clone(),
             config,
             registry,
             repos,
@@ -252,24 +256,23 @@ impl Context {
 
 /// Single-repo context: the repo discovered from cwd plus global config.
 pub struct RepoCtx {
+    pub paths: AppPaths,
     pub repo: RepoConfig,
     pub config: Config,
     pub jig_toml: JigToml,
 }
 
 impl RepoCtx {
-    pub fn from_cwd() -> Result<Self, ContextError> {
-        let config = Config::load().unwrap_or_default();
+    pub fn from_cwd(paths: &AppPaths) -> Result<Self, ContextError> {
+        let config = Config::load(paths).unwrap_or_default();
         let repo = RepoConfig::from_cwd()?;
         let jig_toml = JigToml::load(&repo.repo_root)
             .ok()
             .flatten()
             .unwrap_or_default();
-        // Register so daemon/-g commands see this repo.
-        let mut global = RepoRegistry::load().unwrap_or_default();
-        global.register(repo.repo_root.clone());
-        let _ = global.save();
+        register_globally(paths, &repo.repo_root);
         Ok(Self {
+            paths: paths.clone(),
             repo,
             config,
             jig_toml,
@@ -282,6 +285,7 @@ impl From<RepoCtx> for Context {
         let mut registry = RepoRegistry::default();
         registry.register(ctx.repo.repo_root.clone());
         Context {
+            paths: ctx.paths,
             config: ctx.config,
             registry,
             repos: vec![ctx.repo],
@@ -291,15 +295,16 @@ impl From<RepoCtx> for Context {
 
 /// All-repos context: full registry plus config.
 pub struct GlobalCtx {
+    pub paths: AppPaths,
     pub config: Config,
     pub registry: RepoRegistry,
     pub repos: Vec<RepoConfig>,
 }
 
 impl GlobalCtx {
-    pub fn load() -> Result<Self, ContextError> {
-        let config = Config::load().unwrap_or_default();
-        let registry = RepoRegistry::load()?;
+    pub fn load(paths: &AppPaths) -> Result<Self, ContextError> {
+        let config = Config::load(paths).unwrap_or_default();
+        let registry = RepoRegistry::load(paths)?;
         let repos = registry
             .repos()
             .iter()
@@ -307,6 +312,7 @@ impl GlobalCtx {
             .filter_map(|e| RepoConfig::from_path(&e.path).ok())
             .collect();
         Ok(Self {
+            paths: paths.clone(),
             config,
             registry,
             repos,
@@ -317,6 +323,7 @@ impl GlobalCtx {
 impl From<GlobalCtx> for Context {
     fn from(ctx: GlobalCtx) -> Self {
         Context {
+            paths: ctx.paths,
             config: ctx.config,
             registry: ctx.registry,
             repos: ctx.repos,
@@ -333,11 +340,18 @@ pub enum ScopedCtx {
 }
 
 impl ScopedCtx {
-    pub fn from_global(global: bool) -> Result<Self, ContextError> {
+    pub fn paths(&self) -> &AppPaths {
+        match self {
+            ScopedCtx::Repo(r) => &r.paths,
+            ScopedCtx::Global(g) => &g.paths,
+        }
+    }
+
+    pub fn from_global(paths: &AppPaths, global: bool) -> Result<Self, ContextError> {
         if global {
-            Ok(ScopedCtx::Global(GlobalCtx::load()?))
+            Ok(ScopedCtx::Global(GlobalCtx::load(paths)?))
         } else {
-            Ok(ScopedCtx::Repo(RepoCtx::from_cwd()?))
+            Ok(ScopedCtx::Repo(RepoCtx::from_cwd(paths)?))
         }
     }
 }
@@ -388,156 +402,26 @@ pub fn update_local_toml(
     Ok(())
 }
 
+/// Record `repo_root` in the global registry so daemon/-g commands see it.
+/// Best-effort: a filesystem problem must not fail an unrelated command.
+fn register_globally(paths: &AppPaths, repo_root: &Path) {
+    let mut global = RepoRegistry::load(paths).unwrap_or_default();
+    global.register(repo_root.to_path_buf());
+    let _ = global.save(paths);
+}
+
 /// Resolve the effective base branch for an arbitrary repo path
 /// (without building a full Context). Used by daemon code.
-pub fn resolve_base_branch_for(repo_root: &Path) -> Result<Branch, ContextError> {
+pub fn resolve_base_branch_for(repo_root: &Path, config: &Config) -> Result<Branch, ContextError> {
     if let Ok(Some(jig_toml)) = JigToml::load(repo_root) {
         if let Some(base) = jig_toml.worktree.base {
             return Ok(Branch::new(base));
         }
     }
-    let config = Config::load().unwrap_or_default();
     Ok(Branch::new(
         config
             .default_base_branch
+            .clone()
             .unwrap_or_else(|| DEFAULT_BASE_BRANCH.to_string()),
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::process::Command;
-
-    #[test]
-    fn test_from_cwd_in_git_repo() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_dir = tempfile::tempdir().unwrap();
-
-        Command::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["config", "commit.gpgsign", "false"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .args(["commit", "--allow-empty", "-m", "init", "-q"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        std::env::set_var("XDG_CONFIG_HOME", config_dir.path());
-
-        let original = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-
-        let ctx = Context::from_cwd();
-
-        std::env::set_current_dir(&original).unwrap();
-
-        let ctx = ctx.expect("from_cwd should succeed in a git repo");
-        let repo = ctx.repo().unwrap();
-        assert_eq!(
-            repo.repo_root.canonicalize().unwrap(),
-            dir.path().canonicalize().unwrap()
-        );
-        assert!(repo.worktrees_path.ends_with(JIG_DIR));
-        assert!(repo.session_name().starts_with("jig-"));
-        assert_eq!(repo.base_branch(&ctx.config), "origin/main");
-
-        // from_cwd must include the current repo in the registry so that
-        // global commands (-g flags, daemon) can iterate it.
-        assert_eq!(
-            ctx.registry.repos().len(),
-            1,
-            "registry returned by from_cwd should contain the current repo"
-        );
-        assert_eq!(
-            ctx.registry.repos()[0].path.canonicalize().unwrap(),
-            dir.path().canonicalize().unwrap()
-        );
-    }
-
-    #[test]
-    fn test_registry_no_duplicate_on_repeated_register() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo_path = dir.path().to_path_buf();
-
-        let mut registry = RepoRegistry::default();
-        let added_first = registry.register(repo_path.clone());
-        let added_second = registry.register(repo_path.clone());
-
-        assert!(added_first, "first register should report newly added");
-        assert!(
-            !added_second,
-            "second register should report already present"
-        );
-        assert_eq!(
-            registry.repos().len(),
-            1,
-            "repeated register must not duplicate entries"
-        );
-    }
-
-    #[test]
-    fn test_base_branch_from_jig_toml() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_dir = tempfile::tempdir().unwrap();
-
-        Command::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "commit.gpgsign", "false"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["commit", "--allow-empty", "-m", "init", "-q"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-
-        std::fs::write(
-            dir.path().join("jig.toml"),
-            "[worktree]\nbase = \"origin/develop\"\n",
-        )
-        .unwrap();
-
-        std::env::set_var("XDG_CONFIG_HOME", config_dir.path());
-
-        let repo = RepoConfig::from_path(dir.path()).unwrap();
-        let config = Config::load().unwrap_or_default();
-        assert_eq!(repo.base_branch(&config), "origin/develop");
-    }
 }

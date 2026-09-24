@@ -4,6 +4,7 @@ use std::io;
 use clap::Args;
 
 use crate::cli::op::Op;
+use crate::context::AppPaths;
 use crate::context::{RepoConfig, RepoCtx};
 
 #[derive(Debug)]
@@ -208,8 +209,8 @@ impl Op for Update {
     type Error = UpdateError;
     type Output = UpdateOutput;
 
-    fn build_context(&self) -> Result<RepoCtx, UpdateError> {
-        Ok(RepoCtx::from_cwd()?)
+    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, UpdateError> {
+        Ok(RepoCtx::from_cwd(paths)?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {

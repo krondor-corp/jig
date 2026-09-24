@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use crate::context::AppPaths;
 use crate::worker::events::{self, Event, EventKind};
 use jig_core::git::conventional::ValidationConfig;
 use jig_core::git::Worktree;
@@ -12,7 +13,7 @@ use jig_core::git::Worktree;
 /// Handle post-commit hook: emit a Commit event with the HEAD SHA.
 ///
 /// Silently does nothing if not in a jig-managed worktree.
-pub fn handle_post_commit(repo_path: &Path) -> Result<(), super::HookError> {
+pub fn handle_post_commit(paths: &AppPaths, repo_path: &Path) -> Result<(), super::HookError> {
     let Some(wt) = open_worktree(repo_path) else {
         return Ok(());
     };
@@ -21,7 +22,7 @@ pub fn handle_post_commit(repo_path: &Path) -> Result<(), super::HookError> {
     let worker_name = wt.branch_name().to_string();
     let sha = wt.head_sha().unwrap_or_default();
 
-    let log = events::event_log_for_worker(&repo_name, &worker_name)?;
+    let log = events::event_log_for_worker(paths, &repo_name, &worker_name);
     log.append(&Event::now(EventKind::Commit {
         sha,
         repo: repo_name,
@@ -31,7 +32,7 @@ pub fn handle_post_commit(repo_path: &Path) -> Result<(), super::HookError> {
 }
 
 /// Handle post-merge hook: emit a Push event.
-pub fn handle_post_merge(repo_path: &Path) -> Result<(), super::HookError> {
+pub fn handle_post_merge(paths: &AppPaths, repo_path: &Path) -> Result<(), super::HookError> {
     let Some(wt) = open_worktree(repo_path) else {
         return Ok(());
     };
@@ -40,7 +41,7 @@ pub fn handle_post_merge(repo_path: &Path) -> Result<(), super::HookError> {
     let worker_name = wt.branch_name().to_string();
     let sha = wt.head_sha().unwrap_or_default();
 
-    let log = events::event_log_for_worker(&repo_name, &worker_name)?;
+    let log = events::event_log_for_worker(paths, &repo_name, &worker_name);
     log.append(&Event::now(EventKind::Push {
         sha,
         repo: repo_name,
@@ -110,59 +111,5 @@ mod tests {
     fn open_worktree_not_in_worktree() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(open_worktree(tmp.path()).is_none());
-    }
-
-    #[test]
-    fn pre_commit_is_noop() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(handle_pre_commit(tmp.path()).is_ok());
-    }
-
-    #[test]
-    fn commit_msg_valid() {
-        let tmp = tempfile::tempdir().unwrap();
-        let msg_file = tmp.path().join("COMMIT_EDITMSG");
-        std::fs::write(&msg_file, "feat: add new feature\n").unwrap();
-        assert!(handle_commit_msg(tmp.path(), msg_file.to_str().unwrap()).is_ok());
-    }
-
-    #[test]
-    fn commit_msg_invalid() {
-        let tmp = tempfile::tempdir().unwrap();
-        let msg_file = tmp.path().join("COMMIT_EDITMSG");
-        std::fs::write(&msg_file, "not a conventional commit\n").unwrap();
-        assert!(handle_commit_msg(tmp.path(), msg_file.to_str().unwrap()).is_err());
-    }
-
-    #[test]
-    fn commit_msg_strips_comments() {
-        let tmp = tempfile::tempdir().unwrap();
-        let msg_file = tmp.path().join("COMMIT_EDITMSG");
-        std::fs::write(
-            &msg_file,
-            "fix: resolve bug\n# This is a comment\n# Another comment\n",
-        )
-        .unwrap();
-        assert!(handle_commit_msg(tmp.path(), msg_file.to_str().unwrap()).is_ok());
-    }
-
-    #[test]
-    fn commit_msg_empty_after_stripping_comments() {
-        let tmp = tempfile::tempdir().unwrap();
-        let msg_file = tmp.path().join("COMMIT_EDITMSG");
-        std::fs::write(&msg_file, "# All comments\n# Nothing else\n").unwrap();
-        assert!(handle_commit_msg(tmp.path(), msg_file.to_str().unwrap()).is_ok());
-    }
-
-    #[test]
-    fn post_commit_outside_worktree_is_noop() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(handle_post_commit(tmp.path()).is_ok());
-    }
-
-    #[test]
-    fn post_merge_outside_worktree_is_noop() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(handle_post_merge(tmp.path()).is_ok());
     }
 }

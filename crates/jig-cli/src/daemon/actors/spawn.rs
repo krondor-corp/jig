@@ -21,11 +21,11 @@ pub struct SpawnRequest {
 
 #[derive(Default)]
 pub struct SpawnActor {
-    spawning_workers: Mutex<Vec<String>>,
+    spawning_workers: Mutex<Vec<Branch>>,
 }
 
 impl SpawnActor {
-    pub fn spawning_workers(&self) -> Vec<String> {
+    pub fn spawning_workers(&self) -> Vec<Branch> {
         self.spawning_workers.lock().unwrap().clone()
     }
 }
@@ -186,26 +186,21 @@ impl Actor for SpawnActor {
                     continue;
                 }
 
-                let worker_name = issue.branch().to_string();
-                spawning.push(worker_name.clone());
+                let branch = issue.branch().clone();
+                spawning.push(branch.clone());
 
                 let mux = jig_core::mux::for_repo(global.mux, &repo_name);
                 match spawn_worker_for_issue(
-                    &repo_root,
-                    &issue,
-                    &worker_name,
-                    &cfg,
-                    &provider,
-                    &mux,
+                    &req.ctx, &repo_root, &issue, &branch, &cfg, &provider, &mux,
                 ) {
                     Ok(_worker) => {
-                        tracing::info!(worker = %worker_name, "auto-spawned worker");
+                        tracing::info!(worker = %branch, "auto-spawned worker");
                     }
                     Err(msg) => {
-                        tracing::warn!(worker = %worker_name, "auto-spawn failed: {}", msg);
+                        tracing::warn!(worker = %branch, "auto-spawn failed: {}", msg);
                     }
                 }
-                spawning.retain(|s| s != &worker_name);
+                spawning.retain(|b| b != &branch);
                 repo_spawned += 1;
             }
         }
@@ -215,6 +210,7 @@ impl Actor for SpawnActor {
 }
 
 fn spawn_worker_for_issue(
+    ctx: &TickContext,
     repo_root: &Path,
     issue: &Issue,
     worker_name: &str,
@@ -233,7 +229,7 @@ fn spawn_worker_for_issue(
 
     let base = match &parent {
         Some(p) => Branch::new(format!("origin/{}", p.branch())),
-        None => context::resolve_base_branch_for(repo_root)
+        None => context::resolve_base_branch_for(repo_root, &ctx.config)
             .unwrap_or_else(|_| Branch::new(context::DEFAULT_BASE_BRANCH)),
     };
 
@@ -263,6 +259,7 @@ fn spawn_worker_for_issue(
     });
 
     let worker = Worker::spawn(
+        &ctx.paths,
         &repo,
         &branch,
         &base,

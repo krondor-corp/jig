@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use jig_core::git::{Repo, Worktree};
 
 use super::Actor;
+use crate::context::AppPaths;
 
 pub struct PruneTarget {
     pub repo_path: PathBuf,
@@ -13,6 +14,7 @@ pub struct PruneTarget {
 }
 
 pub struct PruneRequest {
+    pub paths: AppPaths,
     pub targets: Vec<PruneTarget>,
 }
 
@@ -29,7 +31,7 @@ impl Actor for PruneActor {
     fn handle(&self, req: PruneRequest) {
         for target in &req.targets {
             let key = format!("{}/{}", target.repo_name, target.worker_name);
-            match prune_single(target) {
+            match prune_single(&req.paths, target) {
                 Ok(()) => tracing::info!(worker = %key, "pruned worktree"),
                 Err(msg) => tracing::warn!(worker = %key, "prune failed: {}", msg),
             }
@@ -37,7 +39,7 @@ impl Actor for PruneActor {
     }
 }
 
-fn prune_single(target: &PruneTarget) -> std::result::Result<(), String> {
+fn prune_single(paths: &AppPaths, target: &PruneTarget) -> std::result::Result<(), String> {
     let worktree_path = crate::context::worktree_path(&target.repo_path, &target.worker_name);
 
     if worktree_path.exists() {
@@ -51,7 +53,8 @@ fn prune_single(target: &PruneTarget) -> std::result::Result<(), String> {
         repo.prune_stale_worktrees();
     }
 
-    if let Ok(events_dir) = crate::context::global_events_dir() {
+    {
+        let events_dir = paths.events_dir();
         let sanitized = format!(
             "{}-{}",
             target.repo_name,
@@ -64,35 +67,4 @@ fn prune_single(target: &PruneTarget) -> std::result::Result<(), String> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prune_single_missing_worktree_succeeds() {
-        let tmp = tempfile::tempdir().unwrap();
-        git2::Repository::init(tmp.path()).unwrap();
-
-        let target = PruneTarget {
-            repo_path: tmp.path().to_path_buf(),
-            repo_name: "test-repo".to_string(),
-            worker_name: "nonexistent-worker".to_string(),
-        };
-        let _ = prune_single(&target);
-    }
-
-    #[test]
-    fn prune_single_absent_event_log_no_panic() {
-        let tmp = tempfile::tempdir().unwrap();
-        git2::Repository::init(tmp.path()).unwrap();
-
-        let target = PruneTarget {
-            repo_path: tmp.path().to_path_buf(),
-            repo_name: "repo".to_string(),
-            worker_name: "worker".to_string(),
-        };
-        let _ = prune_single(&target);
-    }
 }

@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+name = "jig_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "jig"
 path = "src/main.rs"

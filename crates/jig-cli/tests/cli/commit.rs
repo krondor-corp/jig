@@ -1,72 +1,12 @@
-#![allow(deprecated)] // Command::cargo_bin is deprecated but used across tests
 //! Integration tests for `jig commit` commands.
 
-use assert_cmd::Command;
+use crate::common::Sandbox;
 use predicates::prelude::*;
 use std::fs;
-use std::process::Command as StdCommand;
-use tempfile::TempDir;
-
-struct TestRepo {
-    dir: TempDir,
-    config_dir: TempDir,
-}
-
-impl TestRepo {
-    fn new() -> Self {
-        let dir = TempDir::new().expect("create temp dir");
-        let config_dir = TempDir::new().expect("create config dir");
-
-        StdCommand::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(dir.path())
-            .output()
-            .expect("git init");
-
-        StdCommand::new("git")
-            .args(["config", "user.email", "test@test.com"])
-            .current_dir(dir.path())
-            .output()
-            .expect("set email");
-
-        StdCommand::new("git")
-            .args(["config", "user.name", "Test User"])
-            .current_dir(dir.path())
-            .output()
-            .expect("set name");
-
-        StdCommand::new("git")
-            .args(["config", "commit.gpgsign", "false"])
-            .current_dir(dir.path())
-            .output()
-            .expect("disable gpg");
-
-        let config_file = config_dir.path().join("jig").join("config");
-        fs::create_dir_all(config_file.parent().unwrap()).unwrap();
-        fs::write(&config_file, "_default=main\n").unwrap();
-
-        Self { dir, config_dir }
-    }
-
-    fn commit(&self, message: &str) {
-        StdCommand::new("git")
-            .args(["commit", "--allow-empty", "-m", message, "-q"])
-            .current_dir(self.dir.path())
-            .output()
-            .expect("create commit");
-    }
-
-    fn jig(&self) -> Command {
-        let mut cmd = Command::cargo_bin("jig").unwrap();
-        cmd.current_dir(self.dir.path());
-        cmd.env("XDG_CONFIG_HOME", self.config_dir.path());
-        cmd
-    }
-}
 
 #[test]
 fn validate_valid_conventional_commit() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("feat: add user authentication");
 
     repo.jig()
@@ -78,7 +18,7 @@ fn validate_valid_conventional_commit() {
 
 #[test]
 fn validate_valid_scoped_commit() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("fix(ui): correct button alignment");
 
     repo.jig()
@@ -92,7 +32,7 @@ fn validate_valid_scoped_commit() {
 
 #[test]
 fn validate_valid_breaking_commit() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("feat!: remove legacy API");
 
     repo.jig()
@@ -104,7 +44,7 @@ fn validate_valid_breaking_commit() {
 
 #[test]
 fn validate_unknown_type() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("invalid: something");
 
     repo.jig()
@@ -116,7 +56,7 @@ fn validate_unknown_type() {
 
 #[test]
 fn validate_non_conventional_commit() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("just a regular commit message");
 
     repo.jig()
@@ -128,7 +68,7 @@ fn validate_non_conventional_commit() {
 
 #[test]
 fn validate_stdin() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("init"); // need at least one commit for repo to work
 
     repo.jig()
@@ -141,7 +81,7 @@ fn validate_stdin() {
 
 #[test]
 fn validate_stdin_invalid() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("init");
 
     repo.jig()
@@ -154,10 +94,10 @@ fn validate_stdin_invalid() {
 
 #[test]
 fn validate_file() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("init");
 
-    let msg_file = repo.dir.path().join("COMMIT_MSG");
+    let msg_file = repo.work_dir().join("COMMIT_MSG");
     fs::write(&msg_file, "fix: resolve crash").unwrap();
 
     repo.jig()
@@ -169,7 +109,7 @@ fn validate_file() {
 
 #[test]
 fn validate_multiple_errors() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("init");
 
     // Use a known type so parsing succeeds, then validation catches multiple issues
@@ -189,7 +129,7 @@ fn validate_multiple_errors() {
 
 #[test]
 fn examples_command() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("init");
 
     repo.jig()
@@ -203,7 +143,7 @@ fn examples_command() {
 
 #[test]
 fn validate_specific_rev() {
-    let repo = TestRepo::new();
+    let repo = Sandbox::with_repo();
     repo.commit("feat: first feature");
     repo.commit("bad commit message");
 

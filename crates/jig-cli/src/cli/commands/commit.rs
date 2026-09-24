@@ -8,6 +8,7 @@ use jig_core::git::conventional::ValidationConfig;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
+use crate::context::AppPaths;
 use crate::context::{RepoConfig, RepoCtx};
 
 /// Validate and work with conventional commits
@@ -57,8 +58,8 @@ impl Op for Commit {
     type Error = CommitError;
     type Output = NoOutput;
 
-    fn build_context(&self) -> Result<RepoCtx, CommitError> {
-        Ok(RepoCtx::from_cwd()?)
+    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CommitError> {
+        Ok(RepoCtx::from_cwd(paths)?)
     }
 
     fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
