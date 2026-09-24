@@ -15,7 +15,7 @@ use crate::daemon::checks::{self, PrHealth, PrStatus};
 use crate::notify::{NotificationEvent, NotificationQueue, Notifier};
 use crate::worker::events::{self, Event, EventKind, TerminalKind, WorkerState};
 use crate::worker::{MuxStatus, WorkerStatus};
-use jig_core::git::Branch;
+use jig_core::git::{Branch, Worktree};
 use jig_core::github::GitHubClient;
 use jig_core::mux::Mux;
 type Worker = crate::worker::Worker;
@@ -198,15 +198,30 @@ impl MonitorActor {
             .as_ref()
             .map(|c| c as &dyn jig_core::github::GitHub)
         {
-            let report = checks::check_pr(gh, &worker_name);
-            state.review_feedback_count = report.review_feedback_count;
-            process_pr_report(&report, &log, &state, &mut pr_health, &mut is_draft);
+            // GitHub knows this worker by the branch checked out in its
+            // worktree, not by the folder it sits in under `.jig/`. The two
+            // start out identical and drift the moment the branch is
+            // renamed; looking up the folder name then finds no PR, so the
+            // worker never reaches Merged and is never pruned.
+            match Worktree::open(worker.path())
+                .ok()
+                .and_then(|wt| wt.checked_out_branch())
+            {
+                Some(branch) => {
+                    let report = checks::check_pr(gh, &branch);
+                    state.review_feedback_count = report.review_feedback_count;
+                    process_pr_report(&report, &log, &state, &mut pr_health, &mut is_draft);
 
-            // Re-reduce if we wrote a PrOpened event
-            if state.pr_url.is_none() && pr_health.has_pr {
-                state = log.reduce()?;
-                state.check_silence(global_config);
-                state.review_feedback_count = report.review_feedback_count;
+                    // Re-reduce if we wrote a PrOpened event
+                    if state.pr_url.is_none() && pr_health.has_pr {
+                        state = log.reduce()?;
+                        state.check_silence(global_config);
+                        state.review_feedback_count = report.review_feedback_count;
+                    }
+                }
+                // Detached HEAD, or the worktree went away mid-tick: there
+                // is no branch to ask about.
+                None => tracing::debug!(worker = key, "no checked-out branch — skipping PR check"),
             }
         }
 

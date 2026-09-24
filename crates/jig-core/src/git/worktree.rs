@@ -146,6 +146,19 @@ impl Worktree {
         self.repo.current_branch()
     }
 
+    /// The checked-out branch, or `None` when HEAD is detached (or unborn)
+    /// and there is no branch to name.
+    ///
+    /// This is what a forge knows the worker by. [`Worktree::branch_name`]
+    /// is not: the two start out identical and drift apart the moment
+    /// anyone renames the branch.
+    pub fn checked_out_branch(&self) -> Option<Branch> {
+        if self.repo.inner().head_detached().unwrap_or(true) {
+            return None;
+        }
+        self.branch().ok()
+    }
+
     pub fn base_branch(&self) -> Result<Branch> {
         self.repo.base_branch()
     }
