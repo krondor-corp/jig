@@ -124,6 +124,20 @@ It also flags any actor that has been busy for over 10 minutes (e.g. a `git fetc
 
 `jig daemon logs` prints the daemon's own log; `-f` follows it (and moves to the new log when the daemon restarts), `-n` sets how many lines, `--path` prints the file path.
 
+### Running it in the background
+
+`jig daemon start` runs in the foreground. To have the OS keep it alive:
+
+```bash
+jig daemon install      # systemd --user on Linux, a launchd agent on macOS
+jig daemon status
+jig daemon uninstall    # when you want it gone
+```
+
+It runs as your user, starts again at login, and is restarted if it dies. On Linux, a user service stops when you log out — `loginctl enable-linger <user>` keeps it running on a box you only ssh into (`install` reminds you).
+
+The service inherits your `PATH` (jig shells out to `git`, `gh` and your mux) and your `XDG_CONFIG_HOME` if you set one, so it reads the same config as your shell.
+
 Only the daemon and `jig ps --watch` write log files (`~/.config/jig/state/logs/`). Every other command prints warnings straight to stderr; set `RUST_LOG=info` (or `debug`) to see more.
 
 ## Nudges
