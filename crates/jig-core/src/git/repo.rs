@@ -37,25 +37,7 @@ impl Repo {
     }
 
     fn wrap(inner: git2::Repository) -> Self {
-        let repo = Self { inner };
-        repo.ensure_shallow_marker();
-        repo
-    }
-
-    /// Workaround for a libgit2 quirk where internal stat of `.git/shallow`
-    /// surfaces ENOENT as a fatal error during operations like worktree
-    /// iteration on macOS (observed against libgit2 1.9.2). An empty
-    /// `shallow` file is git's documented "no shallow refs" state, so
-    /// creating it is a no-op for git's own behavior.
-    fn ensure_shallow_marker(&self) {
-        let shallow = self.inner.commondir().join("shallow");
-        if !shallow.exists() {
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(false)
-                .open(&shallow);
-        }
+        Self { inner }
     }
 
     /// Access the underlying git2::Repository.
@@ -292,10 +274,13 @@ impl Repo {
             return Err(GitError::UncommittedChanges);
         }
 
-        let branch = self.current_branch()?;
-        let clone = self.open_clone()?;
-        clone.prune_worktree(&branch, force)?;
-        Ok(())
+        // Ask git which registration this worktree belongs to. Its name was
+        // fixed when the worktree was created and does not follow the branch,
+        // so renaming the branch inside a worktree must not orphan it.
+        let path = self.root()?;
+        let wt = git2::Worktree::open_from_repository(&self.inner)
+            .map_err(|_| GitError::WorktreeNotFound(path.display().to_string()))?;
+        prune(&wt, force)
     }
 
     /// Prune stale (invalid) worktree registrations.
@@ -308,12 +293,6 @@ impl Repo {
             Ok(())
         })
         .ok();
-    }
-
-    /// Prune a worktree by its branch name.
-    pub fn prune_worktree(&self, branch: &Branch, force: bool) -> Result<()> {
-        let wt_name = branch.local().replace('/', "-");
-        self.prune_worktree_named(&wt_name, force)
     }
 
     // ------------------------------------------------------------------
@@ -701,18 +680,6 @@ impl Repo {
         Ok(())
     }
 
-    fn prune_worktree_named(&self, name: &str, force: bool) -> Result<()> {
-        let wt = self.inner.find_worktree(name)?;
-        let mut opts = git2::WorktreePruneOptions::new();
-        opts.valid(true);
-        opts.working_tree(true);
-        if force {
-            opts.locked(true);
-        }
-        wt.prune(Some(&mut opts))?;
-        Ok(())
-    }
-
     fn resolve_to_commit(&self, spec: &str) -> Result<git2::Commit<'_>> {
         let obj = self
             .inner
@@ -737,6 +704,18 @@ impl Repo {
 
         Err(GitError::BranchNotFound(base_branch.to_string()))
     }
+}
+
+/// Delete a worktree's registration and, with it, its working directory.
+fn prune(wt: &git2::Worktree, force: bool) -> Result<()> {
+    let mut opts = git2::WorktreePruneOptions::new();
+    opts.valid(true);
+    opts.working_tree(true);
+    if force {
+        opts.locked(true);
+    }
+    wt.prune(Some(&mut opts))?;
+    Ok(())
 }
 
 /// Remote authentication callbacks — the single source of credentials for every
