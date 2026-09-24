@@ -34,10 +34,6 @@ pub struct Ps {
     #[arg(short, long, num_args = 0..=1, default_missing_value = "2")]
     pub watch: Option<u64>,
 
-    /// Maximum number of concurrent auto-spawned workers
-    #[arg(long)]
-    max_workers: Option<usize>,
-
     /// Operate on all tracked repos
     #[arg(short = 'g', long)]
     global: bool,
@@ -63,14 +59,7 @@ impl Op for Ps {
     fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
         let global = self.global;
         let cfg: Context = match ctx {
-            ScopedCtx::Repo(r) => {
-                let max_workers = self
-                    .max_workers
-                    .unwrap_or(r.jig_toml.spawn.max_concurrent_workers);
-                let mut c = Context::from(r);
-                c.config.max_concurrent_workers = max_workers;
-                c
-            }
+            ScopedCtx::Repo(r) => Context::from(r),
             ScopedCtx::Global(g) => Context::from(g),
         };
         self.execute_ps(cfg, global)

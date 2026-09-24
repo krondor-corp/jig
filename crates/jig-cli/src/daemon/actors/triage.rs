@@ -109,9 +109,7 @@ impl Actor for TriageActor {
             };
 
             // Triage runs as a subprocess with no worktree, branch or mux
-            // window, so it deliberately does not consume the worker budget.
-            // Gating it on max_concurrent_workers silently stopped triage
-            // whenever the workers were busy.
+            // window, so nothing here is gated on how many workers are live.
 
             let triageable = match provider.list(&IssueFilter {
                 status: Some(IssueStatus::Triage),

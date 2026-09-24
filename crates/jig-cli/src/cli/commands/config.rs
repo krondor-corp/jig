@@ -159,12 +159,6 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
     eprintln!();
     eprintln!(
         "  {} {} {}",
-        ui::dim("Max workers:"),
-        ui::highlight(&global.max_concurrent_workers.to_string()),
-        src("global config")
-    );
-    eprintln!(
-        "  {} {} {}",
         ui::dim("Poll interval:"),
         ui::highlight(&format!("{}s", global.poll_interval)),
         src("global config")
@@ -375,12 +369,6 @@ fn show_config(paths: &AppPaths, repo: &RepoConfig) -> Result<ConfigOutput, Conf
     eprintln!();
     eprintln!(
         "  {} {} {}",
-        ui::dim("Max workers:"),
-        ui::highlight(&display.max_concurrent_workers.to_string()),
-        src(&display.spawn_source)
-    );
-    eprintln!(
-        "  {} {} {}",
         ui::dim("Poll interval:"),
         ui::highlight(&format!("{}s", display.poll_interval)),
         src("global config")
@@ -497,8 +485,6 @@ struct ConfigDisplay {
     issues_source: String,
     linear: Option<LinearIssuesConfig>,
     auto_spawn_labels: Option<Vec<String>>,
-    max_concurrent_workers: usize,
-    spawn_source: String,
     poll_interval: u64,
     global: GlobalConfig,
     has_local_overlay: bool,
@@ -512,7 +498,6 @@ impl ConfigDisplay {
         let worktree_source = jig_toml.source_label("worktree");
         let agent_source = jig_toml.source_label("agent");
         let issues_source = jig_toml.source_label("issues");
-        let spawn_source = jig_toml.source_label("spawn");
 
         let effective_base = jig_toml
             .worktree
@@ -533,8 +518,6 @@ impl ConfigDisplay {
             issues_source,
             linear: jig_toml.issues.linear,
             auto_spawn_labels: jig_toml.issues.auto_spawn_labels,
-            max_concurrent_workers: jig_toml.spawn.max_concurrent_workers,
-            spawn_source,
             poll_interval: global_config.poll_interval,
             global: global_config,
             has_local_overlay: jig_toml.has_local_overlay,
