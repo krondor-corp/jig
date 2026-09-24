@@ -140,6 +140,7 @@ The primary config file, committed to your repo:
 [worktree]
 base = "origin/main"           # Base branch for new worktrees
 on_create = "npm install"      # Command to run after worktree creation
+on_create_timeout = 600        # Seconds before that hook is killed (default 600)
 copy = [".env", ".env.local"]  # Gitignored files to copy into new worktrees
 
 [agent]
@@ -194,6 +195,17 @@ copy = [".env", ".env.local", ".secrets"]
 ```
 
 Files are copied from repo root to new worktrees before the `on_create` hook runs. Missing files are silently skipped.
+
+### on_create timeout
+
+`on_create` is killed after `on_create_timeout` seconds — 10 minutes by default — and the spawn fails with a clear error rather than hanging.
+
+This matters most for the daemon, which runs one spawn at a time and drops the rest while one is in flight. A hook that never returns (an install waiting on a dead network, a command that opens a prompt) would otherwise stop auto-spawn indefinitely with nothing to show for it. Raise the limit if a cold install legitimately takes longer:
+
+```toml
+[worktree]
+on_create_timeout = 1800
+```
 
 ## Iterating after init
 

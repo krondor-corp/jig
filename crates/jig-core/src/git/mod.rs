@@ -17,7 +17,7 @@ pub use commit::Oid;
 pub use diff::{Diff, FileDiff, Stats as DiffStats};
 pub use error::GitError;
 pub use repo::Repo;
-pub use worktree::{Worktree, WorktreeRef};
+pub use worktree::{Hook, Worktree, WorktreeRef};
 
 pub const WORKTREES_DIR: &str = ".jig";
 

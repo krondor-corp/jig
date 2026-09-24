@@ -356,3 +356,77 @@ fn remove_works_after_the_branch_is_renamed_inside_the_worktree() {
         "registration should be gone"
     );
 }
+
+/// The `on_create` hook runs inside the spawn pass, which handles one
+/// request at a time — so a hook that never returns used to stop auto-spawn
+/// permanently.
+mod on_create_hook {
+    use super::*;
+    use jig_core::git::Hook;
+    use std::time::{Duration, Instant};
+
+    fn hook(script: &str, timeout: Duration) -> Hook {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", script]);
+        Hook { command, timeout }
+    }
+
+    fn create_with(script: &str, timeout: Duration) -> (Result<(), GitError>, Duration) {
+        let tmp = TempDir::new().unwrap();
+        let _ = init_repo(tmp.path());
+        let repo = Repo::open(tmp.path()).unwrap();
+        let started = Instant::now();
+        let result = Worktree::create(
+            &repo,
+            &"feat/hooked".into(),
+            &"main".into(),
+            &[],
+            Some(hook(script, timeout)),
+        )
+        .map(|_| ());
+        (result, started.elapsed())
+    }
+
+    #[test]
+    fn a_hook_that_never_returns_is_killed_at_the_deadline() {
+        let (result, elapsed) = create_with("sleep 100000", Duration::from_millis(300));
+
+        assert!(
+            matches!(result, Err(GitError::HookTimedOut(_))),
+            "expected a timeout, got {result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(20),
+            "create must return at the deadline, not wait on the hook (took {elapsed:?})"
+        );
+    }
+
+    #[test]
+    fn a_chatty_hook_does_not_deadlock_on_a_full_pipe() {
+        // Far more than a pipe buffer holds: if nothing drains stderr while
+        // we poll for exit, both sides wait forever.
+        let (result, _) = create_with("yes nagging | head -c 500000 >&2", Duration::from_secs(30));
+        assert!(result.is_ok(), "expected success, got {result:?}");
+    }
+
+    #[test]
+    fn a_failing_silent_hook_still_says_why() {
+        let (result, _) = create_with("exit 3", Duration::from_secs(30));
+
+        match result {
+            Err(GitError::HookFailed(message)) => {
+                assert!(
+                    message.contains('3'),
+                    "a hook that prints nothing must still report its status, got {message:?}"
+                );
+            }
+            other => panic!("expected HookFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_hook_that_finishes_in_time_succeeds() {
+        let (result, _) = create_with("true", Duration::from_secs(30));
+        assert!(result.is_ok(), "expected success, got {result:?}");
+    }
+}

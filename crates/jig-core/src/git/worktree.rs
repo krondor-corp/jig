@@ -1,7 +1,9 @@
 //! Git worktree — a [`Repo`] that has been validated as a linked worktree.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +43,72 @@ impl std::ops::Deref for WorktreeRef {
 impl std::fmt::Display for WorktreeRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.display().fmt(f)
+    }
+}
+
+/// How often [`Hook`] checks whether the command has exited.
+const HOOK_POLL: Duration = Duration::from_millis(100);
+
+/// A repo-configured command run on a new worktree, under a deadline.
+///
+/// The deadline is the point: the spawn actor handles one request at a time
+/// and drops the rest while one is in flight, so an `on_create` that never
+/// returns — a `pnpm install` waiting on a dead network, say — stops
+/// auto-spawn for good, with nothing in the logs to say why.
+pub struct Hook {
+    pub command: Command,
+    pub timeout: Duration,
+}
+
+impl Hook {
+    /// Run to completion in `dir`, or kill it once `timeout` has passed.
+    ///
+    /// stdout is discarded (it always was); stderr is drained on a thread so
+    /// a chatty hook cannot fill the pipe and deadlock against our polling.
+    fn run(mut self, dir: &Path) -> Result<()> {
+        let mut child = self
+            .command
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let mut pipe = child.stderr.take();
+        let draining = std::thread::spawn(move || {
+            let mut buf = String::new();
+            if let Some(pipe) = pipe.as_mut() {
+                let _ = pipe.read_to_string(&mut buf);
+            }
+            buf
+        });
+
+        let deadline = Instant::now() + self.timeout;
+        let status = loop {
+            match child.try_wait()? {
+                Some(status) => break status,
+                None if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(GitError::HookTimedOut(self.timeout));
+                }
+                None => std::thread::sleep(HOOK_POLL),
+            }
+        };
+
+        let stderr = draining.join().unwrap_or_default();
+        if !status.success() {
+            // A hook that fails silently used to produce a bare
+            // "hook failed:" with nothing after the colon.
+            return Err(GitError::HookFailed(match stderr.trim() {
+                "" => match status.code() {
+                    Some(code) => format!("exited with status {code}, no output"),
+                    None => "killed by a signal, no output".to_string(),
+                },
+                message => message.to_string(),
+            }));
+        }
+        Ok(())
     }
 }
 
@@ -88,7 +156,7 @@ impl Worktree {
         branch: &Branch,
         base: &Branch,
         copy_files: &[PathBuf],
-        on_create: Option<Command>,
+        on_create: Option<Hook>,
     ) -> Result<Self> {
         crate::git::ensure_excluded(&repo.common_dir(), super::WORKTREES_DIR)?;
         let path = repo.create_worktree(branch, base)?;
@@ -106,13 +174,8 @@ impl Worktree {
             }
         }
 
-        if let Some(mut cmd) = on_create {
-            let output = cmd.current_dir(wt.path()).output()?;
-            if !output.status.success() {
-                return Err(GitError::HookFailed(
-                    String::from_utf8_lossy(&output.stderr).to_string(),
-                ));
-            }
+        if let Some(hook) = on_create {
+            hook.run(&wt.path())?;
         }
 
         Ok(wt)

@@ -235,11 +235,7 @@ fn spawn_worker_for_issue(
         .iter()
         .map(std::path::PathBuf::from)
         .collect();
-    let on_create = cfg.repo.worktree.on_create.as_ref().map(|cmd| {
-        let mut c = std::process::Command::new("sh");
-        c.args(["-c", cmd]);
-        c
-    });
+    let on_create = cfg.repo.worktree.on_create_hook();
 
     let worker = Worker::spawn(
         &ctx.paths,

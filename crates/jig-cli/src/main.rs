@@ -56,8 +56,27 @@ fn init_tracing(sink: LogSink, paths: &context::AppPaths) {
         .init();
 }
 
+/// libgit2 ships with no network timeouts, so a fetch or push against a
+/// server that accepts the connection and then goes quiet blocks forever.
+/// In the daemon that wedges the whole spawn pass, which handles one request
+/// at a time. Both settings reach the HTTPS and SSH transports, which share
+/// libgit2's socket stream.
+///
+/// Must run before any thread is spawned: these write C globals without
+/// synchronization.
+fn set_git_network_timeouts() {
+    const CONNECT_MS: i32 = 10_000;
+    const IDLE_MS: i32 = 60_000;
+    unsafe {
+        let _ = git2::opts::set_server_connect_timeout_in_milliseconds(CONNECT_MS);
+        let _ = git2::opts::set_server_timeout_in_milliseconds(IDLE_MS);
+    }
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    set_git_network_timeouts();
 
     // Set global plain mode before any output
     ui::set_plain(cli.plain);

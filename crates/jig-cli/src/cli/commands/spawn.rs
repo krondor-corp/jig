@@ -146,11 +146,7 @@ impl Op for Spawn {
             .iter()
             .map(std::path::PathBuf::from)
             .collect();
-        let on_create = jig_config.worktree.on_create.as_ref().map(|cmd| {
-            let mut c = std::process::Command::new("sh");
-            c.args(["-c", cmd]);
-            c
-        });
+        let on_create = jig_config.worktree.on_create_hook();
 
         let issue_ref = self.issue.as_deref().map(jig_core::IssueRef::new);
         let repo_name = repo.name();
