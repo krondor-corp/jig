@@ -51,6 +51,18 @@ pub enum Level {
 /// Install the daemon as an OS service (systemd or launchd)
 #[derive(Args, Debug, Clone)]
 pub struct Install {
+    /// Run the daemon as this user
+    ///
+    /// Required when installing for someone else — a service account on a
+    /// server, say. Without it the daemon runs as whoever invoked sudo,
+    /// which is right only when that is also who it is for.
+    #[arg(long = "as", value_name = "USER")]
+    run_as: Option<String>,
+
+    /// Extra environment for the service, repeatable (`--env KEY=VALUE`)
+    #[arg(long = "env", value_name = "KEY=VALUE", value_parser = parse_env)]
+    env: Vec<(String, String)>,
+
     /// Install a user service instead of a system one (no sudo needed)
     ///
     /// On Linux the daemon then runs with your primary group only, so
@@ -109,9 +121,9 @@ impl Op for Install {
         let level = level(self.user);
         ensure_privileged(level)?;
 
-        let target = target_user()?;
+        let target = target_user(self.run_as.as_deref())?;
         let exe = std::env::current_exe().map_err(ServiceError::Exe)?;
-        let env = inherited_env(|name| std::env::var(name));
+        let env = service_env(&target, caller(), &self.env, |name| std::env::var(name));
 
         let manager = manager(level)?;
         manager
@@ -227,10 +239,14 @@ fn is_root() -> bool {
     true
 }
 
-/// Who the daemon should run as: whoever invoked `sudo`, else the caller.
+/// Who the daemon runs as: `--as` if given, else whoever invoked `sudo`,
+/// else the caller.
 #[cfg(unix)]
-fn target_user() -> Result<TargetUser, ServiceError> {
-    let user = match std::env::var("SUDO_USER").ok() {
+fn target_user(run_as: Option<&str>) -> Result<TargetUser, ServiceError> {
+    let name = run_as
+        .map(str::to_string)
+        .or_else(|| std::env::var("SUDO_USER").ok());
+    let user = match name {
         Some(name) => nix::unistd::User::from_name(&name)
             .ok()
             .flatten()
@@ -248,8 +264,28 @@ fn target_user() -> Result<TargetUser, ServiceError> {
 }
 
 #[cfg(not(unix))]
-fn target_user() -> Result<TargetUser, ServiceError> {
+fn target_user(_run_as: Option<&str>) -> Result<TargetUser, ServiceError> {
     Err(ServiceError::Unsupported)
+}
+
+/// The account running this command, when it can be determined.
+#[cfg(unix)]
+fn caller() -> Option<String> {
+    nix::unistd::User::from_uid(nix::unistd::Uid::current())
+        .ok()
+        .flatten()
+        .map(|u| u.name)
+}
+
+#[cfg(not(unix))]
+fn caller() -> Option<String> {
+    None
+}
+
+fn parse_env(raw: &str) -> Result<(String, String), String> {
+    raw.split_once('=')
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .ok_or_else(|| format!("expected KEY=VALUE, got `{raw}`"))
 }
 
 fn label() -> ServiceLabel {
@@ -335,14 +371,41 @@ fn system_unit(exe: &Path, target: &TargetUser, env: &[(String, String)]) -> Str
     unit
 }
 
-/// [`INHERITED`] variables that are actually set, in order.
-fn inherited_env(
+/// What the service should run with.
+///
+/// Installing for yourself, your shell's [`INHERITED`] variables are the
+/// best guess: same PATH, same agent, same config. Installing for someone
+/// else — a service account, from an automation, under sudo — they are the
+/// *wrong* environment, because they are root's. Then only the target
+/// user's own paths are used, and anything else has to be said with
+/// `--env`, which always wins.
+fn service_env(
+    target: &TargetUser,
+    caller: Option<String>,
+    overrides: &[(String, String)],
     var: impl Fn(&str) -> Result<String, std::env::VarError>,
 ) -> Vec<(String, String)> {
-    INHERITED
-        .iter()
-        .filter_map(|name| Some(((*name).to_string(), var(name).ok()?)))
-        .collect()
+    let installing_for_self = caller.as_deref() == Some(target.name.as_str());
+    let mut env: Vec<(String, String)> = if installing_for_self {
+        INHERITED
+            .iter()
+            .filter_map(|name| Some(((*name).to_string(), var(name).ok()?)))
+            .collect()
+    } else {
+        vec![(
+            "PATH".to_string(),
+            format!(
+                "{}/.local/bin:/usr/local/bin:/usr/bin:/bin",
+                target.home.display()
+            ),
+        )]
+    };
+
+    for (key, value) in overrides {
+        env.retain(|(k, _)| k != key);
+        env.push((key.clone(), value.clone()));
+    }
+    env
 }
 
 #[cfg(test)]
@@ -358,7 +421,7 @@ mod tests {
         }
     }
 
-    fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    fn env_pairs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
@@ -417,7 +480,7 @@ mod tests {
         let unit = system_unit(
             Path::new("/usr/bin/jig"),
             &target(),
-            &env(&[("PATH", "/home/bot/.local/bin:/usr/bin")]),
+            &env_pairs(&[("PATH", "/home/bot/.local/bin:/usr/bin")]),
         );
         assert!(
             unit.contains("Environment=\"PATH=/home/bot/.local/bin:/usr/bin\""),
@@ -435,32 +498,69 @@ mod tests {
     }
 
     #[test]
-    fn only_variables_that_are_set_are_carried_over() {
-        let carried = inherited_env(|name| match name {
+    fn installing_for_yourself_carries_your_shell_environment() {
+        let env = service_env(&target(), Some("bot".into()), &[], |name| match name {
             "PATH" => Ok("/usr/bin".to_string()),
-            _ => Err(VarError::NotPresent),
-        });
-        assert_eq!(carried, env(&[("PATH", "/usr/bin")]));
-    }
-
-    #[test]
-    fn the_agent_socket_and_config_home_follow_the_daemon() {
-        // Without these the daemon reads a different config directory, and
-        // `git fetch` over SSH has no agent to ask for a key.
-        let carried = inherited_env(|name| match name {
-            "PATH" => Ok("/usr/bin".to_string()),
-            "XDG_CONFIG_HOME" => Ok("/home/bot/cfg".to_string()),
             "SSH_AUTH_SOCK" => Ok("/run/user/1001/gnupg/S.gpg-agent.ssh".to_string()),
             _ => Err(VarError::NotPresent),
         });
         assert_eq!(
-            carried,
-            env(&[
+            env,
+            env_pairs(&[
                 ("PATH", "/usr/bin"),
-                ("XDG_CONFIG_HOME", "/home/bot/cfg"),
                 ("SSH_AUTH_SOCK", "/run/user/1001/gnupg/S.gpg-agent.ssh"),
             ])
         );
+    }
+
+    #[test]
+    fn installing_for_someone_else_ignores_the_callers_environment() {
+        // Under sudo or ansible the caller is root, whose PATH and agent
+        // are no use to the service account the daemon runs as.
+        let env = service_env(&target(), Some("root".into()), &[], |name| match name {
+            "PATH" => Ok("/usr/sbin:/root/bin".to_string()),
+            "SSH_AUTH_SOCK" => Ok("/root/agent.sock".to_string()),
+            _ => Err(VarError::NotPresent),
+        });
+        assert_eq!(
+            env,
+            env_pairs(&[("PATH", "/home/bot/.local/bin:/usr/local/bin:/usr/bin:/bin")])
+        );
+    }
+
+    #[test]
+    fn explicit_env_wins() {
+        let env = service_env(
+            &target(),
+            Some("root".into()),
+            &env_pairs(&[
+                ("PATH", "/opt/tools/bin"),
+                ("SSH_AUTH_SOCK", "/run/user/1001/keyring/ssh"),
+            ]),
+            |_| Err(VarError::NotPresent),
+        );
+        assert_eq!(
+            env,
+            env_pairs(&[
+                ("PATH", "/opt/tools/bin"),
+                ("SSH_AUTH_SOCK", "/run/user/1001/keyring/ssh"),
+            ]),
+            "--env replaces rather than duplicates"
+        );
+    }
+
+    #[test]
+    fn env_arguments_need_a_value() {
+        assert_eq!(
+            parse_env("PATH=/usr/bin").unwrap(),
+            ("PATH".to_string(), "/usr/bin".to_string())
+        );
+        assert_eq!(
+            parse_env("KEY=a=b").unwrap(),
+            ("KEY".to_string(), "a=b".to_string()),
+            "only the first = separates"
+        );
+        assert!(parse_env("JUST_A_NAME").is_err());
     }
 
     #[test]

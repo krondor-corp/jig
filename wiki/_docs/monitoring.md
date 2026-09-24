@@ -152,9 +152,34 @@ If sudo isn't available, `jig daemon install --user` installs a user service any
 
 #### What the service inherits
 
-`install` copies `PATH`, and `XDG_CONFIG_HOME` and `SSH_AUTH_SOCK` when they're set, into the service definition — so the daemon finds the same tools, reads the same config, and can use the same SSH agent for `git fetch` as the shell you installed from. Under sudo, run `sudo -E jig daemon install` to preserve them.
+Installing it for yourself, the service keeps your `PATH`, and your `XDG_CONFIG_HOME` and `SSH_AUTH_SOCK` when set — so the daemon finds the same tools, reads the same config, and can use the same SSH agent for `git fetch` as the shell you installed from.
 
-On Linux the socket and PID file stay in `/run/user/<uid>/jig/`, the same place your own `jig` commands look, and the unit waits for that directory to exist before starting.
+Installing it for someone else — `--as`, below — none of that applies, because your environment is root's, not theirs. The service gets a `PATH` rooted at their home, and anything further you say with `--env`:
+
+```bash
+sudo jig daemon install --as bot \
+     --env SSH_AUTH_SOCK=/run/user/1001/gnupg/S.gpg-agent.ssh
+```
+
+#### Running it for a service account
+
+On a server the person with sudo usually isn't the person the daemon runs as. Name them:
+
+```bash
+sudo jig daemon install --as bot
+```
+
+Everything then comes from `bot`: their groups, their home, their runtime directory for the socket. Without `--as` the daemon runs as whoever invoked sudo, which is right on your own machine and wrong on a server.
+
+With Ansible that's the whole setup:
+
+```yaml
+- name: Install the jig daemon
+  ansible.builtin.command: /usr/local/bin/jig daemon install --as bot
+  args:
+    creates: /etc/systemd/system/jig-daemon.service
+  become: true
+```
 
 Only the daemon and `jig ps --watch` write log files (`~/.config/jig/state/logs/`). Every other command prints warnings straight to stderr; set `RUST_LOG=info` (or `debug`) to see more.
 
