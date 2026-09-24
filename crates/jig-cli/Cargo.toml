@@ -32,6 +32,7 @@ git2.workspace = true
 crossterm.workspace = true
 chrono.workspace = true
 ctrlc.workspace = true
+service-manager.workspace = true
 toml.workspace = true
 uuid.workspace = true
 url.workspace = true

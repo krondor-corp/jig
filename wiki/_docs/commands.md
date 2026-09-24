@@ -29,6 +29,8 @@ Quick reference for all jig commands.
 | `jig daemon stop` | Stop the running daemon |
 | `jig daemon status` | Check the daemon is alive, ticking, and not stuck (default for `jig daemon`) |
 | `jig daemon logs` | Print the daemon's log (`-f` to follow, `-n` lines, `--path`) |
+| `jig daemon install` | Run the daemon as a user service (systemd or launchd), starting at login |
+| `jig daemon uninstall` | Remove that service |
 | `jig attach <name>` | Attach to a worker's agent session (`-g` to search all repos, `--repo` to target one) |
 | `jig kill <name>` | Kill a worker's agent session (`-a` for all) |
 | `jig nuke` | Kill all workers and clear state (keeps config/hooks) |

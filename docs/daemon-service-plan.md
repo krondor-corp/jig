@@ -78,11 +78,11 @@ jig daemon uninstall         # removes OS service              (phase 5)
 
 ## Phase 5 — OS Service Integration
 
-**5.1** Add `service-manager = "0.7"` to workspace deps.
+**5.1** Add `service-manager` to workspace deps. ✅ (0.11)
 
-**5.2** `install` action — resolve `jig` binary path via `current_exe()`, create `ServiceConfig` with label `org.jig.daemon`, args `["daemon", "start"]`, user-level (`ServiceLevel::User`). Calls `manager.install()`. Handles launchd (macOS) and systemd (Linux) automatically.
+**5.2** ✅ `install` action — resolve `jig` binary path via `current_exe()`, create `ServiceConfig` with label `org.jig.daemon`, args `["daemon", "start"]`, user-level (`ServiceLevel::User`). Calls `manager.install()`. Handles launchd (macOS) and systemd (Linux) automatically.
 
-**5.3** `uninstall` action — `manager.uninstall()`.
+**5.3** ✅ `uninstall` action — `manager.uninstall()`.
 
 ## Phase 6 — Testing
 

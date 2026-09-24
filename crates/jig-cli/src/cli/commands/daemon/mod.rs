@@ -4,6 +4,7 @@
 //! and `stop` are IPC clients rather than file readers.
 
 mod logs;
+mod service;
 mod start;
 mod status;
 mod stop;
@@ -16,7 +17,7 @@ use crate::cli::op::Op;
 use crate::context::AppPaths;
 use crate::daemon::ipc;
 
-/// Run and inspect the background daemon (start, stop, status, logs)
+/// Run and inspect the background daemon (start, stop, status, logs, install)
 #[derive(Args, Debug, Clone)]
 pub struct Daemon {
     #[command(subcommand)]
@@ -32,6 +33,10 @@ crate::command_enum! {
     (Status, status::Status),
     /// Print the daemon's log
     (Logs, logs::Logs),
+    /// Install the daemon as a user service (systemd or launchd)
+    (Install, service::Install),
+    /// Remove the daemon's user service
+    (Uninstall, service::Uninstall),
 }
 
 impl Op for Daemon {
