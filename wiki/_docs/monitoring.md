@@ -129,14 +129,32 @@ It also flags any actor that has been busy for over 10 minutes (e.g. a `git fetc
 `jig daemon start` runs in the foreground. To have the OS keep it alive:
 
 ```bash
-jig daemon install      # systemd --user on Linux, a launchd agent on macOS
+sudo jig daemon install   # Linux: a system service that runs as you
+jig daemon install        # macOS: a launchd agent
 jig daemon status
-jig daemon uninstall    # when you want it gone
+jig daemon uninstall      # when you want it gone
 ```
 
-It runs as your user, starts again at login, and is restarted if it dies. On Linux, a user service stops when you log out — `loginctl enable-linger <user>` keeps it running on a box you only ssh into (`install` reminds you).
+It runs **as you**, starts automatically, and is restarted if it dies.
 
-The service inherits your `PATH` (jig shells out to `git`, `gh` and your mux) and your `XDG_CONFIG_HOME` if you set one, so it reads the same config as your shell.
+#### Why Linux needs sudo
+
+The daemon runs your hooks, so it needs your permissions — your `docker` group, your SSH agent, your PATH. On Linux that means a *system* unit with `User=<you>`: systemd looks your groups up when it starts the service, so the daemon has all of them.
+
+A `systemd --user` service cannot do that. The user manager is started by init with your user and primary group only, and it has no privilege to add the rest — so a user service never sees `docker`, no matter how long ago you joined the group. That shows up as a hook failing with:
+
+```text
+auto-spawn failed: hook failed: permission denied while trying to connect to
+the docker API at unix:///var/run/docker.sock
+```
+
+If sudo isn't available, `jig daemon install --user` installs a user service anyway and warns about exactly this. It's fine when your hooks only need your own files.
+
+#### What the service inherits
+
+`install` copies `PATH`, and `XDG_CONFIG_HOME` and `SSH_AUTH_SOCK` when they're set, into the service definition — so the daemon finds the same tools, reads the same config, and can use the same SSH agent for `git fetch` as the shell you installed from. Under sudo, run `sudo -E jig daemon install` to preserve them.
+
+On Linux the socket and PID file stay in `/run/user/<uid>/jig/`, the same place your own `jig` commands look, and the unit waits for that directory to exist before starting.
 
 Only the daemon and `jig ps --watch` write log files (`~/.config/jig/state/logs/`). Every other command prints warnings straight to stderr; set `RUST_LOG=info` (or `debug`) to see more.
 
