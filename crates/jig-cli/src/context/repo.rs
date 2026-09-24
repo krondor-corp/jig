@@ -13,8 +13,6 @@ pub struct RepoConfig {
     #[serde(default)]
     pub worktree: WorktreeConfig,
     #[serde(default)]
-    pub spawn: SpawnConfig,
-    #[serde(default)]
     pub agent: AgentConfig,
     #[serde(default)]
     pub issues: IssuesConfig,
@@ -69,21 +67,6 @@ impl WorktreeConfig {
     /// The configured `on_create` command, ready to run.
     pub fn on_create(&self) -> Option<Exec> {
         Some(self.on_create.as_ref()?.exec("on_create hook"))
-    }
-}
-
-/// Spawn configuration in jig.toml (per-repo).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SpawnConfig {
-    pub max_concurrent_workers: usize,
-}
-
-impl Default for SpawnConfig {
-    fn default() -> Self {
-        Self {
-            max_concurrent_workers: 3,
-        }
     }
 }
 
@@ -252,20 +235,19 @@ profile = "work"
         assert!(linear.labels.is_empty());
     }
 
+    /// `[spawn]` was removed along with the worker cap. Someone's jig.toml
+    /// still has one, and must keep loading.
     #[test]
-    fn spawn_config_defaults() {
-        let config = SpawnConfig::default();
-        assert_eq!(config.max_concurrent_workers, 3);
-    }
-
-    #[test]
-    fn spawn_config_from_toml() {
+    fn a_leftover_spawn_table_is_ignored() {
         let toml_str = r#"
 [spawn]
 max_concurrent_workers = 5
+
+[worktree]
+base = "origin/main"
 "#;
         let config: RepoConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.spawn.max_concurrent_workers, 5);
+        assert_eq!(config.worktree.base.as_deref(), Some("origin/main"));
     }
 
     #[test]

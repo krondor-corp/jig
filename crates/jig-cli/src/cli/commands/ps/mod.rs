@@ -34,10 +34,6 @@ pub struct Ps {
     #[arg(short, long, num_args = 0..=1, default_missing_value = "2")]
     pub watch: Option<u64>,
 
-    /// Maximum number of concurrent auto-spawned workers
-    #[arg(long)]
-    max_workers: Option<usize>,
-
     /// Operate on all tracked repos
     #[arg(short = 'g', long)]
     global: bool,
@@ -62,17 +58,7 @@ impl Op for Ps {
 
     fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
         let global = self.global;
-        let mut cfg = ctx;
-
-        // `--max-workers` overrides, else the repo's own setting when there
-        // is exactly one repo in play.
-        if let Some(max) = self.max_workers.or_else(|| {
-            cfg.repo()
-                .ok()
-                .map(|r| r.config.spawn.max_concurrent_workers)
-        }) {
-            cfg.config.max_concurrent_workers = max;
-        }
+        let cfg = ctx;
 
         self.execute_ps(cfg, global)
     }

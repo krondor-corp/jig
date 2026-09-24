@@ -159,8 +159,10 @@ links can deep-link to `herdr --remote` targets, but terminals never render in j
    `zim-peer` as reference), hub role flag, `jig fleet trust`, snapshot forwarding,
    command routing, `jig ps --fleet`.
 4. **Queue across machines** — auto-spawn assignment: hub assigns queued issues to
-   machines by config (max workers per machine already exists as
-   `max_concurrent_workers`); `jig spawn --machine <name>` routed like any command.
+   machines. Note there is no longer a per-repo worker cap to build on — the old
+   `max_concurrent_workers` was removed as more confusing than useful — so a
+   per-machine limit, if one is wanted, is a fleet-level decision to design here.
+   `jig spawn --machine <name>` routed like any command.
 5. **Web view** (stretch) — read-only axum table on the hub.
 
 ## Risks

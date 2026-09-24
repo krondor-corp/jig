@@ -78,6 +78,6 @@ fn partial_toml_fills_defaults() {
 
     let cfg = AppConfig::load_from(&path).unwrap();
     assert_eq!(cfg.silence_threshold_seconds, 600);
-    assert_eq!(cfg.max_concurrent_workers, 3);
+    assert_eq!(cfg.tick_interval, AppConfig::default().tick_interval);
     assert!(cfg.notify.exec.is_none());
 }
