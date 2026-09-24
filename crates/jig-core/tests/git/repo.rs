@@ -216,31 +216,26 @@ fn new_branch_does_not_set_base_as_git_upstream() {
 }
 
 #[test]
-fn open_creates_shallow_marker_when_missing() {
-    // Raw git2, not `Repo::init`: this is about opening a repo jig did
-    // not create, which therefore has no marker yet.
+fn opening_a_repo_leaves_no_shallow_marker_behind() {
+    // jig used to create an empty `.git/shallow` in every repo it touched,
+    // to quiet a libgit2 stat error that turned out to be a stale message
+    // from an unrelated failure. Git reads the file's *existence* as "this
+    // is a shallow clone", so writing one made every repo lie about itself.
     let tmp = TempDir::new().unwrap();
     git2::Repository::init(tmp.path()).unwrap();
-    let shallow = tmp.path().join(".git").join("shallow");
-    assert!(!shallow.exists(), "fresh repo should have no shallow file");
 
     let _repo = Repo::open(tmp.path()).unwrap();
+
     assert!(
-        shallow.exists(),
-        "Repo::open must create .git/shallow as a libgit2 quirk workaround"
-    );
-    assert_eq!(
-        std::fs::metadata(&shallow).unwrap().len(),
-        0,
-        "shallow marker must be empty (= no shallow refs)"
+        !tmp.path().join(".git").join("shallow").exists(),
+        "opening a repo must not create a shallow marker"
     );
 }
 
 #[test]
-fn open_preserves_existing_shallow_file() {
+fn opening_a_repo_preserves_a_real_shallow_file() {
     let tmp = TempDir::new().unwrap();
     let repo = init_repo(tmp.path());
-
     let head_oid = repo.head().unwrap().target().unwrap().to_string();
     let shallow_contents = format!("{}\n", head_oid);
     drop(repo);
@@ -249,11 +244,11 @@ fn open_preserves_existing_shallow_file() {
     std::fs::write(&shallow, shallow_contents.as_bytes()).unwrap();
 
     let _repo = Repo::open(tmp.path()).unwrap();
-    let contents = std::fs::read(&shallow).unwrap();
+
     assert_eq!(
-        contents,
+        std::fs::read(&shallow).unwrap(),
         shallow_contents.as_bytes(),
-        "existing shallow contents must not be clobbered"
+        "a genuinely shallow clone's graft points must not be touched"
     );
 }
 
@@ -332,5 +327,32 @@ fn a_detached_worktree_has_no_checked_out_branch() {
         Worktree::open(&path).unwrap().checked_out_branch(),
         None,
         "a detached HEAD names no branch to look up"
+    );
+}
+
+#[test]
+fn remove_works_after_the_branch_is_renamed_inside_the_worktree() {
+    let tmp = TempDir::new().unwrap();
+    let _ = init_repo(tmp.path());
+    let repo = Repo::open(tmp.path()).unwrap();
+    let path = repo
+        .create_worktree(&"feat/upload-neverthrow".into(), &"main".into())
+        .unwrap();
+
+    // Renaming a branch inside a worktree is ordinary; the worktree's
+    // registration keeps the name it was created with.
+    let wt_git = git2::Repository::open(&path).unwrap();
+    wt_git
+        .find_branch("feat/upload-neverthrow", git2::BranchType::Local)
+        .unwrap()
+        .rename("feat/membership-error", false)
+        .unwrap();
+
+    Worktree::open(&path).unwrap().remove(true).unwrap();
+
+    assert!(!path.exists(), "working directory should be gone");
+    assert!(
+        repo.list_worktrees().unwrap().is_empty(),
+        "registration should be gone"
     );
 }
