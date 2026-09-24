@@ -41,8 +41,7 @@ pub use config::{LinearConfig, LinearProfile, NotifyConfig};
 pub use paths::{hook_registry_path, AppPaths};
 pub use registry::{RepoEntry, RepoRegistry};
 pub use repo::{
-    AgentConfig, IssuesConfig, JigToml, LinearIssuesConfig, SpawnConfig, TriageConfig,
-    WorktreeConfig,
+    AgentConfig, IssuesConfig, JigToml, LinearIssuesConfig, TriageConfig, WorktreeConfig,
 };
 
 /// Directory name for jig-managed worktrees (relative to repo root)

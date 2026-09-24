@@ -123,26 +123,14 @@ impl Actor for SpawnActor {
                 }
             }
 
-            // -- Worker budget --
+            // Branches that already have a worktree — an issue whose branch
+            // is checked out somewhere is already being worked on.
             let existing_branches: Vec<Branch> = repo
                 .list_worktrees()
                 .unwrap_or_default()
                 .iter()
                 .filter_map(|wt| wt.branch().ok())
                 .collect();
-
-            let max_workers = cfg.repo.spawn.max_concurrent_workers;
-            let budget = max_workers.saturating_sub(existing_branches.len());
-
-            if budget == 0 {
-                tracing::debug!(
-                    repo = %repo_name,
-                    active = existing_branches.len(),
-                    max = max_workers,
-                    "repo at worker capacity, skipping"
-                );
-                continue;
-            }
 
             // -- Auto-spawn --
             let Some(labels) = &cfg.repo.issues.auto_spawn_labels else {
@@ -156,11 +144,7 @@ impl Actor for SpawnActor {
                 })
                 .unwrap_or_default();
 
-            let mut repo_spawned = 0;
             for issue in planned {
-                if repo_spawned >= budget {
-                    break;
-                }
                 if !issue.children().is_empty() {
                     continue;
                 }
@@ -201,7 +185,6 @@ impl Actor for SpawnActor {
                     }
                 }
                 spawning.retain(|b| b != &branch);
-                repo_spawned += 1;
             }
         }
 

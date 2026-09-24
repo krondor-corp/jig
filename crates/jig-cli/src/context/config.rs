@@ -46,9 +46,6 @@ pub struct Config {
     // Health
     pub silence_threshold_seconds: u64,
 
-    // Spawn
-    pub max_concurrent_workers: usize,
-
     // Daemon
     pub auto_recover: bool,
     pub tick_interval: u64,
@@ -76,7 +73,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             silence_threshold_seconds: 300,
-            max_concurrent_workers: 3,
             poll_interval: 120,
             auto_recover: true,
             tick_interval: 30,
@@ -141,7 +137,6 @@ auto_cleanup_merged = true       # clean up workers when PR merges
 auto_cleanup_closed = false      # clean up workers when PR closed without merge
 
 [spawn]
-max_concurrent_workers = 3       # max auto-spawned workers per repo
 poll_interval = 120              # seconds between issue polls
 
 # [notify]
@@ -166,7 +161,6 @@ mod tests {
     fn defaults() {
         let cfg = Config::default();
         assert_eq!(cfg.silence_threshold_seconds, 300);
-        assert_eq!(cfg.max_concurrent_workers, 3);
         assert_eq!(cfg.poll_interval, 120);
         assert!(cfg.auto_recover);
         assert_eq!(cfg.tick_interval, 30);
