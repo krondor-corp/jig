@@ -1,8 +1,8 @@
 # jig fleet spec — one view of all work, everywhere
 
 Status: accepted direction (2026-08-31). Supersedes the earlier "all-in on herdr"
-framing. Companion doc: [daemon-service-plan.md](./daemon-service-plan.md) — the
-daemon-to-service refactor is Phase 1 of this spec.
+framing. Phase 1 of this spec — the daemon-to-service refactor — shipped in v0.9.0;
+it lives in `crates/jig-cli/src/daemon/` and its plan doc has been retired.
 
 ## The problem
 
@@ -48,8 +48,8 @@ The four questions decompose by data source:
 
 Only rows 3–4 cross machines. The sync fabric is worker snapshots flowing up and
 commands flowing down — a handful of typed message kinds, not state replication.
-`WorkerSnapshot` already exists in [daemon-service-plan.md](./daemon-service-plan.md)
-as the IPC projection; the network frames are the same types plus a machine identity.
+`WorkerSnapshot` already exists in `crates/jig-cli/src/daemon/ipc.rs` as the IPC
+projection; the network frames are the same types plus a machine identity.
 
 ## Topology
 
@@ -74,7 +74,7 @@ as the IPC projection; the network frames are the same types plus a machine iden
 - **hub** = the same jig daemon binary with an aggregator role enabled, running as a
   user service on the always-on dev server. Machines connect *outward* to it (laptop
   behind NAT never needs to be reachable).
-- **daemon** = [daemon-service-plan.md](./daemon-service-plan.md) as written, plus a
+- **daemon** = the shipped socket daemon (`crates/jig-cli/src/daemon/`), plus a
   forwarder: publish `WorkerSnapshot`s on change (and heartbeat), subscribe for
   commands addressed to this machine.
 - **clients** = thin: `jig ps --fleet` (any machine) asks the hub; `jig model`,
@@ -86,7 +86,7 @@ as the IPC projection; the network frames are the same types plus a machine iden
 Design the protocol once, transport-agnostic: the same serde frames
 (`Snapshot`, `Heartbeat`, `Command`, `Ack`) over:
 
-1. **Local**: the unix socket from daemon-service-plan (newline-delimited JSON).
+1. **Local**: the daemon's unix socket (newline-delimited JSON) — see `daemon/ipc.rs`.
 2. **Network**: [iroh](https://iroh.computer) — QUIC with hole-punching + relays,
    node identity = keypairs. Chosen because:
    - The laptop roams and NATs; iroh needs no port-forwarding and no reachable hub IP.
@@ -144,10 +144,11 @@ links can deep-link to `herdr --remote` targets, but terminals never render in j
 
 ## Phases
 
-1. **Daemon as a service** — execute
-   [daemon-service-plan.md](./daemon-service-plan.md) (unix-socket IPC,
-   `WorkerSnapshot`, `jig daemon start/stop/status/install/uninstall`,
-   `service-manager`, user-level launchd/systemd). Plus, landed prerequisites hardened:
+1. **Daemon as a service** — ✅ shipped in v0.9.0: unix-socket IPC,
+   `WorkerSnapshot`, `jig daemon start/stop/status/logs/install/uninstall`,
+   `service-manager` (launchd agent on macOS; a systemd system unit with `User=`
+   on Linux, so the daemon keeps the user's supplementary groups). Plus, landed
+   prerequisites hardened:
    `mux` selection in `jig.toml` (env `JIG_MUX` as override), per-tick mux snapshot
    batching (herdr's CLI is 3 calls/worker/tick today — too chatty for always-on),
    `jig health` herdr detection.
