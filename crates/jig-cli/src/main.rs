@@ -9,6 +9,7 @@ use jig_cli::cli::op::{LogSink, Op};
 use jig_cli::cli::ui;
 use jig_cli::cli::Cli;
 use jig_cli::context;
+use jig_core::git::set_network_timeouts;
 
 fn main() {
     if let Err(e) = run() {
@@ -58,6 +59,9 @@ fn init_tracing(sink: LogSink, paths: &context::AppPaths) {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    // Before anything spawns a thread: these write libgit2's C globals.
+    set_network_timeouts();
 
     // Set global plain mode before any output
     ui::set_plain(cli.plain);
