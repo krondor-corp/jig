@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::exec::ExecError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
     #[error("not in a git repository")]
@@ -39,6 +41,11 @@ pub enum GitError {
 
     #[error("hook failed: {0}")]
     HookFailed(String),
+
+    /// A command that could not be run, or that outran its deadline.
+    /// Forwarded as-is: `exec` already names it and says how long it had.
+    #[error(transparent)]
+    Exec(#[from] ExecError),
 
     #[error(transparent)]
     Git2(#[from] git2::Error),

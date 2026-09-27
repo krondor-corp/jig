@@ -2,7 +2,10 @@
 
 use std::fmt;
 use std::path::Path;
+use std::process::Command;
 use std::str::FromStr;
+
+use crate::exec::{Exec, Timeout};
 
 use super::{AgentBackend, AgentKind, HookType, InstallResult, DEFAULT_DISALLOWED_TOOLS};
 
@@ -153,22 +156,21 @@ impl AgentBackend for ClaudeCode {
     }
 
     fn health(&self) -> Result<String, super::AgentError> {
-        let output = std::process::Command::new(COMMAND)
+        let output = Exec::command(Command::new(COMMAND))
             .arg("--version")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output()?;
+            .timeout(Timeout::QUICK)
+            .capturing()
+            .run()
+            .map_err(|e| super::AgentError::Other(e.to_string()))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.success() {
             return Err(super::AgentError::Other(format!(
                 "claude --version failed: {}",
-                stderr.trim()
+                output.failure()
             )));
         }
 
-        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(version)
+        Ok(output.stdout)
     }
 
     fn install(&self, hooks: &[(&str, &str)]) -> Result<InstallResult, super::AgentError> {

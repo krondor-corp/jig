@@ -3,6 +3,7 @@
 use std::fs;
 
 use jig_cli::context::{Config, NotifyConfig};
+use jig_core::exec::{Hook, Timeout};
 
 #[test]
 fn roundtrip() {
@@ -12,7 +13,7 @@ fn roundtrip() {
     let cfg = Config {
         silence_threshold_seconds: 600,
         notify: NotifyConfig {
-            exec: Some("notify-send".to_string()),
+            exec: Some(Hook::new("notify-send", Timeout::QUICK)),
             events: vec!["worker.done".to_string()],
             ..Default::default()
         },
@@ -24,7 +25,10 @@ fn roundtrip() {
     let loaded = Config::load_from(&path).unwrap();
 
     assert_eq!(loaded.silence_threshold_seconds, 600);
-    assert_eq!(loaded.notify.exec.as_deref(), Some("notify-send"));
+    assert_eq!(
+        loaded.notify.exec.as_ref().map(|h| h.command.as_str()),
+        Some("notify-send")
+    );
     assert_eq!(loaded.notify.events, vec!["worker.done"]);
     assert_eq!(
         loaded.default_base_branch.as_deref(),

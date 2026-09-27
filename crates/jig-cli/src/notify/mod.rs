@@ -2,6 +2,8 @@
 //!
 //! Append-only JSONL queue at `~/.config/jig/state/notifications.jsonl`.
 
+use jig_core::exec::ExecError;
+
 mod events;
 mod hook;
 mod queue;
@@ -12,6 +14,9 @@ pub enum NotifyError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    /// A hook that could not be run, or that outran its deadline.
+    #[error(transparent)]
+    Exec(#[from] ExecError),
     #[error("{0}")]
     Hook(String),
 }

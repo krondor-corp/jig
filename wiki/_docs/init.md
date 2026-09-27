@@ -195,6 +195,36 @@ copy = [".env", ".env.local", ".secrets"]
 
 Files are copied from repo root to new worktrees before the `on_create` hook runs. Missing files are silently skipped.
 
+### Hook timeouts
+
+`on_create` is killed if it runs too long — 10 minutes by default — and the spawn fails with a clear error instead of hanging.
+
+This matters most for the daemon, which runs one spawn at a time. A hook that never returns (an install waiting on a dead network, a command that stops for a prompt) would otherwise stop auto-spawn indefinitely, with the daemon still reporting healthy.
+
+Give a slow hook more room by writing it as a table instead of a string:
+
+```toml
+[worktree.on_create]
+command = "pnpm install --frozen-lockfile"
+timeout = 1800                 # seconds
+```
+
+`timeout = "none"` disables the limit. Only do that where a person is watching and can interrupt it — never on a machine running the daemon unattended.
+
+The same applies to the notification hook in `~/.config/jig/config.toml`:
+
+```toml
+[notify.exec]
+command = "~/.config/jig/hooks/notify.sh"
+timeout = 10
+```
+
+The plain string form still works everywhere and picks up the default:
+
+```toml
+on_create = "npm install"
+```
+
 ## Iterating after init
 
 `jig init` is a first pass. Iterate on the generated docs — ask your agent to improve `docs/index.md`, or edit by hand. Consider adding:

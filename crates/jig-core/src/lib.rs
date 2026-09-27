@@ -3,6 +3,7 @@
 
 pub mod agents;
 pub mod events;
+pub mod exec;
 pub mod git;
 pub mod github;
 pub mod issues;

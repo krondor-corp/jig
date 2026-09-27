@@ -6,6 +6,8 @@ use std::process::{Command, Stdio};
 
 use clap::Args;
 
+use jig_core::exec::{Exec, Timeout};
+
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
 use crate::context::AppPaths;
@@ -173,25 +175,29 @@ fn detect_installation() -> Result<InstallMethod, UpdateError> {
 
 /// Fetch the latest version from GitHub releases
 fn get_latest_version() -> Result<String, UpdateError> {
-    let output = Command::new("curl")
-        .args([
-            "-fsSL",
-            &format!(
-                "https://api.github.com/repos/{}/releases/latest",
-                GITHUB_REPO
-            ),
-        ])
-        .output()?;
+    let mut curl = Command::new("curl");
+    curl.args([
+        "-fsSL",
+        &format!(
+            "https://api.github.com/repos/{}/releases/latest",
+            GITHUB_REPO
+        ),
+    ]);
+    let output = Exec::command(curl)
+        .timeout(Timeout::NETWORK)
+        .capturing()
+        .run()
+        .map_err(|e| UpdateError::Failed(e.to_string()))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.success() {
+        let stderr = output.failure();
         return Err(UpdateError::Failed(format!(
             "Failed to fetch latest version: {}",
             stderr
         )));
     }
 
-    let body = String::from_utf8_lossy(&output.stdout);
+    let body = &output.stdout;
 
     // Parse tag_name from JSON response
     // Looking for: "tag_name": "v0.5.1",
@@ -237,6 +243,8 @@ fn run_install_script() -> Result<(), UpdateError> {
     ui::progress("Installing via install script...");
     eprintln!();
 
+    // Not an `Exec`: the installer streams its progress straight to the
+    // user's terminal, and there is a person here who can ctrl-c it.
     let status = Command::new("bash")
         .args(["-c", &format!("curl -fsSL {} | bash", INSTALL_SCRIPT_URL)])
         .stdin(Stdio::inherit())

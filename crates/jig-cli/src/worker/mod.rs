@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::context::AppPaths;
 use events::{Event, EventKind, TerminalKind, WorkerState};
 use jig_core::agents::Agent;
+use jig_core::exec::Exec;
 use jig_core::git::{Branch, Repo, Worktree, WorktreeRef};
 
 use jig_core::issues::issue::IssueRef;
@@ -207,7 +208,7 @@ impl Worker {
         auto: bool,
         issue_ref: Option<IssueRef>,
         copy_files: &[std::path::PathBuf],
-        on_create: Option<std::process::Command>,
+        on_create: Option<Exec>,
         mux: &dyn Mux,
     ) -> Result<Self, WorkerError> {
         let repo_root = repo.clone_path();

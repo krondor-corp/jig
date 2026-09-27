@@ -3,12 +3,14 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
 use crate::context::{self, RepoConfig};
 use jig_core::agents;
+use jig_core::exec::{Exec, Timeout};
 use jig_core::git::Repo;
 use jig_core::issues::issue::{IssueFilter, IssueStatus};
 use jig_core::issues::Issue;
@@ -184,91 +186,6 @@ fn run_single(issue: &TriageIssue) {
     }
 }
 
-/// Outcome of a supervised subprocess run.
-#[derive(Debug)]
-enum RunOutcome {
-    Exited {
-        status: std::process::ExitStatus,
-        stderr: String,
-    },
-    /// The process exceeded its wall-clock budget and was killed.
-    TimedOut,
-}
-
-/// Run `cmd args` in `cwd`, killing it if it outruns `timeout`.
-///
-/// std::process has no timeout, and the previous code called `.output()`, which
-/// blocks forever. Because the triage actor has a single-slot queue, one hung
-/// agent silently stopped all further triage for the daemon's lifetime.
-///
-/// stdout and stderr are drained on their own threads: a child that fills a
-/// pipe buffer blocks on write, so polling for exit while holding unread pipes
-/// can deadlock even when the child is healthy.
-fn run_with_timeout(
-    cmd: &str,
-    args: &[String],
-    cwd: &Path,
-    timeout: std::time::Duration,
-) -> std::result::Result<RunOutcome, String> {
-    use std::io::Read;
-
-    let mut child = std::process::Command::new(cmd)
-        .args(args)
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to execute triage agent: {}", e))?;
-
-    let mut out_pipe = child.stdout.take();
-    let mut err_pipe = child.stderr.take();
-
-    let out_handle = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(p) = out_pipe.as_mut() {
-            let _ = p.read_to_end(&mut buf);
-        }
-        buf
-    });
-    let err_handle = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(p) = err_pipe.as_mut() {
-            let _ = p.read_to_end(&mut buf);
-        }
-        buf
-    });
-
-    let start = std::time::Instant::now();
-    let poll = std::time::Duration::from_millis(200);
-
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {
-                if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break None;
-                }
-                std::thread::sleep(poll);
-            }
-            Err(e) => return Err(format!("failed waiting on triage agent: {}", e)),
-        }
-    };
-
-    // Pipes close when the child exits or is killed, so these threads finish.
-    let _ = out_handle.join();
-    let stderr = err_handle
-        .join()
-        .map(|b| String::from_utf8_lossy(&b).to_string())
-        .unwrap_or_default();
-
-    match status {
-        Some(status) => Ok(RunOutcome::Exited { status, stderr }),
-        None => Ok(RunOutcome::TimedOut),
-    }
-}
-
 pub(crate) fn run_triage_subprocess(
     repo_root: &Path,
     issue: &Issue,
@@ -292,24 +209,21 @@ pub(crate) fn run_triage_subprocess(
 
     let (cmd, args) = argv.split_first().ok_or("empty triage argv")?;
 
-    let timeout = std::time::Duration::from_secs(timeout_seconds.max(1) as u64);
+    let mut command = Command::new(cmd);
+    command.args(args);
 
-    match run_with_timeout(cmd, args, repo_root, timeout)? {
-        RunOutcome::TimedOut => {
-            return Err(format!(
-                "triage agent exceeded {}s timeout and was killed",
-                timeout.as_secs()
-            ));
-        }
-        RunOutcome::Exited { status, stderr } => {
-            if !status.success() {
-                return Err(format!(
-                    "triage agent exited with {}: {}",
-                    status,
-                    stderr.chars().take(500).collect::<String>()
-                ));
-            }
-        }
+    let output = Exec::command(command)
+        .labeled("triage agent")
+        .timeout(Timeout::secs(timeout_seconds.max(1) as u64))
+        .in_dir(repo_root)
+        .run()
+        .map_err(|e| e.to_string())?;
+
+    if !output.success() {
+        return Err(format!(
+            "triage agent failed: {}",
+            output.failure().chars().take(500).collect::<String>()
+        ));
     }
 
     Ok(())
@@ -359,92 +273,5 @@ mod tests {
             },
         );
         assert_eq!(actor.active_entries().len(), 2);
-    }
-    #[test]
-    fn run_with_timeout_kills_a_process_that_outruns_its_budget() {
-        let start = std::time::Instant::now();
-        let outcome = run_with_timeout(
-            "sleep",
-            &["30".to_string()],
-            std::path::Path::new("."),
-            std::time::Duration::from_millis(600),
-        )
-        .expect("run should not error");
-
-        assert!(
-            matches!(outcome, RunOutcome::TimedOut),
-            "expected TimedOut, got {outcome:?}"
-        );
-        // Must return promptly rather than waiting out the full sleep.
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(10),
-            "took {:?}, so the process was not actually killed",
-            start.elapsed()
-        );
-    }
-
-    #[test]
-    fn run_with_timeout_returns_exit_status_for_a_fast_process() {
-        let outcome = run_with_timeout(
-            "true",
-            &[],
-            std::path::Path::new("."),
-            std::time::Duration::from_secs(30),
-        )
-        .expect("run should not error");
-
-        match outcome {
-            RunOutcome::Exited { status, .. } => assert!(status.success()),
-            other => panic!("expected Exited, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn run_with_timeout_captures_stderr_of_a_failing_process() {
-        let outcome = run_with_timeout(
-            "sh",
-            &["-c".to_string(), "echo boom >&2; exit 3".to_string()],
-            std::path::Path::new("."),
-            std::time::Duration::from_secs(30),
-        )
-        .expect("run should not error");
-
-        match outcome {
-            RunOutcome::Exited { status, stderr } => {
-                assert!(!status.success());
-                assert!(stderr.contains("boom"), "stderr was {stderr:?}");
-            }
-            other => panic!("expected Exited, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn run_with_timeout_does_not_deadlock_on_a_chatty_process() {
-        // A child that fills the pipe buffer would block on write if the pipes
-        // were left unread while polling for exit.
-        let outcome = run_with_timeout(
-            "sh",
-            &["-c".to_string(), "yes hello | head -c 2000000".to_string()],
-            std::path::Path::new("."),
-            std::time::Duration::from_secs(30),
-        )
-        .expect("run should not error");
-
-        match outcome {
-            RunOutcome::Exited { status, .. } => assert!(status.success()),
-            other => panic!("expected Exited, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn run_with_timeout_reports_a_missing_binary_as_an_error() {
-        let err = run_with_timeout(
-            "definitely-not-a-real-binary-xyz",
-            &[],
-            std::path::Path::new("."),
-            std::time::Duration::from_secs(5),
-        )
-        .expect_err("missing binary should error");
-        assert!(err.contains("failed to execute"), "got {err:?}");
     }
 }

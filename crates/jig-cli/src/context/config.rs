@@ -7,13 +7,17 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::paths::AppPaths;
+use jig_core::exec::Hook;
+
 use super::ContextError;
 
 /// Notification configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotifyConfig {
-    pub exec: Option<String>,
+    /// Command to run on each notification, fed the event as JSON on stdin.
+    /// A bare string, or a table that also sets a timeout.
+    pub exec: Option<Hook>,
     pub webhook: Option<String>,
     pub events: Vec<String>,
 }

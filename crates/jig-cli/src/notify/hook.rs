@@ -1,7 +1,6 @@
 //! Notification hook execution.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
+use jig_core::exec::{Exec, Hook};
 
 use super::{NotificationEvent, NotificationQueue};
 use crate::context::NotifyConfig;
@@ -83,62 +82,35 @@ impl Notifier {
         self.config.events.iter().any(|e| e == event_type)
     }
 
-    fn exec_hook(&self, exec: &str, json: &str) -> Result<(), super::NotifyError> {
-        let expanded = expand_tilde(exec);
-
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(&expanded)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(json.as_bytes());
+    fn exec_hook(&self, hook: &Hook, json: &str) -> Result<(), super::NotifyError> {
+        // Lenient: a broken notification hook must not fail the thing that
+        // triggered the notification.
+        match hook_exec(hook).stdin(json.to_owned()).run() {
+            Ok(output) if output.success() => {}
+            Ok(output) => tracing::warn!("notification hook failed: {}", output.failure()),
+            Err(e) => tracing::warn!("{e}"),
         }
-
-        let status = child.wait()?;
-        if !status.success() {
-            tracing::warn!("notification hook exited with: {}", status);
-        }
-
         Ok(())
     }
 
-    /// Like `exec_hook` but captures stderr and returns errors on non-zero exit.
-    fn exec_hook_strict(&self, exec: &str, json: &str) -> Result<(), super::NotifyError> {
-        let expanded = expand_tilde(exec);
-
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(&expanded)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(json.as_bytes());
+    /// Like [`Self::exec_hook`] but reports failure instead of warning.
+    fn exec_hook_strict(&self, hook: &Hook, json: &str) -> Result<(), super::NotifyError> {
+        let output = hook_exec(hook).stdin(json.to_owned()).run()?;
+        if !output.success() {
+            return Err(super::NotifyError::Hook(format!(
+                "notification hook failed: {}",
+                output.failure()
+            )));
         }
-
-        let output = child.wait_with_output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let msg = if stderr.trim().is_empty() {
-                format!("notification hook exited with: {}", output.status)
-            } else {
-                format!(
-                    "notification hook exited with {}: {}",
-                    output.status,
-                    stderr.trim()
-                )
-            };
-            return Err(super::NotifyError::Hook(msg));
-        }
-
         Ok(())
     }
+}
+
+/// The configured hook, with `~` expanded and named for its error messages.
+fn hook_exec(hook: &Hook) -> Exec {
+    Exec::shell(&expand_tilde(&hook.command))
+        .labeled("notification hook")
+        .timeout(hook.timeout)
 }
 
 /// Expand `~` at the start of a path to the home directory.
@@ -169,6 +141,7 @@ impl NotificationEvent {
 mod tests {
     use super::*;
     use crate::context::NotifyConfig;
+    use jig_core::exec::Timeout;
 
     fn make_event() -> NotificationEvent {
         NotificationEvent::NeedsIntervention {
@@ -225,7 +198,7 @@ mod tests {
 
         let queue = NotificationQueue::new(tmp.path().join("n.jsonl"));
         let config = NotifyConfig {
-            exec: Some(script_path.to_string_lossy().to_string()),
+            exec: Some(Hook::new(script_path.to_string_lossy(), Timeout::QUICK)),
             ..Default::default()
         };
         let notifier = Notifier::new(config, queue);

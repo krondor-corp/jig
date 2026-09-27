@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use clap::{Args, Subcommand};
+use jig_core::exec::Hook;
 
 use crate::context::ContextError;
 use crate::context::{
@@ -186,7 +187,7 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
         ui::header("Notify");
         eprintln!();
         if let Some(ref exec) = global.notify.exec {
-            eprintln!("  {} {}", ui::dim("Exec:"), ui::highlight(exec));
+            eprintln!("  {} {}", ui::dim("Exec:"), ui::highlight(&exec.command));
         }
         if let Some(ref webhook) = global.notify.webhook {
             eprintln!("  {} {}", ui::dim("Webhook:"), ui::highlight(webhook));
@@ -275,9 +276,10 @@ fn show_config(paths: &AppPaths, repo: &RepoConfig) -> Result<ConfigOutput, Conf
 
     if let Some(ref hook) = display.effective_on_create {
         eprintln!(
-            "  {} {} {}",
+            "  {} {} {} {}",
             ui::bold("On-create hook:"),
-            ui::highlight(hook),
+            ui::highlight(&hook.command),
+            ui::dim(&format!("(timeout {})", hook.timeout)),
             if display.toml_on_create.is_some() {
                 src(&display.worktree_source)
             } else {
@@ -472,16 +474,13 @@ fn handle_on_create(command: Option<&str>, unset: bool) -> Result<ConfigOutput, 
             ui::success(&format!("Set on-create hook to '{}'", ui::highlight(cmd)));
             Ok(ConfigOutput(None))
         }
-        None => {
-            let on_create = repo.repo.worktree.on_create.as_deref();
-            match on_create {
-                Some(cmd) => Ok(ConfigOutput(Some(cmd.to_string()))),
-                None => {
-                    eprintln!("No on-create hook set");
-                    Ok(ConfigOutput(None))
-                }
+        None => match repo.repo.worktree.on_create.as_ref() {
+            Some(hook) => Ok(ConfigOutput(Some(hook.command.clone()))),
+            None => {
+                eprintln!("No on-create hook set");
+                Ok(ConfigOutput(None))
             }
-        }
+        },
     }
 }
 
@@ -490,8 +489,8 @@ struct ConfigDisplay {
     toml_base: Option<String>,
     worktree_source: String,
     global_base: Option<String>,
-    effective_on_create: Option<String>,
-    toml_on_create: Option<String>,
+    effective_on_create: Option<Hook>,
+    toml_on_create: Option<Hook>,
     agent_type: String,
     agent_source: String,
     issues_source: String,
