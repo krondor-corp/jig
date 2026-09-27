@@ -1,12 +1,14 @@
 //! Comments subcommand — fetch and display PR review feedback
 
 use std::fmt;
+use std::process::Command;
 
 use clap::Args;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::AppPaths;
+use jig_core::exec::Exec;
 use jig_core::git::Repo;
 use jig_core::github::{GitHubClient, ReviewComment, ReviewState};
 
@@ -161,15 +163,12 @@ fn format_state(state: &ReviewState) -> &'static str {
 }
 
 fn changed_files_in_range(range: &str) -> Vec<String> {
-    std::process::Command::new("git")
-        .args(["diff", "--name-only", range])
-        .output()
+    let mut git = Command::new("git");
+    git.args(["diff", "--name-only", range]);
+    Exec::command(git)
+        .capturing()
+        .run()
         .ok()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .map(|l| l.to_string())
-                .collect()
-        })
+        .map(|o| o.stdout.lines().map(|l| l.to_string()).collect())
         .unwrap_or_default()
 }

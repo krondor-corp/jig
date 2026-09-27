@@ -257,7 +257,10 @@ fn run_doctor(paths: &AppPaths) -> Result<NotifyOutput, NotifyError> {
 
     ui::detail(&format!(
         "exec: {}",
-        notify_config.exec.as_deref().unwrap_or("<unset>")
+        notify_config
+            .exec
+            .as_ref()
+            .map_or("<unset>", |hook| hook.command.as_str())
     ));
     ui::detail(&format!(
         "webhook: {}",

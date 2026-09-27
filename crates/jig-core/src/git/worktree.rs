@@ -1,7 +1,6 @@
 //! Git worktree — a [`Repo`] that has been validated as a linked worktree.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +8,7 @@ use super::branch::Branch;
 use super::diff::{Diff, Stats as DiffStats};
 use super::error::{GitError, Result};
 use super::Repo;
+use crate::exec::Exec;
 
 /// Lightweight serializable reference to a worktree on disk.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -88,7 +88,7 @@ impl Worktree {
         branch: &Branch,
         base: &Branch,
         copy_files: &[PathBuf],
-        on_create: Option<Command>,
+        on_create: Option<Exec>,
     ) -> Result<Self> {
         crate::git::ensure_excluded(&repo.common_dir(), super::WORKTREES_DIR)?;
         let path = repo.create_worktree(branch, base)?;
@@ -106,12 +106,10 @@ impl Worktree {
             }
         }
 
-        if let Some(mut cmd) = on_create {
-            let output = cmd.current_dir(wt.path()).output()?;
-            if !output.status.success() {
-                return Err(GitError::HookFailed(
-                    String::from_utf8_lossy(&output.stderr).to_string(),
-                ));
+        if let Some(hook) = on_create {
+            let output = hook.in_dir(wt.path()).run()?;
+            if !output.success() {
+                return Err(GitError::HookFailed(output.failure()));
             }
         }
 

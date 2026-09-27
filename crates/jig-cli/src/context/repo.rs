@@ -1,5 +1,6 @@
 //! Repository configuration — jig.toml + jig.local.toml overlay.
 
+use jig_core::exec::{Exec, Hook};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -53,13 +54,22 @@ pub struct LinearIssuesConfig {
     pub labels: Vec<String>,
 }
 
-/// Worktree configuration in jig.toml
+/// Worktree configuration in jig.toml `[worktree]`.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorktreeConfig {
     pub base: Option<String>,
-    pub on_create: Option<String>,
+    /// Command to run in a new worktree. A bare string, or a table that also
+    /// sets a timeout — see [`Hook`].
+    pub on_create: Option<Hook>,
     pub copy: Vec<String>,
+}
+
+impl WorktreeConfig {
+    /// The configured `on_create` command, ready to run.
+    pub fn on_create(&self) -> Option<Exec> {
+        Some(self.on_create.as_ref()?.exec("on_create hook"))
+    }
 }
 
 /// Spawn configuration in jig.toml (per-repo).

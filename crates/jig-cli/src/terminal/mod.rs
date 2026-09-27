@@ -1,6 +1,9 @@
 pub mod shell;
 
 use std::path::PathBuf;
+use std::process::Command;
+
+use jig_core::exec::{Exec, Timeout};
 
 /// Resolve a command on `$PATH`, returning its full path if found.
 pub fn which(cmd: &str) -> Option<PathBuf> {
@@ -22,14 +25,15 @@ pub struct DepCheck {
 pub fn check_dep(name: &str, version_args: &[&str]) -> DepCheck {
     let found = which(name).is_some();
     let version = if found {
-        std::process::Command::new(name)
-            .args(version_args)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output()
+        let mut probe = Command::new(name);
+        probe.args(version_args);
+        Exec::command(probe)
+            .timeout(Timeout::QUICK)
+            .capturing()
+            .run()
             .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|o| o.success())
+            .map(|o| o.stdout)
             .filter(|s| !s.is_empty())
     } else {
         None

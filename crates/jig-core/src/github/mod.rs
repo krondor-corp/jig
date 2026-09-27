@@ -5,6 +5,7 @@
 
 mod client;
 pub mod error;
+mod gh;
 mod graphql;
 mod queries;
 mod rest;

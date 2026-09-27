@@ -141,7 +141,7 @@ fn test_with_failing_hook_shows_error() {
         .args(["notify", "test"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("notification hook exited with"));
+        .stderr(predicate::str::contains("notification hook failed"));
 }
 
 // --- tail ---

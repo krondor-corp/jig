@@ -2,6 +2,7 @@
 
 use jig_cli::context::NotifyConfig;
 use jig_cli::notify::{NotificationEvent, NotificationQueue, Notifier};
+use jig_core::exec::{Hook, Timeout};
 
 /// The event these tests emit.
 fn make_event() -> NotificationEvent {
@@ -68,14 +69,16 @@ fn emit_strict_returns_err_on_hook_failure() {
     let tmp = tempfile::tempdir().unwrap();
     let queue = NotificationQueue::new(tmp.path().join("n.jsonl"));
     let config = NotifyConfig {
-        exec: Some("exit 1".to_string()),
+        exec: Some(Hook::new("exit 1", Timeout::QUICK)),
         ..Default::default()
     };
     let notifier = Notifier::new(config, queue);
 
     let err = notifier.emit_strict(make_event()).unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("notification hook exited with"), "got: {msg}");
+    // A hook that prints nothing still has to say why it failed.
+    assert!(msg.contains("notification hook failed"), "got: {msg}");
+    assert!(msg.contains("status 1"), "got: {msg}");
 }
 
 #[test]
@@ -83,7 +86,7 @@ fn emit_strict_captures_stderr() {
     let tmp = tempfile::tempdir().unwrap();
     let queue = NotificationQueue::new(tmp.path().join("n.jsonl"));
     let config = NotifyConfig {
-        exec: Some("echo 'bad config' >&2; exit 1".to_string()),
+        exec: Some(Hook::new("echo 'bad config' >&2; exit 1", Timeout::QUICK)),
         ..Default::default()
     };
     let notifier = Notifier::new(config, queue);
@@ -98,7 +101,7 @@ fn emit_strict_succeeds_on_hook_success() {
     let tmp = tempfile::tempdir().unwrap();
     let queue = NotificationQueue::new(tmp.path().join("n.jsonl"));
     let config = NotifyConfig {
-        exec: Some("cat > /dev/null".to_string()),
+        exec: Some(Hook::new("cat > /dev/null", Timeout::QUICK)),
         ..Default::default()
     };
     let notifier = Notifier::new(config, queue);

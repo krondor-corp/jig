@@ -2,9 +2,21 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::{Command, Stdio};
+
+use crate::exec::Timeout;
 
 use super::error::{GitHubError, Result};
+use super::gh::gh;
+
+/// `gh repo view` reduced to the owner/repo string.
+const REPO_VIEW: [&str; 6] = [
+    "repo",
+    "view",
+    "--json",
+    "nameWithOwner",
+    "-q",
+    ".nameWithOwner",
+];
 use super::graphql::GraphQlClient;
 use super::queries::check_runs::GetCheckRuns;
 use super::queries::conflicts::GetPrMergeable;
@@ -31,71 +43,49 @@ pub struct GitHubClient {
     pub(crate) repo: String,
     pub(crate) rest: RestClient,
     pub(crate) graphql: GraphQlClient,
+    /// How long any one `gh` call gets. Set here rather than threaded
+    /// through every query method, which would be a dozen signatures
+    /// carrying the same constant.
+    pub(crate) timeout: Timeout,
 }
 
 impl GitHubClient {
     /// Create a client for the given repository.
     pub fn new(repo: impl Into<String>) -> Self {
+        Self::with_timeout(repo, Timeout::NETWORK)
+    }
+
+    /// Create a client whose `gh` calls get `timeout` each.
+    pub fn with_timeout(repo: impl Into<String>, timeout: Timeout) -> Self {
         Self {
             repo: repo.into(),
-            rest: RestClient,
-            graphql: GraphQlClient,
+            rest: RestClient { timeout },
+            graphql: GraphQlClient { timeout },
+            timeout,
         }
     }
 
     /// Detect the repository from the current git remote.
     pub fn from_remote() -> Result<Self> {
-        let output = Command::new("gh")
-            .args([
-                "repo",
-                "view",
-                "--json",
-                "nameWithOwner",
-                "-q",
-                ".nameWithOwner",
-            ])
-            .stdin(Stdio::null())
-            .output()?;
-
-        if !output.status.success() {
-            return Err(GitHubError::Cli(
-                "Failed to detect GitHub repository. Is `gh` authenticated?".into(),
-            ));
-        }
-
-        let repo = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let repo = gh(&REPO_VIEW, None, Timeout::NETWORK)
+            .map_err(|e| GitHubError::Cli(format!("Failed to detect GitHub repository: {e}")))?;
         if repo.is_empty() {
             return Err(GitHubError::Other(
-                "Could not determine repository name".into(),
+                "Could not determine repository name".to_string(),
             ));
         }
-
         Ok(Self::new(repo))
     }
 
     /// Detect the repository from a specific repo path (runs `gh` in that directory).
     pub fn from_repo_path(repo_path: &Path) -> Result<Self> {
-        let output = Command::new("gh")
-            .args([
-                "repo",
-                "view",
-                "--json",
-                "nameWithOwner",
-                "-q",
-                ".nameWithOwner",
-            ])
-            .current_dir(repo_path)
-            .stdin(Stdio::null())
-            .output()?;
-
-        if !output.status.success() {
-            return Err(GitHubError::Cli(format!(
-                "Failed to detect GitHub repository at {}. Is `gh` authenticated?",
+        let repo = gh(&REPO_VIEW, Some(repo_path), Timeout::NETWORK).map_err(|e| {
+            GitHubError::Cli(format!(
+                "Failed to detect GitHub repository at {}: {e}",
                 repo_path.display()
-            )));
-        }
+            ))
+        })?;
 
-        let repo = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if repo.is_empty() {
             return Err(GitHubError::Other(format!(
                 "Could not determine repository name at {}",
@@ -114,12 +104,7 @@ impl GitHubClient {
 
     /// Check if `gh` CLI is available and authenticated.
     pub fn is_healthy() -> bool {
-        Command::new("gh")
-            .args(["auth", "status"])
-            .stdin(Stdio::null())
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        gh(&["auth", "status"], None, Timeout::QUICK).is_ok()
     }
 
     /// Create a draft PR via `gh pr create`.
@@ -160,17 +145,8 @@ impl GitHubClient {
             args.push("--fill".to_string());
         }
 
-        let output = Command::new("gh")
-            .args(&args)
-            .stdin(Stdio::null())
-            .output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(GitHubError::Cli(format!("gh pr create failed: {}", stderr)));
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        gh(&arg_refs, None, self.timeout)
     }
 
     // ── Query orchestration ───────────────────────────────────────────────────
