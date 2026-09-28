@@ -202,21 +202,6 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
         }
     }
 
-    // -- GitHub --
-    eprintln!();
-    ui::header("GitHub");
-    eprintln!();
-    eprintln!(
-        "  {} {}",
-        ui::dim("Auto-cleanup merged:"),
-        ui::highlight(&global.auto_cleanup_merged.to_string())
-    );
-    eprintln!(
-        "  {} {}",
-        ui::dim("Auto-cleanup closed:"),
-        ui::highlight(&global.auto_cleanup_closed.to_string())
-    );
-
     // -- Daemon --
     eprintln!();
     ui::header("Daemon");
