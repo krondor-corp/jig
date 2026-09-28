@@ -1,6 +1,9 @@
 //! Git repository handle — thin wrapper around `git2::Repository`.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::exec::{Exec, Timeout};
 
 use super::branch::Branch;
 use super::commit::Oid;
@@ -90,6 +93,34 @@ impl Repo {
         self.clone_path().join(super::WORKTREES_DIR)
     }
 
+    /// Run `git` in this repo, under a deadline.
+    ///
+    /// Remote operations go through the `git` binary rather than libgit2 so
+    /// that authentication is whatever the user's git already does: their
+    /// `~/.ssh/config` with its per-host `IdentityFile`, the agent, the
+    /// keychain, credential helpers, deploy keys, HTTPS tokens.
+    ///
+    /// libgit2 reads none of that. It asks for a credential and jig had to
+    /// guess what to hand it — which meant guessing key paths, and getting
+    /// it wrong on any machine whose key is not `~/.ssh/id_*`. A service
+    /// account's usually is not.
+    fn git(&self, args: &[&str], timeout: Timeout) -> Result<String> {
+        let mut command = Command::new("git");
+        command.args(args).current_dir(self.clone_path());
+
+        let output = Exec::command(command)
+            .labeled(format!("git {}", args.first().copied().unwrap_or_default()))
+            .timeout(timeout)
+            .capturing()
+            .run()
+            .map_err(|e| GitError::Cli(e.to_string()))?;
+
+        if !output.success() {
+            return Err(GitError::Cli(output.failure()));
+        }
+        Ok(output.stdout)
+    }
+
     // ------------------------------------------------------------------
     // Remote operations
     // ------------------------------------------------------------------
@@ -98,20 +129,12 @@ impl Repo {
     ///
     /// Only remote-tracking refs move — local branches are left alone, since a
     /// user or worker may be working on one.
-    pub fn fetch(&self, remote: &str, refspecs: &[&str]) -> Result<()> {
-        let name = remote;
-        let mut remote = self
-            .inner
-            .find_remote(name)
-            .map_err(|e| GitError::FetchFailed(format!("no remote '{name}': {e}")))?;
-
-        let mut fetch_opts = git2::FetchOptions::new();
-        fetch_opts.remote_callbacks(remote_callbacks());
-
-        remote
-            .fetch(refspecs, Some(&mut fetch_opts), None)
-            .map_err(|e| GitError::FetchFailed(format!("fetch {name} failed: {e}")))?;
-        Ok(())
+    pub fn fetch(&self, remote: &str, refspecs: &[&str], timeout: Timeout) -> Result<()> {
+        let mut args = vec!["fetch", remote];
+        args.extend_from_slice(refspecs);
+        self.git(&args, timeout)
+            .map(|_| ())
+            .map_err(|e| GitError::FetchFailed(format!("fetch {remote} failed: {e}")))
     }
 
     /// Returns `true` if a remote with the given name is configured.
@@ -510,29 +533,23 @@ impl Repo {
     }
 
     /// Push a branch to origin.
-    pub fn push_branch(&self, branch: &Branch) -> Result<()> {
+    pub fn push_branch(&self, branch: &Branch, timeout: Timeout) -> Result<()> {
         let local = branch.local();
         let refspec = format!("refs/heads/{local}:refs/heads/{local}");
-
-        let mut remote = self
-            .inner
-            .find_remote("origin")
-            .map_err(|e| GitError::PushFailed(format!("no remote 'origin': {e}")))?;
-
-        let mut push_opts = git2::PushOptions::new();
-        push_opts.remote_callbacks(remote_callbacks());
-
-        remote
-            .push(&[&refspec], Some(&mut push_opts))
-            .map_err(|e| GitError::PushFailed(format!("push origin {local} failed: {e}")))?;
-
-        Ok(())
+        self.git(&["push", "origin", &refspec], timeout)
+            .map(|_| ())
+            .map_err(|e| GitError::PushFailed(format!("push origin {local} failed: {e}")))
     }
 
     /// Create a local branch from `origin/{base}` and push it to origin.
     ///
     /// Tolerates a pre-existing local branch (pushes the existing one).
-    pub fn create_and_push_branch(&self, branch: &Branch, base: &Branch) -> Result<()> {
+    pub fn create_and_push_branch(
+        &self,
+        branch: &Branch,
+        base: &Branch,
+        timeout: Timeout,
+    ) -> Result<()> {
         let remote_ref = base.remote_ref();
 
         let reference = self
@@ -548,7 +565,7 @@ impl Repo {
             Err(e) => return Err(e.into()),
         }
 
-        self.push_branch(branch)
+        self.push_branch(branch, timeout)
     }
 
     // ------------------------------------------------------------------
@@ -716,25 +733,4 @@ fn prune(wt: &git2::Worktree, force: bool) -> Result<()> {
     }
     wt.prune(Some(&mut opts))?;
     Ok(())
-}
-
-/// Remote authentication callbacks — the single source of credentials for every
-/// network operation in this module. Both `fetch` and `push_branch` route
-/// through it; do not inline a second `credentials` closure. A remote operation
-/// that omits these callbacks fails against any authenticated remote with
-/// "authentication required but no callback set".
-fn remote_callbacks() -> git2::RemoteCallbacks<'static> {
-    let mut callbacks = git2::RemoteCallbacks::new();
-    callbacks.credentials(|url, username_from_url, allowed_types| {
-        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
-            git2::Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
-        } else if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-            git2::Cred::credential_helper(&git2::Config::open_default()?, url, username_from_url)
-        } else if allowed_types.contains(git2::CredentialType::DEFAULT) {
-            git2::Cred::default()
-        } else {
-            Err(git2::Error::from_str("no available credentials"))
-        }
-    });
-    callbacks
 }

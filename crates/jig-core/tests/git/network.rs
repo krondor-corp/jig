@@ -1,38 +1,36 @@
-//! libgit2's network timeouts.
+//! Remote operations go through the `git` binary.
 
 use jig_core::exec::Timeout;
-use jig_core::git::set_network_timeouts;
 
-/// libgit2 waits forever by default, which in the daemon means a push to a
-/// server that accepts and then goes quiet stops auto-spawn permanently.
+/// Fetching uses whatever credentials `git` itself uses — the user's
+/// `~/.ssh/config` with its per-host `IdentityFile`, the agent, the keychain,
+/// credential helpers. jig has no opinion about them, which is the point:
+/// libgit2 reads none of that, so jig had to guess what credential to hand
+/// it, and guessing key paths is wrong on any machine whose key is not
+/// `~/.ssh/id_*` — a service account's usually is not.
 ///
-/// These are process-wide C globals, so this is the only test in this binary
-/// that touches them.
+/// Ignored: needs the network. Run with
+/// `cargo test -p jig-core --test git -- --ignored fetch`.
 #[test]
-fn jig_bounds_how_long_libgit2_waits_on_a_remote() {
-    // SAFETY: the getters read the same C globals the setter writes, and
-    // nothing else in this binary touches them.
-    unsafe {
-        assert_eq!(
-            git2::opts::get_server_timeout_in_milliseconds().unwrap(),
-            0,
-            "libgit2 should start with no timeout at all — that is the bug"
-        );
+#[ignore]
+fn fetching_uses_the_same_credentials_git_does() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = jig_core::git::Repo::init(tmp.path()).unwrap();
+    repo.inner()
+        .remote("origin", "git@github.com:krondor-corp/jig.git")
+        .unwrap();
 
-        set_network_timeouts(Timeout::secs(10), Timeout::secs(60));
+    repo.fetch(
+        "origin",
+        &["refs/heads/main:refs/remotes/origin/main"],
+        Timeout::secs(120),
+    )
+    .expect("fetch should work wherever `git fetch` does");
 
-        assert_eq!(
-            git2::opts::get_server_connect_timeout_in_milliseconds().unwrap(),
-            10_000
-        );
-        assert_eq!(
-            git2::opts::get_server_timeout_in_milliseconds().unwrap(),
-            60_000
-        );
-
-        // `"none"` in config has to restore libgit2's own behaviour, not a
-        // zero-length deadline that kills every fetch instantly.
-        set_network_timeouts(Timeout::Unlimited, Timeout::Unlimited);
-        assert_eq!(git2::opts::get_server_timeout_in_milliseconds().unwrap(), 0);
-    }
+    assert!(
+        repo.inner()
+            .find_reference("refs/remotes/origin/main")
+            .is_ok(),
+        "the fetched ref should be there"
+    );
 }

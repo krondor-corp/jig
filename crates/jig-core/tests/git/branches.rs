@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use jig_core::exec::Timeout;
 use jig_core::git::Repo;
 
 use crate::common::seeded_repo as init_repo;
@@ -190,7 +191,8 @@ fn push_branch_works_with_bare_upstream() {
     empty_commit(&git, "push-test");
 
     let repo = Repo::open(dir.path()).unwrap();
-    repo.push_branch(&"test-push".into()).unwrap();
+    repo.push_branch(&"test-push".into(), Timeout::secs(30))
+        .unwrap();
 
     // Fetch to update remote tracking refs, then verify
     fetch(&git);

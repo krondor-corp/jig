@@ -91,7 +91,7 @@ impl Actor for SpawnActor {
                 let branch = issue.branch().clone();
 
                 if !repo.remote_branch_exists(&branch) {
-                    match repo.create_and_push_branch(&branch, &base) {
+                    match repo.create_and_push_branch(&branch, &base, global.git.timeout) {
                         Ok(()) => {
                             tracing::info!(
                                 repo = %repo_name, issue = %issue.id(), branch = %branch,
