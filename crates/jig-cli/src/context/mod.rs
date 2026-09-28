@@ -15,7 +15,7 @@ pub mod repo;
 
 use std::path::{Path, PathBuf};
 
-use jig_core::git::{Branch, Repo};
+use jig_core::git::{set_network_timeouts, Branch, Repo};
 use jig_core::issues::{IssueProvider, LinearProvider};
 
 #[derive(Debug, thiserror::Error)]
@@ -37,7 +37,7 @@ pub enum ContextError {
 }
 
 pub use config::AppConfig;
-pub use config::{LinearConfig, LinearProfile, NotifyConfig};
+pub use config::{GitConfig, LinearConfig, LinearProfile, NotifyConfig};
 pub use paths::{hook_registry_path, AppPaths};
 pub use registry::{RepoEntry, RepoRegistry};
 pub use repo::{
@@ -260,6 +260,13 @@ impl AppCtx {
         if !self.flags.plain && std::io::IsTerminal::is_terminal(&std::io::stderr()) {
             colored::control::set_override(true);
         }
+
+        // libgit2 has no network timeouts of its own, and exposes them only
+        // process-wide — see `jig_core::git::set_network_timeouts`.
+        set_network_timeouts(
+            self.config.git.connect_timeout,
+            self.config.git.idle_timeout,
+        );
     }
 }
 

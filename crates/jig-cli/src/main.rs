@@ -63,6 +63,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Best-effort global directory setup
     let _ = paths.ensure();
 
+    // Before loading anything, so that a complaint about the config the user
+    // is about to be handed defaults for actually reaches them.
+    let sink = cli
+        .command
+        .as_ref()
+        .map_or(LogSink::Stderr, |c| c.log_sink());
+    init_tracing(sink, &paths);
+
     // Everything resolvable before we know which command this is.
     let app = context::AppCtx::load(
         paths,
@@ -74,12 +82,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // Process-wide state, in one place, before any thread exists.
     app.set_globals();
-
-    let sink = cli
-        .command
-        .as_ref()
-        .map_or(LogSink::Stderr, |c| c.log_sink());
-    init_tracing(sink, &app.paths);
 
     match cli.command {
         None => {
