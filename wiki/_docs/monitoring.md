@@ -122,6 +122,20 @@ It reports one of:
 
 It also flags any actor that has been busy for over 10 minutes (e.g. a `git fetch` hung on auth), since the tick loop keeps running while a wedged actor silently skips its work. The command exits non-zero unless the daemon is healthy.
 
+### Updating
+
+A running daemon keeps executing the binary it started with. `jig update` replaces the file on disk and changes nothing about the process, so after updating:
+
+```sh
+jig update
+jig daemon restart
+jig daemon status          # the version should have moved
+```
+
+`jig update` says so if a daemon is running.
+
+Do not use `jig daemon stop` for this on a machine where the daemon is an installed service. `stop` shuts the process down cleanly, the unit is `Restart=on-failure`, and a clean exit is not a failure — so the service stays down. `jig daemon start` would then run a foreground daemon owned by your shell, which dies with your session.
+
 `jig daemon logs` prints the daemon's own log; `-f` follows it (and moves to the new log when the daemon restarts), `-n` sets how many lines, `--path` prints the file path.
 
 ### Running it in the background

@@ -10,7 +10,8 @@ use jig_core::exec::{Exec, Timeout};
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppCtx;
+use crate::context::{AppCtx, AppPaths};
+use crate::daemon::ipc;
 
 const GITHUB_REPO: &str = "krondor-corp/jig";
 const INSTALL_SCRIPT_URL: &str =
@@ -57,15 +58,15 @@ impl InstallMethod {
 }
 
 impl Op for Update {
-    type Context = ();
+    type Context = AppPaths;
     type Error = UpdateError;
     type Output = NoOutput;
 
-    fn build_context(&self, _app: AppCtx) -> Result<(), UpdateError> {
-        Ok(())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, UpdateError> {
+        Ok(app.paths)
     }
 
-    fn run(&self, _: ()) -> Result<Self::Output, Self::Error> {
+    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
         let install_method = detect_installation()?;
         let current_version = env!("CARGO_PKG_VERSION");
 
@@ -152,6 +153,20 @@ impl Op for Update {
 
         eprintln!();
         ui::success("Updated successfully!");
+
+        // The running daemon is still executing the binary it started with;
+        // replacing the file on disk changed nothing about that process.
+        if let Ok(Some(info)) = ipc::ping(&paths) {
+            eprintln!();
+            ui::warning(&format!(
+                "the daemon (pid {}) is still running the old version",
+                info.pid
+            ));
+            ui::detail(&format!(
+                "restart it with {}",
+                ui::highlight("jig daemon restart")
+            ));
+        }
 
         Ok(NoOutput)
     }

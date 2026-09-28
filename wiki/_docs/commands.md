@@ -83,5 +83,6 @@ jig issues --label backend --label bug
 | `jig shell-init <shell>` | Print shell integration script |
 | `jig shell-setup` | Auto-configure shell integration |
 | `jig update` | Update jig to latest version |
+| `jig daemon restart` | Restart the daemon service after an update |
 | `jig version` | Show version information |
 | `jig which` | Show path to jig executable |

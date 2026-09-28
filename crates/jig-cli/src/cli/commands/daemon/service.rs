@@ -84,12 +84,31 @@ pub struct Uninstall {
     user: bool,
 }
 
+/// Restart the daemon service, e.g. after `jig update`
+///
+/// A running daemon keeps executing the binary it started with. Updating jig
+/// replaces the file on disk and changes nothing about the process, so the
+/// daemon goes on running the old code until something restarts it.
+#[derive(Args, Debug, Clone)]
+pub struct Restart {
+    /// Restart the user service rather than the system one
+    #[arg(long)]
+    user: bool,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
     #[error("no service manager on this system (expected systemd or launchd)")]
     Unsupported,
     #[error("a system service has to be installed as root")]
     NeedsRoot,
+    #[error(
+        "the daemon is not installed as a service{}, so there is nothing to \
+         restart — stop it and start it again yourself, or install it with \
+         `jig daemon install`",
+        .pid.map(|p| format!(" (a daemon is running in the foreground, pid {p})")).unwrap_or_default()
+    )]
+    NotAService { pid: Option<u32> },
     #[error("could not work out who to install the service for: {0}")]
     NoUser(String),
     #[error("could not find the jig binary: {0}")]
@@ -165,6 +184,59 @@ impl Op for Install {
         ui::success("daemon started");
         ui::detail(&format!(
             "check it with {}",
+            ui::highlight("jig daemon status")
+        ));
+        Ok(NoOutput)
+    }
+}
+
+impl Op for Restart {
+    type Context = AppPaths;
+    type Error = ServiceError;
+    type Output = NoOutput;
+
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, ServiceError> {
+        Ok(app.paths)
+    }
+
+    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
+        let level = level(self.user);
+        let manager = manager(level)?;
+
+        match manager.status(ServiceStatusCtx { label: label() }) {
+            // Not a service. `stop` would work, but nothing would bring it
+            // back — a foreground daemon belongs to whoever launched it.
+            Ok(service_manager::ServiceStatus::NotInstalled) | Err(_) => {
+                return Err(match crate::daemon::ipc::ping(&paths) {
+                    Ok(Some(info)) => ServiceError::NotAService {
+                        pid: Some(info.pid),
+                    },
+                    _ => ServiceError::NotAService { pid: None },
+                });
+            }
+            Ok(service_manager::ServiceStatus::Running) => {
+                ensure_privileged(level)?;
+                manager
+                    .stop(ServiceStopCtx { label: label() })
+                    .map_err(|source| ServiceError::Manager {
+                        action: "stopping",
+                        source,
+                    })?;
+            }
+            // Installed but down — starting it is still the right outcome.
+            Ok(service_manager::ServiceStatus::Stopped(_)) => ensure_privileged(level)?,
+        }
+
+        manager
+            .start(ServiceStartCtx { label: label() })
+            .map_err(|source| ServiceError::Manager {
+                action: "starting",
+                source,
+            })?;
+
+        ui::success(&format!("restarted {}", ui::highlight(LABEL)));
+        ui::detail(&format!(
+            "confirm the version moved with {}",
             ui::highlight("jig daemon status")
         ));
         Ok(NoOutput)
@@ -567,5 +639,41 @@ mod tests {
     #[test]
     fn the_label_parses() {
         assert_eq!(label().to_qualified_name(), LABEL);
+    }
+
+    /// A foreground daemon is not a service, and the message should say which
+    /// one is running so the user knows what they are looking at.
+    #[test]
+    fn not_a_service_names_the_running_daemon() {
+        let with_pid = ServiceError::NotAService { pid: Some(4242) }.to_string();
+        assert!(with_pid.contains("4242"), "{with_pid}");
+        assert!(with_pid.contains("foreground"), "{with_pid}");
+
+        let without = ServiceError::NotAService { pid: None }.to_string();
+        assert!(!without.contains("foreground"), "{without}");
+        assert!(without.contains("jig daemon install"), "{without}");
+    }
+
+    /// `restart` reads the level the same way `install` writes it. If they
+    /// disagreed it would look for the service in the wrong place and report
+    /// "not installed" on a machine where it plainly is.
+    #[test]
+    fn restart_looks_where_install_put_it() {
+        let default = level(false);
+        if cfg!(target_os = "linux") {
+            assert!(
+                matches!(default, Level::System),
+                "Linux installs a system unit"
+            );
+        } else {
+            assert!(
+                matches!(default, Level::User),
+                "launchd agents are per-user"
+            );
+        }
+        assert!(
+            matches!(level(true), Level::User),
+            "--user is always user-level"
+        );
     }
 }
