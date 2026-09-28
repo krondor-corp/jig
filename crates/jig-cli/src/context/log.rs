@@ -6,6 +6,8 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use super::AppPaths;
+
 static SESSION_LOG: OnceLock<PathBuf> = OnceLock::new();
 
 /// Record where this process's tracing output goes. Set once at startup.
@@ -78,6 +80,87 @@ impl LogTailer {
             lines
         }
     }
+}
+
+/// How many session logs to keep when pruning.
+///
+/// Enough to look back over a few daemon restarts, few enough that the
+/// directory stays readable.
+pub const KEEP_LOGS: usize = 20;
+
+/// Every session log, oldest first.
+///
+/// Names begin with a sortable UTC timestamp, so sorting them is sorting by
+/// age. This is the one place that knows what a session log looks like on
+/// disk — callers take an [`AppPaths`] and ask here.
+pub fn session_logs(paths: &AppPaths) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(paths.logs_dir()) else {
+        return Vec::new();
+    };
+    let mut logs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "log"))
+        .collect();
+    logs.sort();
+    logs
+}
+
+/// Delete old session logs, keeping the newest `keep` that have content.
+///
+/// Empty logs go first and do not count against `keep`: they are left by
+/// processes that opened a log and never wrote to it, and on one machine they
+/// were 1,505 of 1,522 files.
+///
+/// The log this process is writing is never removed — deleting it would
+/// strand everything logged afterwards.
+///
+/// Returns how many were removed. Errors are ignored throughout: tidying up
+/// must not stop the daemon from starting.
+pub fn prune(paths: &AppPaths, keep: usize) -> usize {
+    prune_keeping(paths, keep, session_log())
+}
+
+/// [`prune`], with the live log named explicitly.
+///
+/// `prune` reads it from this process's session, which is a set-once global.
+/// Taking it as an argument is what lets a test cover the "never delete the
+/// log being written" rule without writing to that global and leaking into
+/// every other test in the binary.
+pub fn prune_keeping(paths: &AppPaths, keep: usize, live: Option<&Path>) -> usize {
+    let mut kept = Vec::new();
+    let mut removed = 0;
+
+    for path in session_logs(paths) {
+        if live.is_some_and(|live| live == path) {
+            continue;
+        }
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.len() == 0 => {
+                if std::fs::remove_file(&path).is_ok() {
+                    removed += 1;
+                }
+            }
+            Ok(_) => kept.push(path),
+            Err(_) => {}
+        }
+    }
+
+    let surplus = kept.len().saturating_sub(keep);
+    for path in kept.into_iter().take(surplus) {
+        if std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// Delete every session log, including this process's. For `jig nuke`.
+pub fn clear(paths: &AppPaths) -> usize {
+    session_logs(paths)
+        .into_iter()
+        .filter(|path| std::fs::remove_file(path).is_ok())
+        .count()
 }
 
 /// The last `n` lines of a file.
