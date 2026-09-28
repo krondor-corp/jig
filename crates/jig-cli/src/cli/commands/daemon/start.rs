@@ -72,7 +72,7 @@ impl Op for Start {
         // Housekeeping, now that we know we are the daemon. Cheap, and runs
         // about as often as the daemon restarts — which as a service is
         // rarely, which is exactly why the logs were piling up.
-        let removed = log::prune(&cfg.paths.logs_dir(), log::KEEP_LOGS, log::session_log());
+        let removed = log::prune(&cfg.paths, log::KEEP_LOGS);
         if removed > 0 {
             tracing::info!(removed, "pruned old session logs");
         }
