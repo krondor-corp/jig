@@ -124,13 +124,13 @@ impl Actor for MonitorActor {
         *self.workers.lock().unwrap() = display_results;
         *self.previous_states.lock().unwrap() = new_states;
 
-        // Recovery prune: scan for merged/closed PRs with worktrees still on disk
+        // Catch-up for PRs that finished while the daemon was down. Only PR
+        // outcomes: a worker that broke — mux window lost, spawn failed —
+        // keeps its worktree, because there may be something in it.
         for (entry, worker) in &workers {
             let key = worker.worker_key();
             if let Some(prev) = self.previous_states.lock().unwrap().get(&key) {
-                if (prev.status == WorkerStatus::Merged || prev.status == WorkerStatus::Failed)
-                    && worker.path().exists()
-                {
+                if prev.status.is_pr_outcome() && worker.path().exists() {
                     prune_targets.push(PruneTarget {
                         repo_path: entry.path.clone(),
                         repo_name: worker.repo_name(),
@@ -368,8 +368,9 @@ impl MonitorActor {
         global_config: &AppConfig,
         actions: &mut Vec<DispatchAction>,
     ) {
-        // Check for merged/closed via PR health + worker status
-        if state.status == WorkerStatus::Merged && global_config.auto_cleanup_merged {
+        // A merged PR is finished work: clean it up, say so, and close the
+        // issue if the repo asked for that.
+        if state.status == WorkerStatus::Merged {
             actions.push(DispatchAction::Cleanup);
             actions.push(DispatchAction::Notify {
                 event: NotificationEvent::WorkCompleted {
@@ -393,10 +394,8 @@ impl MonitorActor {
             }
         }
 
-        if state.status == WorkerStatus::Failed
-            && state.pr_health.has_pr
-            && old_state.status != WorkerStatus::Failed
-        {
+        // A closed PR is also finished, just not happily. Same cleanup.
+        if state.status == WorkerStatus::Closed && old_state.status != WorkerStatus::Closed {
             actions.push(DispatchAction::Notify {
                 event: NotificationEvent::NeedsIntervention {
                     repo: repo_name.to_string(),
@@ -404,9 +403,7 @@ impl MonitorActor {
                     reason: "PR closed without merge".to_string(),
                 },
             });
-            if global_config.auto_cleanup_closed {
-                actions.push(DispatchAction::Cleanup);
-            }
+            actions.push(DispatchAction::Cleanup);
         }
 
         // Draft PR check nudges (CI, conflicts, reviews, commits)

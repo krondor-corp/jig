@@ -43,7 +43,12 @@ pub enum WorkerStatus {
     Approved,
     /// PR merged successfully
     Merged,
-    /// Worker failed or was killed
+    /// PR closed without merging. An outcome, not a failure — the work is
+    /// over either way, but nobody needs to go and look at it.
+    Closed,
+    /// Worker failed or was killed — the mux window was lost, or it never
+    /// started. Distinct from [`Self::Closed`] because the worktree of a
+    /// worker that broke is worth keeping and one whose PR closed is not.
     Failed,
     /// Worker archived/cleaned up
     Archived,
@@ -62,6 +67,7 @@ impl WorkerStatus {
             Self::WaitingReview => "waiting_review",
             Self::Approved => "approved",
             Self::Merged => "merged",
+            Self::Closed => "closed",
             Self::Failed => "failed",
             Self::Archived => "archived",
         }
@@ -76,7 +82,16 @@ impl WorkerStatus {
     }
 
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Merged | Self::Archived | Self::Failed)
+        matches!(
+            self,
+            Self::Merged | Self::Closed | Self::Archived | Self::Failed
+        )
+    }
+
+    /// Whether this is how a PR ended, as opposed to how a worker broke.
+    /// Only these get their worktree pruned automatically.
+    pub fn is_pr_outcome(&self) -> bool {
+        matches!(self, Self::Merged | Self::Closed)
     }
 
     pub fn is_waiting_review(&self) -> bool {
@@ -142,5 +157,25 @@ mod tests {
             let parsed: WorkerStatus = serde_json::from_str(&json).unwrap();
             assert_eq!(&parsed, status);
         }
+    }
+
+    #[test]
+    fn only_pr_outcomes_are_pr_outcomes() {
+        assert!(WorkerStatus::Merged.is_pr_outcome());
+        assert!(WorkerStatus::Closed.is_pr_outcome());
+
+        // The ones that must keep their worktree.
+        assert!(!WorkerStatus::Failed.is_pr_outcome());
+        assert!(!WorkerStatus::Archived.is_pr_outcome());
+        assert!(!WorkerStatus::Stalled.is_pr_outcome());
+    }
+
+    #[test]
+    fn a_closed_pr_is_terminal_but_needs_no_attention() {
+        assert!(WorkerStatus::Closed.is_terminal());
+        assert!(
+            !WorkerStatus::Closed.needs_attention(),
+            "a closed PR is a resolved outcome, not something to go and look at"
+        );
     }
 }

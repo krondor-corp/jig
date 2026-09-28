@@ -100,7 +100,7 @@ impl ReducibleKind for EventKind {
                 state.status = WorkerStatus::Merged;
             }
             EventKind::PrClosed { .. } => {
-                state.status = WorkerStatus::Failed;
+                state.status = WorkerStatus::Closed;
             }
             EventKind::Terminal { .. } => unreachable!(),
         }
@@ -404,5 +404,50 @@ mod tests {
         };
         let state = reduce(&events, &config);
         assert_eq!(state.status, WorkerStatus::Initializing);
+    }
+
+    /// KRO-219. A closed PR used to reduce to `Failed`, the same status a
+    /// worker gets when its mux window is lost — which meant the daemon could
+    /// not tell "this PR is over" from "this worker broke", and pruned both.
+    #[test]
+    fn a_closed_pr_is_closed_not_failed() {
+        let state = reduce(
+            &[Event::now(EventKind::PrClosed {
+                pr_url: "https://github.com/o/r/pull/1".to_string(),
+            })],
+            &default_config(),
+        );
+
+        assert_eq!(state.status, WorkerStatus::Closed);
+        assert!(state.status.is_pr_outcome(), "a closed PR is an outcome");
+    }
+
+    #[test]
+    fn a_broken_worker_is_failed_and_not_a_pr_outcome() {
+        let state = reduce(
+            &[Event::now(EventKind::Terminal {
+                terminal: TerminalKind::Failed,
+                reason: Some("mux window lost, 3 resume attempts failed".to_string()),
+            })],
+            &default_config(),
+        );
+
+        assert_eq!(state.status, WorkerStatus::Failed);
+        assert!(
+            !state.status.is_pr_outcome(),
+            "a broken worker must not be pruned as though its PR ended"
+        );
+    }
+
+    #[test]
+    fn a_merged_pr_is_a_pr_outcome() {
+        let state = reduce(
+            &[Event::now(EventKind::PrMerged {
+                pr_url: "https://github.com/o/r/pull/1".to_string(),
+            })],
+            &default_config(),
+        );
+        assert_eq!(state.status, WorkerStatus::Merged);
+        assert!(state.status.is_pr_outcome());
     }
 }

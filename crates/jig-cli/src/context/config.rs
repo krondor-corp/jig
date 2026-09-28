@@ -63,10 +63,6 @@ pub struct AppConfig {
     // JIG_MUX env var overrides for one-off runs.
     pub mux: jig_core::mux::MuxKind,
 
-    // GitHub
-    pub auto_cleanup_merged: bool,
-    pub auto_cleanup_closed: bool,
-
     #[serde(default)]
     pub notify: NotifyConfig,
 
@@ -114,8 +110,6 @@ impl Default for AppConfig {
             tick_interval: 30,
             session_prefix: "jig-".to_string(),
             mux: jig_core::mux::MuxKind::default(),
-            auto_cleanup_merged: true,
-            auto_cleanup_closed: false,
             notify: NotifyConfig::default(),
             linear: LinearConfig::default(),
             git: GitConfig::default(),
@@ -168,10 +162,6 @@ impl AppConfig {
 
 [health]
 silence_threshold_seconds = 300  # seconds of silence before worker is "stalled"
-
-[github]
-auto_cleanup_merged = true       # clean up workers when PR merges
-auto_cleanup_closed = false      # clean up workers when PR closed without merge
 
 [spawn]
 max_concurrent_workers = 3       # max auto-spawned workers per repo

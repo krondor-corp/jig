@@ -64,6 +64,7 @@ pub fn worker_state_color(status: &WorkerStatus) -> Color {
         WorkerStatus::WaitingReview => Color::Cyan,
         WorkerStatus::Approved => Color::Green,
         WorkerStatus::Merged => Color::Green,
+        WorkerStatus::Closed => Color::DarkGrey,
         WorkerStatus::Failed => Color::Red,
         WorkerStatus::Archived => Color::DarkGrey,
     }
@@ -82,6 +83,7 @@ pub fn worker_state_str(status: &WorkerStatus) -> &'static str {
         WorkerStatus::WaitingReview => "review",
         WorkerStatus::Approved => "approved",
         WorkerStatus::Merged => "merged",
+        WorkerStatus::Closed => "closed",
         WorkerStatus::Failed => "failed",
         WorkerStatus::Archived => "archived",
     }

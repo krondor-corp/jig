@@ -214,15 +214,11 @@ When a PR is merged or closed, the daemon automatically:
 - Removes the worktree and event logs
 - Emits a `Terminal` event
 
-Pruning skips worktrees with uncommitted changes (logs a warning). On startup, the daemon scans for PRs merged/closed while it was offline and prunes stale workers.
+Pruning skips worktrees with uncommitted changes (logs a warning). On startup, the daemon scans for PRs merged or closed while it was offline and catches up.
 
-Configure cleanup behavior:
+A worker whose PR merged or closed is finished either way, so it is always cleaned up — there is nothing to configure. The branch is kept, and a worktree with uncommitted changes is left alone.
 
-```toml
-[github]
-auto_cleanup_merged = true       # default: kill workers when PR merges
-auto_cleanup_closed = false      # kill workers when PR closed without merge
-```
+A worker that *broke* — its mux window was lost, or it never started — is not pruned. It shows as `failed` and its worktree stays, because there may be something in it worth rescuing.
 
 ## Configuration
 
