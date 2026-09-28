@@ -18,13 +18,13 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{self, disable_raw_mode};
 
 use crate::context::{AppCtx, AppPaths, Ctx};
+use crate::worker::{MuxStatus, Worker};
 use jig_core::git::Branch;
 
 use crate::daemon::ipc::{self, DaemonStatus};
-use crate::daemon::pidfile::PidFile;
-use crate::daemon::{Daemon, TriageEntry, WorkerState};
+use crate::daemon::{TriageEntry, WorkerState};
 
-use crate::cli::op::{LogSink, NoOutput, Op};
+use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
 
 /// Show status of spawned sessions
@@ -76,16 +76,6 @@ impl Op for Ps {
 
         self.execute_ps(cfg, global)
     }
-
-    /// The watch view owns the terminal, so its logs go to a file (which
-    /// its `l` view tails). A one-shot table logs to stderr like anything else.
-    fn log_sink(&self) -> LogSink {
-        if self.watch.is_some() {
-            LogSink::File
-        } else {
-            LogSink::Stderr
-        }
-    }
 }
 
 /// One rendered view's worth of daemon state, whatever its source.
@@ -123,12 +113,51 @@ impl Frame {
         }
     }
 
-    fn from_daemon(daemon: &Daemon) -> Self {
+    /// Read worker state straight off disk, for when no daemon is running.
+    ///
+    /// `ps` is a client. It reduces each worker's event log and asks the mux
+    /// whether the window is still there — local reads, no side effects. PR
+    /// data is whatever the last daemon run recorded, which is the honest
+    /// answer when nothing has polled GitHub since.
+    fn from_disk(ctx: &Ctx, scope: Option<&Path>) -> Self {
+        let mut workers = Vec::new();
+
+        for repo_ctx in ctx.repos() {
+            let entry = &repo_ctx.paths;
+            if scope.is_some_and(|root| entry.repo_root != root) {
+                continue;
+            }
+            let Ok(repo) = jig_core::git::Repo::open(&entry.repo_root) else {
+                continue;
+            };
+            let repo_name = repo_ctx.name();
+            let mux = jig_core::mux::for_repo_with_prefix(
+                ctx.config.mux,
+                &ctx.config.session_prefix,
+                &repo_name,
+            );
+
+            for worker in Worker::discover(&repo) {
+                let name = worker.branch().to_string();
+                let Ok(mut state) = worker.log(&ctx.paths).reduce() else {
+                    continue;
+                };
+                state.check_silence(&ctx.config);
+                state.name = name.clone();
+                state.resolved_branch = state.branch.as_deref().unwrap_or(&name).into();
+                state.mux_status = worker.mux_status(&*mux);
+                state.mux_agent_state = mux.agent_state(&name);
+                if state.status.is_terminal() || matches!(state.mux_status, MuxStatus::NotFound) {
+                    continue;
+                }
+                workers.push(state);
+            }
+        }
+
+        workers.sort_by(|a, b| a.name.cmp(&b.name));
         Self {
-            workers: daemon.monitor.actor().workers(),
-            triages: daemon.triage.actor().active_entries(),
-            spawning: daemon.spawn.actor().spawning_workers(),
-            poll_remaining: daemon.poll_remaining_secs(),
+            workers,
+            ..Default::default()
         }
     }
 
@@ -153,10 +182,8 @@ impl Ps {
             return Ok(NoOutput);
         }
 
-        let frame = match daemon_frame(&cfg.paths, scope.as_deref()) {
-            Some(frame) => frame,
-            None => oneshot_frame(cfg)?,
-        };
+        let frame = daemon_frame(&cfg.paths, scope.as_deref())
+            .unwrap_or_else(|| Frame::from_disk(&cfg, scope.as_deref()));
         print_frame(&frame, global);
         Ok(NoOutput)
     }
@@ -176,26 +203,6 @@ fn daemon_frame(paths: &AppPaths, scope: Option<&Path>) -> Option<Frame> {
             None
         }
     }
-}
-
-/// Drive a daemon for exactly one tick — what `ps` does with no daemon up.
-fn oneshot_frame(cfg: Ctx) -> Result<Frame, PsError> {
-    let quit = AtomicBool::new(false);
-    let mut frame = Frame::default();
-    let mut daemon = Daemon::oneshot(cfg)?;
-    daemon.run(&quit, |daemon| {
-        if !daemon.wait_for_monitor(Daemon::MONITOR_WAIT) {
-            // Say so rather than printing a table that silently omits
-            // whatever the pass had not reached yet.
-            ui::warning(&format!(
-                "monitor pass still running after {}s — this table may be incomplete",
-                Daemon::MONITOR_WAIT.as_secs()
-            ));
-        }
-        frame = Frame::from_daemon(daemon);
-        false
-    });
-    Ok(frame)
 }
 
 fn print_frame(frame: &Frame, global: bool) {
@@ -250,18 +257,16 @@ const LOG_BUFFER_SIZE: usize = 50;
 enum Source {
     /// Reading a daemon someone else started.
     Daemon(u32),
-    /// No daemon was running, so this process is the daemon.
-    Hosted,
-    /// No daemon, and this view is repo-scoped so it will not become one.
-    Local,
+    /// No daemon running: worker state read straight off disk. `ps` never
+    /// starts one — looking at your workers must not change them.
+    Disk,
 }
 
 impl Source {
     fn label(&self) -> String {
         match self {
             Source::Daemon(pid) => format!("daemon pid {pid}"),
-            Source::Hosted => "hosting the daemon".into(),
-            Source::Local => "no daemon — jig daemon start".into(),
+            Source::Disk => "no daemon — jig daemon start".into(),
         }
     }
 }
@@ -460,13 +465,17 @@ fn spawn_key_reader(quit: Arc<AtomicBool>, toggle: Arc<AtomicBool>) {
     });
 }
 
-/// Run the watch loop against a running daemon, or against one this process
-/// hosts when none is up.
+/// Watch the daemon if one is running, else watch the files it left behind.
+///
+/// Either way this process only reads. `ps` used to become a daemon when none
+/// was up — spawning workers, pruning worktrees and sending nudges for as
+/// long as the view stayed open. Looking at your workers must not change
+/// them.
 fn run_watch(cfg: Ctx, global: bool, scope: Option<PathBuf>) {
     if ipc::is_running(&cfg.paths) {
         run_watch_ipc(&cfg.paths, cfg.config.tick_interval, global, scope);
     } else {
-        run_watch_local(cfg, global);
+        run_watch_disk(cfg, global, scope);
     }
 }
 
@@ -499,61 +508,13 @@ fn run_watch_ipc(paths: &AppPaths, interval: u64, global: bool, scope: Option<Pa
     }
 }
 
-/// No daemon is running, so become one for the life of this view.
-///
-/// A global watch takes the socket and PID file too, so `jig daemon status`
-/// and other `jig ps` invocations see it. A repo-scoped watch does not: the
-/// daemon contract is "watches every tracked repo", and answering for one
-/// repo under that name would be a lie.
-fn run_watch_local(cfg: Ctx, global: bool) {
-    let interval = cfg.config.tick_interval;
-    let paths = cfg.paths.clone();
-
-    let mut daemon = match Daemon::start(cfg) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("daemon error: {}", e);
+/// Re-read worker state from disk on each interval.
+fn run_watch_disk(cfg: Ctx, global: bool, scope: Option<PathBuf>) {
+    let mut watch = Watch::new(cfg.config.tick_interval, global);
+    loop {
+        let frame = Frame::from_disk(&cfg, scope.as_deref());
+        if !watch.step(&frame, Source::Disk) {
             return;
         }
-    };
-
-    let mut watch = Watch::new(interval, global);
-    watch.follow_log(crate::context::log::session_log().map(Into::into));
-
-    // Held for the life of the view; dropping them releases the socket and
-    // the single-daemon claim.
-    let hosted = if global { host_daemon(&paths) } else { None };
-    let source = match &hosted {
-        Some(_) => Source::Hosted,
-        None => Source::Local,
-    };
-    let quit = Arc::clone(&watch.quit);
-    let listener = hosted.map(|(server, pid_file)| {
-        let handle = server.spawn(daemon.shared(), Arc::clone(&quit));
-        (handle, pid_file)
-    });
-
-    daemon.run(&quit, |daemon| {
-        let frame = Frame::from_daemon(daemon);
-        watch.step(&frame, source)
-    });
-
-    if let Some((handle, pid_file)) = listener {
-        quit.store(true, Ordering::Relaxed);
-        let _ = handle.join();
-        drop(pid_file);
     }
-}
-
-/// Claim the daemon slot and socket for a hosting watch view. `None` when
-/// another daemon won the race — the view still works, it just does not
-/// answer for anyone else.
-fn host_daemon(paths: &AppPaths) -> Option<(ipc::Server, PidFile)> {
-    let pid_file = PidFile::acquire(paths)
-        .inspect_err(|e| tracing::info!("not hosting the daemon socket: {}", e))
-        .ok()?;
-    let server = ipc::Server::bind(paths)
-        .inspect_err(|e| tracing::info!("not hosting the daemon socket: {}", e))
-        .ok()?;
-    Some((server, pid_file))
 }

@@ -82,10 +82,13 @@ mod tests {
             .log_sink()
     }
 
+    /// Only the daemon writes a log file. `ps --watch` used to as well, back
+    /// when it ran a daemon of its own; as a client it has nothing to say
+    /// that is worth a file, and every invocation left an empty one behind.
     #[test]
-    fn only_watch_and_daemon_start_log_to_a_file() {
-        assert_eq!(sink(&["jig", "ps", "-gw"]), LogSink::File);
+    fn only_the_daemon_logs_to_a_file() {
         assert_eq!(sink(&["jig", "daemon", "start"]), LogSink::File);
+        assert_eq!(sink(&["jig", "ps", "-gw"]), LogSink::Stderr);
     }
 
     #[test]

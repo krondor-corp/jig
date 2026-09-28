@@ -114,29 +114,18 @@ pub struct Daemon {
     config: AppConfig,
     registry: RepoRegistry,
     last_poll: Instant,
-    /// Long-running (`jig daemon start`, `ps --watch`) rather than a single
-    /// one-shot tick. Only long-running daemons record lifecycle events.
-    persistent: bool,
     shared: DaemonShared,
 }
 
 impl Daemon {
-    /// Start a long-running daemon: records lifecycle events in
-    /// `daemon.jsonl` and can serve IPC via [`Self::shared`].
+    /// Start the daemon: records lifecycle events in `daemon.jsonl` and
+    /// serves IPC via [`Self::shared`].
+    ///
+    /// There is one of these. `jig ps` used to build a second, unnamed one to
+    /// render a table — ticking, spawning and pruning as a side effect of
+    /// being looked at. It reads state off disk instead.
     pub fn start(cfg: Ctx) -> Result<Self, DaemonError> {
-        Self::new(cfg, true)
-    }
-
-    /// Start a daemon for a one-shot tick (plain `jig ps` with no daemon
-    /// running). Leaves the lifecycle log to any long-running daemon.
-    pub fn oneshot(cfg: Ctx) -> Result<Self, DaemonError> {
-        Self::new(cfg, false)
-    }
-
-    fn new(cfg: Ctx, persistent: bool) -> Result<Self, DaemonError> {
-        if persistent {
-            log_startup(&cfg.paths);
-        }
+        log_startup(&cfg.paths);
         recover_orphans(&cfg.paths, &cfg.config, &cfg.registry);
 
         let last_poll = Instant::now() - Duration::from_secs(cfg.config.poll_interval + 1);
@@ -176,7 +165,6 @@ impl Daemon {
             config: cfg.config,
             registry: cfg.registry,
             last_poll,
-            persistent,
             shared,
         })
     }
@@ -240,9 +228,7 @@ impl Daemon {
                 }
             }
         }
-        if self.persistent {
-            log_shutdown(&self.paths, "normal");
-        }
+        log_shutdown(&self.paths, "normal");
     }
 
     /// Whether the poll interval has elapsed.
