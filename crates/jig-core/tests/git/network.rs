@@ -36,3 +36,27 @@ fn jig_bounds_how_long_libgit2_waits_on_a_remote() {
         assert_eq!(git2::opts::get_server_timeout_in_milliseconds().unwrap(), 0);
     }
 }
+
+/// Fetch over SSH with no agent available — a daemon installed as a service.
+///
+/// Ignored: needs the network and a **passphrase-less** key in `~/.ssh` that
+/// GitHub accepts — i.e. a headless box, which is the case this exists for. On
+/// a dev machine whose key is passphrase-protected (macOS `UseKeychain`) it
+/// fails by design: without an agent there is nowhere to get the passphrase.
+///
+/// Run with `cargo test -p jig-core --test git -- --ignored ssh`.
+#[test]
+#[ignore]
+fn fetches_over_ssh_without_an_agent() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let repo = jig_core::git::Repo::init(tmp.path()).unwrap();
+    repo.inner()
+        .remote("origin", "git@github.com:krondor-corp/jig.git")
+        .unwrap();
+
+    // What a systemd service sees: no agent, only key files on disk.
+    unsafe { std::env::remove_var("SSH_AUTH_SOCK") };
+
+    repo.fetch("origin", &["refs/heads/main:refs/remotes/origin/main"])
+        .expect("fetch should fall back to ~/.ssh keys when there is no agent");
+}

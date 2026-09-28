@@ -718,23 +718,123 @@ fn prune(wt: &git2::Worktree, force: bool) -> Result<()> {
     Ok(())
 }
 
+/// Private keys to offer for SSH, in the order ssh(1) would.
+fn ssh_keys() -> Vec<PathBuf> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let ssh = home.join(".ssh");
+    ["id_ed25519", "id_ecdsa", "id_rsa"]
+        .iter()
+        .map(|name| ssh.join(name))
+        .filter(|key| key.exists())
+        .collect()
+}
+
 /// Remote authentication callbacks — the single source of credentials for every
 /// network operation in this module. Both `fetch` and `push_branch` route
 /// through it; do not inline a second `credentials` closure. A remote operation
 /// that omits these callbacks fails against any authenticated remote with
 /// "authentication required but no callback set".
+///
+/// For SSH we offer the agent first, then the usual key files. The agent alone
+/// is not enough: a daemon installed as a service has no agent, because
+/// `SSH_AUTH_SOCK` belongs to a login session. On such a machine `git fetch`
+/// works — it reads the key off disk — while jig failed with
+/// "remote rejected authentication", which then wedged the sync and spawn
+/// actors for as long as the daemon ran.
+///
+/// libgit2 calls this again after each rejection, so `attempt` walks the
+/// candidates. A passphrase-protected key still needs the agent; there is
+/// nowhere to prompt from inside a daemon.
 fn remote_callbacks() -> git2::RemoteCallbacks<'static> {
     let mut callbacks = git2::RemoteCallbacks::new();
-    callbacks.credentials(|url, username_from_url, allowed_types| {
+    let keys = ssh_keys();
+    let mut attempt = 0usize;
+
+    callbacks.credentials(move |url, username_from_url, allowed_types| {
         if allowed_types.contains(git2::CredentialType::SSH_KEY) {
-            git2::Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
-        } else if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-            git2::Cred::credential_helper(&git2::Config::open_default()?, url, username_from_url)
-        } else if allowed_types.contains(git2::CredentialType::DEFAULT) {
-            git2::Cred::default()
-        } else {
-            Err(git2::Error::from_str("no available credentials"))
+            let user = username_from_url.unwrap_or("git");
+            let which = attempt;
+            attempt += 1;
+
+            if which == 0 {
+                if let Ok(cred) = git2::Cred::ssh_key_from_agent(user) {
+                    return Ok(cred);
+                }
+                // No agent, or it holds nothing useful — fall through to the
+                // first key rather than spending this attempt on it.
+                attempt = 1;
+            }
+
+            return match keys.get(attempt - 1) {
+                Some(key) => {
+                    let public = key.with_extension("pub");
+                    git2::Cred::ssh_key(
+                        user,
+                        public.exists().then_some(public.as_path()),
+                        key,
+                        None,
+                    )
+                }
+                // Out of candidates. Which message depends on whether there
+                // was anything to try, because the fixes are different.
+                None if keys.is_empty() => Err(git2::Error::from_str(
+                    "no SSH credentials: no ssh-agent, and no key in ~/.ssh",
+                )),
+                None => Err(git2::Error::from_str(
+                    "SSH keys in ~/.ssh were all rejected. A passphrase-protected \
+                     key needs an ssh-agent, which a daemon installed as a service \
+                     does not have",
+                )),
+            };
         }
+
+        if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+            return git2::Cred::credential_helper(
+                &git2::Config::open_default()?,
+                url,
+                username_from_url,
+            );
+        }
+        if allowed_types.contains(git2::CredentialType::DEFAULT) {
+            return git2::Cred::default();
+        }
+        Err(git2::Error::from_str("no available credentials"))
     });
     callbacks
+}
+
+#[cfg(test)]
+mod ssh_tests {
+    use super::*;
+
+    /// The candidates are the ones ssh(1) would try, newest algorithm first.
+    #[test]
+    fn ssh_keys_are_offered_in_ssh_order() {
+        let order = ["id_ed25519", "id_ecdsa", "id_rsa"];
+        let found = ssh_keys();
+        let names: Vec<String> = found
+            .iter()
+            .map(|k| k.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        // Whatever this machine happens to have, it must be a subsequence of
+        // the preference order and live under ~/.ssh.
+        let mut expected = order.iter().filter(|n| names.contains(&n.to_string()));
+        for name in &names {
+            assert_eq!(
+                expected.next().map(|n| n.to_string()),
+                Some(name.clone()),
+                "keys offered out of preference order: {names:?}"
+            );
+        }
+        for key in &found {
+            assert!(key.ends_with(format!(
+                ".ssh/{}",
+                key.file_name().unwrap().to_string_lossy()
+            )));
+            assert!(key.exists(), "only existing keys should be offered");
+        }
+    }
 }
