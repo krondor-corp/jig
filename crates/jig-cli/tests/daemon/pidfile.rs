@@ -68,3 +68,43 @@ fn a_garbage_pid_file_is_taken_over() {
     let held = PidFile::acquire(&paths).expect("an unparseable pid file must not wedge the daemon");
     assert_eq!(held.pid(), std::process::id());
 }
+
+/// KRO-221. macOS has no `XDG_RUNTIME_DIR`, so the pid file lives under
+/// `~/.config` and survives a reboot — and the recorded PID is then very
+/// likely to have been handed to something else entirely. `kill(pid, 0)`
+/// cannot tell the difference, so the daemon refused to start until someone
+/// deleted the file by hand.
+#[test]
+fn a_claim_from_before_a_reboot_does_not_block_the_daemon() {
+    let (_sandbox, paths, path) = sandbox();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+    // pid 1 is always alive and is emphatically not our daemon. The second
+    // field is the boot the claim was made in — 1970, i.e. some boot ago.
+    std::fs::write(&path, "1 1").unwrap();
+
+    let held =
+        PidFile::acquire(&paths).expect("a claim from an earlier boot must not block a restart");
+    assert_eq!(held.pid(), std::process::id());
+}
+
+#[test]
+fn a_live_claim_from_this_boot_still_blocks_a_second_daemon() {
+    let (_sandbox, paths, path) = sandbox();
+    let held = PidFile::acquire(&paths).unwrap();
+
+    // Take the boot stamp jig just wrote and hand the claim to pid 1, which
+    // is alive and is not us. The boot check must not have loosened the gate.
+    let written = std::fs::read_to_string(&path).unwrap();
+    let boot = written
+        .split_whitespace()
+        .nth(1)
+        .expect("a fresh claim should record its boot");
+    std::fs::write(&path, format!("1 {boot}")).unwrap();
+
+    match PidFile::acquire(&paths) {
+        Err(PidFileError::AlreadyRunning(pid)) => assert_eq!(pid, 1),
+        other => panic!("expected AlreadyRunning, got {other:?}"),
+    }
+    drop(held);
+}
