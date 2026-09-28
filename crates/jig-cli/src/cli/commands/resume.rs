@@ -8,8 +8,8 @@ use jig_core::Worktree;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
-use crate::context::RepoCtx;
+use crate::context::AppCtx;
+use crate::context::Ctx;
 
 /// Resume a dead worker by relaunching its agent session
 #[derive(Args, Debug, Clone)]
@@ -25,7 +25,7 @@ pub struct Resume {
 #[derive(Debug, thiserror::Error)]
 pub enum ResumeError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Worker(#[from] crate::worker::WorkerError),
     #[error(transparent)]
@@ -35,20 +35,21 @@ pub enum ResumeError {
 }
 
 impl Op for Resume {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = ResumeError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, ResumeError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, ResumeError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
-        let repo_name = ctx.repo.name();
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        let repo_name = ctx.repo()?.name();
+        let repo = ctx.repo()?;
         let mux = jig_core::mux::for_repo(ctx.config.mux, &repo_name);
 
         // Open existing worktree
-        let wt_path = ctx.repo.worktrees_path.join(&self.branch);
+        let wt_path = repo.paths.worktrees_path.join(&self.branch);
         if !wt_path.exists() {
             return Err(ResumeError::Usage(format!(
                 "worktree '{}' not found",
@@ -76,11 +77,10 @@ impl Op for Resume {
             .clone()
             .unwrap_or_else(|| "You were interrupted. Resume your previous task.".to_string());
 
-        let jig_config = ctx.jig_toml;
         let agent = agents::Agent::from_config(
-            &jig_config.agent.agent_type,
-            jig_config.agent.model.as_deref(),
-            &jig_config.agent.disallowed_tools,
+            &repo.config.agent.agent_type,
+            repo.config.agent.model.as_deref(),
+            &repo.config.agent.disallowed_tools,
         )
         .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
 

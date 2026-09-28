@@ -1,4 +1,4 @@
-//! Config, repo config and paths on disk.
+//! AppConfig, repo config and paths on disk.
 
 #[path = "../common/mod.rs"]
 mod common;

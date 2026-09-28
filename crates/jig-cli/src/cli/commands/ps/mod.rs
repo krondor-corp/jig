@@ -17,7 +17,7 @@ use clap::Args;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{self, disable_raw_mode};
 
-use crate::context::{AppPaths, Context, ScopedCtx};
+use crate::context::{AppCtx, AppPaths, Ctx};
 use jig_core::git::Branch;
 
 use crate::daemon::ipc::{self, DaemonStatus};
@@ -46,33 +46,34 @@ pub struct Ps {
 #[derive(Debug, thiserror::Error)]
 pub enum PsError {
     #[error("failed to list tasks: {0}")]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Daemon(#[from] crate::daemon::DaemonError),
 }
 
 impl Op for Ps {
-    type Context = ScopedCtx;
+    type Context = Ctx;
     type Error = PsError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, PsError> {
-        Ok(ScopedCtx::from_global(paths, self.global)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, PsError> {
+        Ok(Ctx::scoped(app, self.global)?)
     }
 
-    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
         let global = self.global;
-        let cfg: Context = match ctx {
-            ScopedCtx::Repo(r) => {
-                let max_workers = self
-                    .max_workers
-                    .unwrap_or(r.jig_toml.spawn.max_concurrent_workers);
-                let mut c = Context::from(r);
-                c.config.max_concurrent_workers = max_workers;
-                c
-            }
-            ScopedCtx::Global(g) => Context::from(g),
-        };
+        let mut cfg = ctx;
+
+        // `--max-workers` overrides, else the repo's own setting when there
+        // is exactly one repo in play.
+        if let Some(max) = self.max_workers.or_else(|| {
+            cfg.repo()
+                .ok()
+                .map(|r| r.config.spawn.max_concurrent_workers)
+        }) {
+            cfg.config.max_concurrent_workers = max;
+        }
+
         self.execute_ps(cfg, global)
     }
 
@@ -137,13 +138,13 @@ impl Frame {
 }
 
 impl Ps {
-    fn execute_ps(&self, mut cfg: Context, global: bool) -> Result<NoOutput, PsError> {
+    fn execute_ps(&self, mut cfg: Ctx, global: bool) -> Result<NoOutput, PsError> {
         // A repo-scoped `ps` filters a global daemon's answer down to the
         // repo it was run in; `-g` takes the frame whole.
         let scope = if global {
             None
         } else {
-            cfg.repos.first().map(|r| r.repo_root.clone())
+            cfg.repos().first().map(|r| r.paths.repo_root.clone())
         };
 
         if let Some(interval) = self.watch {
@@ -178,7 +179,7 @@ fn daemon_frame(paths: &AppPaths, scope: Option<&Path>) -> Option<Frame> {
 }
 
 /// Drive a daemon for exactly one tick — what `ps` does with no daemon up.
-fn oneshot_frame(cfg: Context) -> Result<Frame, PsError> {
+fn oneshot_frame(cfg: Ctx) -> Result<Frame, PsError> {
     let quit = AtomicBool::new(false);
     let mut frame = Frame::default();
     let mut daemon = Daemon::oneshot(cfg)?;
@@ -461,7 +462,7 @@ fn spawn_key_reader(quit: Arc<AtomicBool>, toggle: Arc<AtomicBool>) {
 
 /// Run the watch loop against a running daemon, or against one this process
 /// hosts when none is up.
-fn run_watch(cfg: Context, global: bool, scope: Option<PathBuf>) {
+fn run_watch(cfg: Ctx, global: bool, scope: Option<PathBuf>) {
     if ipc::is_running(&cfg.paths) {
         run_watch_ipc(&cfg.paths, cfg.config.tick_interval, global, scope);
     } else {
@@ -504,7 +505,7 @@ fn run_watch_ipc(paths: &AppPaths, interval: u64, global: bool, scope: Option<Pa
 /// and other `jig ps` invocations see it. A repo-scoped watch does not: the
 /// daemon contract is "watches every tracked repo", and answering for one
 /// repo under that name would be a lie.
-fn run_watch_local(cfg: Context, global: bool) {
+fn run_watch_local(cfg: Ctx, global: bool) {
     let interval = cfg.config.tick_interval;
     let paths = cfg.paths.clone();
 

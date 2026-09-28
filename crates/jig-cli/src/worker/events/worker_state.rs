@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use url::Url;
 
-use crate::context::{Config, RepoEntry};
+use crate::context::{AppConfig, RepoEntry};
 use crate::daemon::checks::PrHealth;
 use crate::worker::{MuxStatus, WorkerStatus};
 use jig_core::git::Branch;
@@ -101,7 +101,7 @@ impl Default for WorkerState {
 }
 
 impl WorkerState {
-    pub fn check_silence(&mut self, config: &Config) {
+    pub fn check_silence(&mut self, config: &AppConfig) {
         if self.status.is_terminal() {
             return;
         }

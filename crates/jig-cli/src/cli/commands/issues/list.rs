@@ -10,8 +10,7 @@ use jig_core::issues::{self, Issue as CoreIssue, IssueFilter, IssuePriority, Iss
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::AppPaths;
-use crate::context::{Context, ScopedCtx};
+use crate::context::{AppCtx, Ctx};
 
 #[derive(Debug)]
 pub enum ListOutput {
@@ -72,7 +71,7 @@ impl fmt::Display for ListOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum ListError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
     #[error("{0}")]
@@ -190,9 +189,10 @@ impl List {
         Ok(ListOutput::Table(all_issues, auto_spawn_labels))
     }
 
-    fn run_list(&self, cfg: &Context) -> Result<ListOutput, ListError> {
-        let repo = cfg.repo()?;
+    fn run_list(&self, cfg: &Ctx) -> Result<ListOutput, ListError> {
+        let _repo = cfg;
         let filter = self.filter();
+        let repo = cfg.repo()?;
         let provider = repo.issue_provider(&cfg.config)?;
 
         if let Some(ref id) = self.id {
@@ -202,7 +202,7 @@ impl List {
             return Ok(ListOutput::Detail(Box::new(issue)));
         }
 
-        let spawn_labels = repo.repo.issues.auto_spawn_labels.clone();
+        let spawn_labels = repo.config.issues.auto_spawn_labels.clone();
         let all_issues = if self.auto {
             let labels = spawn_labels.as_deref().unwrap_or(&[]);
             let mut spawnable = provider.list(&IssueFilter {
@@ -220,11 +220,12 @@ impl List {
         self.finish(all_issues, spawn_labels)
     }
 
-    fn run_list_global(&self, cfg: &Context) -> Result<ListOutput, ListError> {
+    fn run_list_global(&self, cfg: &Ctx) -> Result<ListOutput, ListError> {
         let filter = self.filter();
 
         let mut all_issues = Vec::new();
-        for repo in &cfg.repos {
+        for _repo in cfg.repos() {
+            let repo = cfg.repo()?;
             let provider = repo.issue_provider(&cfg.config)?;
 
             if let Some(ref id) = self.id {
@@ -234,7 +235,7 @@ impl List {
                 continue;
             }
 
-            let spawn_labels = repo.repo.issues.auto_spawn_labels.clone();
+            let spawn_labels = repo.config.issues.auto_spawn_labels.clone();
             let repo_issues = if self.auto {
                 let labels = spawn_labels.as_deref().unwrap_or(&[]);
                 let mut spawnable = provider.list(&IssueFilter {
@@ -261,18 +262,20 @@ impl List {
 }
 
 impl Op for List {
-    type Context = ScopedCtx;
+    type Context = Ctx;
     type Error = ListError;
     type Output = ListOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, ListError> {
-        Ok(ScopedCtx::from_global(paths, self.global)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, ListError> {
+        Ok(Ctx::scoped(app, self.global)?)
     }
 
-    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
-        match ctx {
-            ScopedCtx::Repo(r) => self.run_list(&Context::from(r)),
-            ScopedCtx::Global(g) => self.run_list_global(&Context::from(g)),
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        // `-g` groups by repo; otherwise it is a single flat list.
+        if self.global {
+            self.run_list_global(&ctx)
+        } else {
+            self.run_list(&ctx)
         }
     }
 }

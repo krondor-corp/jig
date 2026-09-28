@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::context::{self, RepoConfig};
+use crate::context::{self, RepoCtx};
 use jig_core::agents;
 use jig_core::git::{Branch, Repo};
 use jig_core::issues::issue::{IssueFilter, IssueStatus};
@@ -56,7 +56,7 @@ impl Actor for SpawnActor {
                 }
             };
 
-            let cfg = match RepoConfig::from_path(&repo_root) {
+            let cfg = match RepoCtx::from_path(&repo_root) {
                 Ok(cfg) => cfg,
                 Err(e) => {
                     tracing::debug!(repo = %repo_name, error = %e, "failed to load config");
@@ -131,7 +131,7 @@ impl Actor for SpawnActor {
                 .filter_map(|wt| wt.branch().ok())
                 .collect();
 
-            let max_workers = cfg.repo.spawn.max_concurrent_workers;
+            let max_workers = cfg.config.spawn.max_concurrent_workers;
             let budget = max_workers.saturating_sub(existing_branches.len());
 
             if budget == 0 {
@@ -145,7 +145,7 @@ impl Actor for SpawnActor {
             }
 
             // -- Auto-spawn --
-            let Some(labels) = &cfg.repo.issues.auto_spawn_labels else {
+            let Some(labels) = &cfg.config.issues.auto_spawn_labels else {
                 continue;
             };
 
@@ -214,7 +214,7 @@ fn spawn_worker_for_issue(
     repo_root: &Path,
     issue: &Issue,
     worker_name: &str,
-    cfg: &RepoConfig,
+    cfg: &RepoCtx,
     provider: &IssueProvider,
     mux: &dyn jig_core::mux::Mux,
 ) -> std::result::Result<Worker, String> {
@@ -237,22 +237,22 @@ fn spawn_worker_for_issue(
     let branch = issue.branch().clone();
 
     let agent = agents::Agent::from_config(
-        &cfg.repo.agent.agent_type,
-        cfg.repo.agent.model.as_deref(),
-        &cfg.repo.agent.disallowed_tools,
+        &cfg.config.agent.agent_type,
+        cfg.config.agent.model.as_deref(),
+        &cfg.config.agent.disallowed_tools,
     )
     .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
 
     let prompt = crate::prompts::spawn_task(issue, provider);
 
     let copy_files: Vec<std::path::PathBuf> = cfg
-        .repo
+        .config
         .worktree
         .copy
         .iter()
         .map(std::path::PathBuf::from)
         .collect();
-    let on_create = cfg.repo.worktree.on_create();
+    let on_create = cfg.config.worktree.on_create();
 
     let worker = Worker::spawn(
         &ctx.paths,

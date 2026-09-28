@@ -8,8 +8,8 @@ use clap::Args;
 
 use crate::cli::op::{LogSink, NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
-use crate::context::Context;
+use crate::context::AppCtx;
+use crate::context::Ctx;
 use crate::daemon::ipc::{IpcError, Server};
 use crate::daemon::pidfile::{PidFile, PidFileError};
 use crate::daemon::{Daemon, DaemonError};
@@ -40,7 +40,7 @@ pub enum StartError {
     #[error(transparent)]
     Daemon(#[from] DaemonError),
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
 }
 
 impl Start {
@@ -53,16 +53,16 @@ impl Start {
 }
 
 impl Op for Start {
-    type Context = Context;
+    type Context = Ctx;
     type Error = StartError;
     type Output = NoOutput;
 
     /// Always global: one daemon per user, watching every tracked repo.
-    fn build_context(&self, paths: &AppPaths) -> Result<Context, StartError> {
-        Ok(Context::from_global(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, StartError> {
+        Ok(Ctx::everywhere(app)?)
     }
 
-    fn run(&self, cfg: Context) -> Result<Self::Output, Self::Error> {
+    fn run(&self, cfg: Ctx) -> Result<Self::Output, Self::Error> {
         // Claim the slot before doing any work, so a second daemon fails
         // fast and loudly rather than half-starting and fighting the first.
         let pid_file = PidFile::acquire(&cfg.paths)?;

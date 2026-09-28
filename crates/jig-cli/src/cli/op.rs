@@ -1,13 +1,13 @@
 //! Op trait — typed command pattern for CLI operations
 //!
-//! Every CLI command implements `Op`: it declares a `Context` shape, builds
+//! Every CLI command implements `Op`: it declares a `Ctx` shape, builds
 //! that context via `build_context`, then runs with `run(ctx)`. Formatting
 //! lives in `Display` impls on the output types.
 
 use std::error::Error;
 use std::fmt::Display;
 
-use crate::context::AppPaths;
+use crate::context::AppCtx;
 
 /// Where a command's tracing output goes. Decided per invocation by
 /// [`Op::log_sink`], before the command runs.
@@ -27,9 +27,9 @@ pub trait Op {
     type Error: Error + Send + Sync + 'static;
     type Output: Display;
 
-    /// Build this command's context. `paths` is where jig keeps its files,
-    /// resolved from the environment once by `main`.
-    fn build_context(&self, paths: &AppPaths) -> Result<Self::Context, Self::Error>;
+    /// Build this command's context from what `main` resolved before it knew
+    /// which command this was.
+    fn build_context(&self, app: AppCtx) -> Result<Self::Context, Self::Error>;
     fn run(&self, ctx: Self::Context) -> Result<Self::Output, Self::Error>;
 
     /// Where this invocation's tracing output goes. Override only when
@@ -77,22 +77,22 @@ macro_rules! command_enum {
         }
 
         impl $crate::cli::op::Op for Command {
-            type Context = $crate::context::AppPaths;
+            type Context = $crate::context::AppCtx;
             type Output = OpOutput;
             type Error = OpError;
 
             fn build_context(
                 &self,
-                paths: &$crate::context::AppPaths,
-            ) -> Result<$crate::context::AppPaths, Self::Error> {
-                Ok(paths.clone())
+                app: $crate::context::AppCtx,
+            ) -> Result<$crate::context::AppCtx, Self::Error> {
+                Ok(app)
             }
 
-            fn run(&self, paths: $crate::context::AppPaths) -> Result<Self::Output, Self::Error> {
+            fn run(&self, app: $crate::context::AppCtx) -> Result<Self::Output, Self::Error> {
                 match self {
                     $(
                         Command::$variant(op) => {
-                            let ctx = op.build_context(&paths).map_err(OpError::$variant)?;
+                            let ctx = op.build_context(app).map_err(OpError::$variant)?;
                             op.run(ctx)
                                 .map(OpOutput::$variant)
                                 .map_err(OpError::$variant)

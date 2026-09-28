@@ -237,8 +237,8 @@ _jig() {
                     ;;
                 spawn)
                     _arguments \
-                        '-c[Context]:context:' \
-                        '--context=[Context]:context:' \
+                        '-c[Ctx]:context:' \
+                        '--context=[Ctx]:context:' \
                         '-b[Base branch]:branch:_jig_branches' \
                         '--base=[Base branch]:branch:_jig_branches' \
                         '-I[Issue]:issue:_jig_issues' \
@@ -349,7 +349,7 @@ complete -c jig -n '__jig_using_command remove' -a '(__jig_worktrees)' -d 'Workt
 complete -c jig -n '__jig_using_command remove' -l force -s f -d 'Force'
 complete -c jig -n '__jig_using_command init' -l force -s f -d 'Force'
 complete -c jig -n '__jig_using_command init' -l backup -d 'Backup'
-complete -c jig -n '__jig_using_command spawn' -l context -s c -d 'Context'
+complete -c jig -n '__jig_using_command spawn' -l context -s c -d 'Ctx'
 complete -c jig -n '__jig_using_command spawn' -l issue -s I -a '(__jig_issues)' -d 'Issue'
 complete -c jig -n '__jig_using_command spawn' -l base -s b -a '(__jig_branches)' -d 'Base branch'
 complete -c jig -n '__jig_using_command spawn' -l auto -d 'Auto-start'

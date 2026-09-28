@@ -24,6 +24,7 @@ use service_manager::{
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
+use crate::context::AppCtx;
 use crate::context::AppPaths;
 
 /// What the service is called to launchd/systemd.
@@ -113,8 +114,8 @@ impl Op for Install {
     type Error = ServiceError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, ServiceError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, ServiceError> {
+        Ok(app.paths)
     }
 
     fn run(&self, _: AppPaths) -> Result<Self::Output, Self::Error> {
@@ -175,8 +176,8 @@ impl Op for Uninstall {
     type Error = ServiceError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, ServiceError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, ServiceError> {
+        Ok(app.paths)
     }
 
     fn run(&self, _: AppPaths) -> Result<Self::Output, Self::Error> {

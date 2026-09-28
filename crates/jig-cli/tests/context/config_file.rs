@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use jig_cli::context::{Config, NotifyConfig};
+use jig_cli::context::{AppConfig, NotifyConfig};
 use jig_core::exec::{Hook, Timeout};
 
 #[test]
@@ -10,7 +10,7 @@ fn roundtrip() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("config.toml");
 
-    let cfg = Config {
+    let cfg = AppConfig {
         silence_threshold_seconds: 600,
         notify: NotifyConfig {
             exec: Some(Hook::new("notify-send", Timeout::QUICK)),
@@ -22,7 +22,7 @@ fn roundtrip() {
     };
 
     cfg.save_to(&path).unwrap();
-    let loaded = Config::load_from(&path).unwrap();
+    let loaded = AppConfig::load_from(&path).unwrap();
 
     assert_eq!(loaded.silence_threshold_seconds, 600);
     assert_eq!(
@@ -40,7 +40,7 @@ fn roundtrip() {
 fn missing_file_returns_defaults() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("nonexistent.toml");
-    let cfg = Config::load_from(&path).unwrap();
+    let cfg = AppConfig::load_from(&path).unwrap();
     assert_eq!(cfg.silence_threshold_seconds, 300);
 }
 
@@ -61,7 +61,7 @@ labels = ["auto", "backend"]
     )
     .unwrap();
 
-    let cfg = Config::load_from(&path).unwrap();
+    let cfg = AppConfig::load_from(&path).unwrap();
     let profile = cfg.linear.profiles.get("work").unwrap();
     assert_eq!(profile.api_key, "lin_api_test");
     assert_eq!(profile.team.as_deref(), Some("ENG"));
@@ -76,7 +76,7 @@ fn partial_toml_fills_defaults() {
     let path = tmp.path().join("config.toml");
     fs::write(&path, "silence_threshold_seconds = 600\n").unwrap();
 
-    let cfg = Config::load_from(&path).unwrap();
+    let cfg = AppConfig::load_from(&path).unwrap();
     assert_eq!(cfg.silence_threshold_seconds, 600);
     assert_eq!(cfg.max_concurrent_workers, 3);
     assert!(cfg.notify.exec.is_none());

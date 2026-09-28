@@ -5,8 +5,7 @@ use clap::Args;
 use jig_core::issues::{Issue as CoreIssue, IssueFilter, IssuePriority, IssueStatus};
 
 use crate::cli::op::Op;
-use crate::context::AppPaths;
-use crate::context::{Context, RepoConfig, ScopedCtx};
+use crate::context::{AppCtx, Ctx, RepoCtx};
 
 /// Show issue statistics
 #[derive(Args, Debug, Clone)]
@@ -43,14 +42,14 @@ impl fmt::Display for StatsOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum StatsError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
 }
 
 fn run_for_repos(
-    repos: &[RepoConfig],
-    global: &crate::context::Config,
+    repos: &[RepoCtx],
+    global: &crate::context::AppConfig,
 ) -> Result<StatsOutput, StatsError> {
     let mut all_issues = Vec::new();
     for repo in repos {
@@ -115,19 +114,15 @@ fn compute_stats(issues: &[CoreIssue]) -> StatsOutput {
 }
 
 impl Op for Stats {
-    type Context = ScopedCtx;
+    type Context = Ctx;
     type Error = StatsError;
     type Output = StatsOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, StatsError> {
-        Ok(ScopedCtx::from_global(paths, self.global)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, StatsError> {
+        Ok(Ctx::scoped(app, self.global)?)
     }
 
-    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
-        let cfg: Context = match ctx {
-            ScopedCtx::Global(g) => g.into(),
-            ScopedCtx::Repo(r) => r.into(),
-        };
-        run_for_repos(&cfg.repos, &cfg.config)
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        run_for_repos(ctx.repos(), &ctx.config)
     }
 }

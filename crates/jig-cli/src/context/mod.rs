@@ -36,12 +36,12 @@ pub enum ContextError {
     Config(String),
 }
 
-pub use config::Config;
+pub use config::AppConfig;
 pub use config::{LinearConfig, LinearProfile, NotifyConfig};
 pub use paths::{hook_registry_path, AppPaths};
 pub use registry::{RepoEntry, RepoRegistry};
 pub use repo::{
-    AgentConfig, IssuesConfig, JigToml, LinearIssuesConfig, SpawnConfig, TriageConfig,
+    AgentConfig, IssuesConfig, LinearIssuesConfig, RepoConfig, SpawnConfig, TriageConfig,
     WorktreeConfig,
 };
 
@@ -59,15 +59,23 @@ pub fn worktree_path(repo_root: &Path, worker_name: &str) -> PathBuf {
     repo_root.join(JIG_DIR).join(worker_name)
 }
 
-/// Per-repo configuration: paths + jig.toml.
-pub struct RepoConfig {
+/// Where one repo lives on disk.
+pub struct RepoPaths {
     pub repo_root: PathBuf,
     pub worktrees_path: PathBuf,
     pub git_common_dir: PathBuf,
-    pub repo: JigToml,
 }
 
-impl RepoConfig {
+/// A repo jig knows about: where it is, and how it is configured.
+///
+/// Mirrors [`AppCtx`] one level down — paths plus the config that governs
+/// them.
+pub struct RepoCtx {
+    pub paths: RepoPaths,
+    pub config: RepoConfig,
+}
+
+impl RepoCtx {
     pub fn from_cwd() -> Result<Self, ContextError> {
         let git_repo = Repo::discover()?;
         let git_common_dir = git_repo.common_dir();
@@ -88,21 +96,26 @@ impl RepoConfig {
         Self::build(repo_root, git_common_dir)
     }
 
+    /// A missing `jig.toml` is fine and yields defaults. A malformed one is
+    /// an error — silently falling back would drop the agent, issue provider
+    /// and hooks the user thought they had configured.
     fn build(repo_root: PathBuf, git_common_dir: PathBuf) -> Result<Self, ContextError> {
         let worktrees_path = repo_root.join(JIG_DIR);
-        let repo = JigToml::load(&repo_root)?.unwrap_or_default();
+        let config = RepoConfig::load(&repo_root)?.unwrap_or_default();
         Ok(Self {
-            repo_root,
-            worktrees_path,
-            git_common_dir,
-            repo,
+            paths: RepoPaths {
+                repo_root,
+                worktrees_path,
+                git_common_dir,
+            },
+            config,
         })
     }
 
     /// Effective base branch: jig.toml > global config > "origin/main"
-    pub fn base_branch(&self, config: &Config) -> Branch {
+    pub fn base_branch(&self, config: &AppConfig) -> Branch {
         let name = self
-            .repo
+            .config
             .worktree
             .base
             .clone()
@@ -113,7 +126,8 @@ impl RepoConfig {
 
     /// Display name derived from the repo root directory.
     pub fn name(&self) -> String {
-        self.repo_root
+        self.paths
+            .repo_root
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string())
@@ -122,6 +136,7 @@ impl RepoConfig {
     /// Tmux session name for this repo.
     pub fn session_name(&self) -> String {
         let repo_name = self
+            .paths
             .repo_root
             .file_name()
             .and_then(|n| n.to_str())
@@ -130,8 +145,8 @@ impl RepoConfig {
     }
 
     /// Create an issue provider from whatever backend is configured.
-    pub fn issue_provider(&self, config: &Config) -> Result<IssueProvider, ContextError> {
-        if self.repo.issues.linear.is_some() {
+    pub fn issue_provider(&self, config: &AppConfig) -> Result<IssueProvider, ContextError> {
+        if self.config.issues.linear.is_some() {
             return Ok(IssueProvider::new(Box::new(self.linear_provider(config)?)));
         }
         Err(ContextError::Config(
@@ -140,8 +155,8 @@ impl RepoConfig {
     }
 
     /// Create a Linear provider.
-    pub fn linear_provider(&self, config: &Config) -> Result<LinearProvider, ContextError> {
-        let linear_config = self.repo.issues.linear.as_ref().ok_or_else(|| {
+    pub fn linear_provider(&self, config: &AppConfig) -> Result<LinearProvider, ContextError> {
+        let linear_config = self.config.issues.linear.as_ref().ok_or_else(|| {
             ContextError::Config(
                 "[issues.linear] config required when provider = \"linear\"".into(),
             )
@@ -196,163 +211,141 @@ impl RepoConfig {
     }
 }
 
-/// Runtime context: config + repo registry + resolved repo configs.
-pub struct Context {
-    pub paths: AppPaths,
-    pub config: Config,
-    pub registry: RepoRegistry,
-    pub repos: Vec<RepoConfig>,
+/// Flags that apply to every command, from the top-level CLI.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Flags {
+    pub verbose: bool,
+    pub plain: bool,
 }
 
-impl Context {
-    /// Single repo from cwd.
-    pub fn from_cwd(paths: &AppPaths) -> Result<Self, ContextError> {
-        let config = Config::load(paths).unwrap_or_default();
-        let repo = RepoConfig::from_cwd()?;
-        Ok(Self::for_repo(paths, repo, config))
+/// Everything resolvable before we know which command this is: where jig's
+/// files are, what the user configured, and how they invoked us.
+///
+/// Built once in `main` and handed to every command's `build_context`.
+pub struct AppCtx {
+    pub paths: AppPaths,
+    pub config: AppConfig,
+    pub flags: Flags,
+}
+
+impl AppCtx {
+    /// A malformed global config falls back to defaults rather than failing,
+    /// because `jig config` is how you would fix it — but it says so, rather
+    /// than pretending the file was empty.
+    pub fn load(paths: AppPaths, flags: Flags) -> Self {
+        let config = match AppConfig::load(&paths) {
+            Ok(config) => config,
+            Err(e) => {
+                tracing::warn!("ignoring {}: {e}", paths.config_file().display());
+                AppConfig::default()
+            }
+        };
+        Self {
+            paths,
+            config,
+            flags,
+        }
     }
 
-    /// A single-repo context for `repo`, recording it in the global registry
-    /// so daemon/-g commands see it.
+    /// Process-wide state, set once.
     ///
-    /// Recording is best-effort — last-writer-wins under concurrent jig
-    /// processes, which is acceptable for a path list, and a filesystem
-    /// problem must not fail an unrelated command.
-    pub fn for_repo(paths: &AppPaths, repo: RepoConfig, config: Config) -> Self {
-        register_globally(paths, &repo.repo_root);
+    /// Everything here writes a global — a C library's settings, or a static
+    /// in this process — so it happens in one place rather than scattered
+    /// down `main`. Must run before any thread is spawned.
+    pub fn set_globals(&self) {
+        crate::cli::ui::set_plain(self.flags.plain);
+
+        // The `colored` crate checks stdout for TTY detection, but all jig
+        // output goes to stderr. Decide from stderr instead.
+        if !self.flags.plain && std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+            colored::control::set_override(true);
+        }
+    }
+}
+
+/// What a command runs against.
+///
+/// `repos` holds the repo containing the current directory, or every tracked
+/// repo under `-g`. That difference is the whole of what the scope means:
+/// commands that iterate do not need to know which they were given.
+pub struct Ctx {
+    pub paths: AppPaths,
+    pub config: AppConfig,
+    pub flags: Flags,
+    pub registry: RepoRegistry,
+    repos: Vec<RepoCtx>,
+}
+
+impl Ctx {
+    /// The repo containing the current directory.
+    ///
+    /// Records it in the global registry, so `-g` commands and the daemon
+    /// can see a repo you have used at least once. Best effort — last writer
+    /// wins, which is fine for a path list, and a filesystem problem must not
+    /// fail an unrelated command.
+    pub fn here(app: AppCtx) -> Result<Self, ContextError> {
+        let repo = RepoCtx::from_cwd()?;
+        register_globally(&app.paths, &repo.paths.repo_root);
         let mut registry = RepoRegistry::default();
-        registry.register(repo.repo_root.clone());
+        registry.register(repo.paths.repo_root.clone());
+        Ok(Self {
+            paths: app.paths,
+            config: app.config,
+            flags: app.flags,
+            registry,
+            repos: vec![repo],
+        })
+    }
+
+    /// Every repo in the registry whose directory still exists.
+    pub fn everywhere(app: AppCtx) -> Result<Self, ContextError> {
+        let registry = RepoRegistry::load(&app.paths)?;
+        let repos = registry
+            .repos()
+            .iter()
+            .filter(|e| e.path.exists())
+            .filter_map(|e| RepoCtx::from_path(&e.path).ok())
+            .collect();
+        Ok(Self {
+            paths: app.paths,
+            config: app.config,
+            flags: app.flags,
+            registry,
+            repos,
+        })
+    }
+
+    /// What `-g` means.
+    pub fn scoped(app: AppCtx, global: bool) -> Result<Self, ContextError> {
+        if global {
+            Self::everywhere(app)
+        } else {
+            Self::here(app)
+        }
+    }
+
+    /// A context for one already-resolved repo.
+    pub fn for_repo(app: AppCtx, repo: RepoCtx) -> Self {
+        register_globally(&app.paths, &repo.paths.repo_root);
+        let mut registry = RepoRegistry::default();
+        registry.register(repo.paths.repo_root.clone());
         Self {
-            paths: paths.clone(),
-            config,
+            paths: app.paths,
+            config: app.config,
+            flags: app.flags,
             registry,
             repos: vec![repo],
         }
     }
 
-    /// All tracked repos.
-    pub fn from_global(paths: &AppPaths) -> Result<Self, ContextError> {
-        let config = Config::load(paths).unwrap_or_default();
-        let registry = RepoRegistry::load(paths)?;
-        let repos = registry
-            .repos()
-            .iter()
-            .filter(|e| e.path.exists())
-            .filter_map(|e| RepoConfig::from_path(&e.path).ok())
-            .collect();
-        Ok(Self {
-            paths: paths.clone(),
-            config,
-            registry,
-            repos,
-        })
+    pub fn repos(&self) -> &[RepoCtx] {
+        &self.repos
     }
 
-    /// Single repo convenience — errors if no repos.
-    pub fn repo(&self) -> Result<&RepoConfig, ContextError> {
+    /// The repo this command acts on — for commands that only make sense in
+    /// one, which are the ones built with [`Ctx::here`].
+    pub fn repo(&self) -> Result<&RepoCtx, ContextError> {
         self.repos.first().ok_or(ContextError::NotInGitRepo)
-    }
-}
-
-/// Single-repo context: the repo discovered from cwd plus global config.
-pub struct RepoCtx {
-    pub paths: AppPaths,
-    pub repo: RepoConfig,
-    pub config: Config,
-    pub jig_toml: JigToml,
-}
-
-impl RepoCtx {
-    pub fn from_cwd(paths: &AppPaths) -> Result<Self, ContextError> {
-        let config = Config::load(paths).unwrap_or_default();
-        let repo = RepoConfig::from_cwd()?;
-        let jig_toml = JigToml::load(&repo.repo_root)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        register_globally(paths, &repo.repo_root);
-        Ok(Self {
-            paths: paths.clone(),
-            repo,
-            config,
-            jig_toml,
-        })
-    }
-}
-
-impl From<RepoCtx> for Context {
-    fn from(ctx: RepoCtx) -> Self {
-        let mut registry = RepoRegistry::default();
-        registry.register(ctx.repo.repo_root.clone());
-        Context {
-            paths: ctx.paths,
-            config: ctx.config,
-            registry,
-            repos: vec![ctx.repo],
-        }
-    }
-}
-
-/// All-repos context: full registry plus config.
-pub struct GlobalCtx {
-    pub paths: AppPaths,
-    pub config: Config,
-    pub registry: RepoRegistry,
-    pub repos: Vec<RepoConfig>,
-}
-
-impl GlobalCtx {
-    pub fn load(paths: &AppPaths) -> Result<Self, ContextError> {
-        let config = Config::load(paths).unwrap_or_default();
-        let registry = RepoRegistry::load(paths)?;
-        let repos = registry
-            .repos()
-            .iter()
-            .filter(|e| e.path.exists())
-            .filter_map(|e| RepoConfig::from_path(&e.path).ok())
-            .collect();
-        Ok(Self {
-            paths: paths.clone(),
-            config,
-            registry,
-            repos,
-        })
-    }
-}
-
-impl From<GlobalCtx> for Context {
-    fn from(ctx: GlobalCtx) -> Self {
-        Context {
-            paths: ctx.paths,
-            config: ctx.config,
-            registry: ctx.registry,
-            repos: ctx.repos,
-        }
-    }
-}
-
-/// Either single-repo or all-repos context (for commands with `--global`).
-// CLI context enum — constructed once per invocation, not on a hot path.
-#[allow(clippy::large_enum_variant)]
-pub enum ScopedCtx {
-    Repo(RepoCtx),
-    Global(GlobalCtx),
-}
-
-impl ScopedCtx {
-    pub fn paths(&self) -> &AppPaths {
-        match self {
-            ScopedCtx::Repo(r) => &r.paths,
-            ScopedCtx::Global(g) => &g.paths,
-        }
-    }
-
-    pub fn from_global(paths: &AppPaths, global: bool) -> Result<Self, ContextError> {
-        if global {
-            Ok(ScopedCtx::Global(GlobalCtx::load(paths)?))
-        } else {
-            Ok(ScopedCtx::Repo(RepoCtx::from_cwd(paths)?))
-        }
     }
 }
 
@@ -412,8 +405,11 @@ fn register_globally(paths: &AppPaths, repo_root: &Path) {
 
 /// Resolve the effective base branch for an arbitrary repo path
 /// (without building a full Context). Used by daemon code.
-pub fn resolve_base_branch_for(repo_root: &Path, config: &Config) -> Result<Branch, ContextError> {
-    if let Ok(Some(jig_toml)) = JigToml::load(repo_root) {
+pub fn resolve_base_branch_for(
+    repo_root: &Path,
+    config: &AppConfig,
+) -> Result<Branch, ContextError> {
+    if let Ok(Some(jig_toml)) = RepoConfig::load(repo_root) {
         if let Some(base) = jig_toml.worktree.base {
             return Ok(Branch::new(base));
         }

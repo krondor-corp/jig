@@ -3,7 +3,9 @@
 use clap::Args;
 
 use crate::context;
+use crate::context::AppCtx;
 use crate::context::ContextError;
+use crate::context::Ctx;
 use crate::terminal;
 use crate::worker::Worker;
 use jig_core::agents;
@@ -11,8 +13,6 @@ use jig_core::git::Branch;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
-use crate::context::RepoCtx;
 
 /// Create worktree and launch Claude in tmux
 #[derive(Args, Debug, Clone)]
@@ -36,7 +36,7 @@ pub struct Spawn {
 #[derive(Debug, thiserror::Error)]
 pub enum SpawnError {
     #[error(transparent)]
-    Context(#[from] ContextError),
+    Ctx(#[from] ContextError),
     #[error(transparent)]
     Worker(#[from] crate::worker::WorkerError),
     #[error(transparent)]
@@ -50,16 +50,16 @@ pub enum SpawnError {
 }
 
 impl Op for Spawn {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = SpawnError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, SpawnError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, SpawnError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
-        let repo = &ctx.repo;
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        let repo = ctx.repo()?;
 
         if terminal::which("tmux").is_none() {
             return Err(SpawnError::Usage("missing dependency: tmux".into()));
@@ -89,7 +89,7 @@ impl Op for Spawn {
             ));
         };
 
-        let worktree_path = repo.worktrees_path.join(&branch_name);
+        let worktree_path = repo.paths.worktrees_path.join(&branch_name);
         if worktree_path.exists() {
             return Err(SpawnError::Usage(format!(
                 "Worktree '{}' already exists — use `jig resume` or `jig attach`",
@@ -124,7 +124,7 @@ impl Op for Spawn {
             (None, None) => None,
         };
 
-        let jig_config = context::JigToml::load(&repo.repo_root)?.unwrap_or_default();
+        let jig_config = context::RepoConfig::load(&repo.paths.repo_root)?.unwrap_or_default();
         let agent = agents::Agent::from_config(
             &jig_config.agent.agent_type,
             jig_config.agent.model.as_deref(),
@@ -132,7 +132,7 @@ impl Op for Spawn {
         )
         .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
 
-        let git_repo = jig_core::Repo::open(&repo.repo_root)?;
+        let git_repo = jig_core::Repo::open(&repo.paths.repo_root)?;
         let branch = Branch::new(&branch_name);
 
         let task_context = effective_context.as_deref().unwrap_or(

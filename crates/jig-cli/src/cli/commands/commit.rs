@@ -8,8 +8,7 @@ use jig_core::git::conventional::ValidationConfig;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
-use crate::context::{RepoConfig, RepoCtx};
+use crate::context::{AppCtx, Ctx, RepoCtx};
 
 /// Validate and work with conventional commits
 #[derive(Args, Debug, Clone)]
@@ -42,7 +41,7 @@ pub enum CommitCommand {
 #[derive(Debug, thiserror::Error)]
 pub enum CommitError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error("{0}")]
     Usage(String),
     #[error("IO error: {0}")]
@@ -54,18 +53,18 @@ pub enum CommitError {
 }
 
 impl Op for Commit {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = CommitError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CommitError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, CommitError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
         match &self.command {
             CommitCommand::Validate { rev, stdin, file } => {
-                run_validate(rev, *stdin, file.as_deref(), &ctx.repo)
+                run_validate(rev, *stdin, file.as_deref(), ctx.repo()?)
             }
             CommitCommand::Examples => {
                 print_examples();
@@ -79,7 +78,7 @@ fn run_validate(
     rev: &str,
     stdin: bool,
     file: Option<&str>,
-    repo: &RepoConfig,
+    repo: &RepoCtx,
 ) -> Result<NoOutput, CommitError> {
     let message = if stdin {
         let mut buf = String::new();
@@ -88,7 +87,7 @@ fn run_validate(
     } else if let Some(path) = file {
         std::fs::read_to_string(path)?
     } else {
-        let git_repo = git2::Repository::open(&repo.repo_root)?;
+        let git_repo = git2::Repository::open(&repo.paths.repo_root)?;
         let obj = git_repo.revparse_single(rev)?;
         let commit = obj
             .peel_to_commit()

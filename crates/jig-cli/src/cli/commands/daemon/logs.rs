@@ -11,6 +11,7 @@ use crate::cli::ui;
 use crate::context::log::{tail_lines, LogTailer};
 
 use super::{current_daemon_log, display_path};
+use crate::context::AppCtx;
 use crate::context::AppPaths;
 
 /// Print the daemon's log
@@ -52,8 +53,8 @@ impl Op for Logs {
     type Error = LogsError;
     type Output = LogsOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, LogsError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, LogsError> {
+        Ok(app.paths)
     }
 
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {

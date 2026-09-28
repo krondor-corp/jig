@@ -4,8 +4,9 @@ use clap::Args;
 use std::path::PathBuf;
 
 use crate::cli::op::Op;
+use crate::context::AppCtx;
 use crate::context::AppPaths;
-use crate::context::RepoConfig;
+use crate::context::RepoCtx;
 use crate::context::RepoRegistry;
 
 /// Open/cd into a worktree
@@ -28,7 +29,7 @@ impl std::fmt::Display for OpenOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -42,8 +43,8 @@ impl Op for Open {
     type Error = OpenError;
     type Output = OpenOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, OpenError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, OpenError> {
+        Ok(app.paths)
     }
 
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
@@ -52,7 +53,7 @@ impl Op for Open {
             .as_deref()
             .ok_or(OpenError::Usage("branch is required".into()))?;
 
-        let cfg = match RepoConfig::from_cwd() {
+        let cfg = match RepoCtx::from_cwd() {
             Ok(cfg) => cfg,
             Err(_) => {
                 let registry = RepoRegistry::load(&paths).unwrap_or_default();
@@ -60,16 +61,16 @@ impl Op for Open {
                     .repos()
                     .iter()
                     .filter(|e| e.path.exists())
-                    .filter_map(|e| RepoConfig::from_path(&e.path).ok())
+                    .filter_map(|e| RepoCtx::from_path(&e.path).ok())
                     .collect();
                 configs
                     .into_iter()
-                    .find(|c| c.worktrees_path.join(name).exists())
+                    .find(|c| c.paths.worktrees_path.join(name).exists())
                     .ok_or(OpenError::Usage(format!("worktree '{}' not found", name)))?
             }
         };
 
-        let worktree_path = cfg.worktrees_path.join(name);
+        let worktree_path = cfg.paths.worktrees_path.join(name);
         if !worktree_path.exists() {
             return Err(OpenError::Usage(format!("worktree '{}' not found", name)));
         }

@@ -4,7 +4,7 @@ use clap::Args;
 use std::path::PathBuf;
 
 use crate::cli::op::Op;
-use crate::context::AppPaths;
+use crate::context::AppCtx;
 
 /// Show path to jig executable
 #[derive(Args, Debug, Clone)]
@@ -30,7 +30,7 @@ impl Op for Which {
     type Error = WhichError;
     type Output = WhichOutput;
 
-    fn build_context(&self, _paths: &AppPaths) -> Result<(), WhichError> {
+    fn build_context(&self, _app: AppCtx) -> Result<(), WhichError> {
         Ok(())
     }
 

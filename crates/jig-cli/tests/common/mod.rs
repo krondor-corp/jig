@@ -34,7 +34,7 @@ impl Default for Sandbox {
 }
 
 impl Sandbox {
-    /// Config and runtime roots, no repos.
+    /// AppConfig and runtime roots, no repos.
     pub fn new() -> Self {
         Self {
             config: TempDir::new().expect("config root"),
@@ -44,7 +44,7 @@ impl Sandbox {
         }
     }
 
-    /// Config and runtime roots plus `n` repos (see [`Self::add_repo`]).
+    /// AppConfig and runtime roots plus `n` repos (see [`Self::add_repo`]).
     pub fn with_repos(n: usize) -> Self {
         let mut sandbox = Self::new();
         for _ in 0..n {

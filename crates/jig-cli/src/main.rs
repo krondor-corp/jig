@@ -1,8 +1,6 @@
 //! The `jig` binary — argument parsing, logging setup, and dispatch. The
 //! work lives in the `jig_cli` library beside it.
 
-use std::io::IsTerminal;
-
 use clap::{CommandFactory, Parser};
 
 use jig_cli::cli::op::{LogSink, Op};
@@ -59,26 +57,29 @@ fn init_tracing(sink: LogSink, paths: &context::AppPaths) {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    // Set global plain mode before any output
-    ui::set_plain(cli.plain);
-
-    // The `colored` crate checks stdout for TTY detection, but all jig
-    // output goes to stderr. Override colorization based on stderr instead.
-    if !cli.plain && std::io::stderr().is_terminal() {
-        colored::control::set_override(true);
-    }
-
     // The one place jig reads XDG variables; everything below gets `paths`.
     let paths = context::AppPaths::from_env()?;
 
     // Best-effort global directory setup
     let _ = paths.ensure();
 
+    // Everything resolvable before we know which command this is.
+    let app = context::AppCtx::load(
+        paths,
+        context::Flags {
+            verbose: cli.verbose,
+            plain: cli.plain,
+        },
+    );
+
+    // Process-wide state, in one place, before any thread exists.
+    app.set_globals();
+
     let sink = cli
         .command
         .as_ref()
         .map_or(LogSink::Stderr, |c| c.log_sink());
-    init_tracing(sink, &paths);
+    init_tracing(sink, &app.paths);
 
     match cli.command {
         None => {
@@ -87,8 +88,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Some(ref command) => {
-            let paths = command.build_context(&paths)?;
-            let output = command.run(paths)?;
+            let app = command.build_context(app)?;
+            let output = command.run(app)?;
             let output_str = output.to_string();
             if !output_str.is_empty() {
                 println!("{}", output_str);

@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use jig_cli::context::{JigToml, JIG_LOCAL_TOML, JIG_TOML};
+use jig_cli::context::{RepoConfig, JIG_LOCAL_TOML, JIG_TOML};
 
 #[test]
 fn load_with_local_overlay() {
@@ -17,7 +17,7 @@ fn load_with_local_overlay() {
         "[issues]\nauto_spawn_labels = []\n",
     )
     .unwrap();
-    let config = JigToml::load(dir.path()).unwrap().unwrap();
+    let config = RepoConfig::load(dir.path()).unwrap().unwrap();
     assert_eq!(config.worktree.base.as_deref(), Some("origin/main"));
     assert_eq!(config.issues.auto_spawn_labels, Some(vec![]));
     assert!(config.has_local_overlay);
@@ -31,7 +31,7 @@ fn local_only_loads_standalone() {
         "[issues]\nauto_spawn_labels = [\"auto\"]\n",
     )
     .unwrap();
-    let config = JigToml::load(dir.path()).unwrap().unwrap();
+    let config = RepoConfig::load(dir.path()).unwrap().unwrap();
     assert!(config.local_only);
     assert!(!config.has_local_overlay);
     assert_eq!(
@@ -43,15 +43,15 @@ fn local_only_loads_standalone() {
 #[test]
 fn neither_toml_returns_none() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(JigToml::load(dir.path()).unwrap().is_none());
+    assert!(RepoConfig::load(dir.path()).unwrap().is_none());
 }
 
 #[test]
 fn local_only_exists_detects_correctly() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(!JigToml::local_only_exists(dir.path()));
+    assert!(!RepoConfig::local_only_exists(dir.path()));
     fs::write(dir.path().join(JIG_LOCAL_TOML), "[issues]\n").unwrap();
-    assert!(JigToml::local_only_exists(dir.path()));
+    assert!(RepoConfig::local_only_exists(dir.path()));
     fs::write(dir.path().join(JIG_TOML), "[worktree]\n").unwrap();
-    assert!(!JigToml::local_only_exists(dir.path()));
+    assert!(!RepoConfig::local_only_exists(dir.path()));
 }

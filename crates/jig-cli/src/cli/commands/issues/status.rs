@@ -5,8 +5,7 @@ use clap::Args;
 use jig_core::issues::IssueStatus;
 
 use crate::cli::op::Op;
-use crate::context::AppPaths;
-use crate::context::{RepoConfig, RepoCtx};
+use crate::context::{AppCtx, Ctx, RepoCtx};
 
 /// Update issue status
 #[derive(Args, Debug, Clone)]
@@ -34,7 +33,7 @@ impl fmt::Display for StatusOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum StatusError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
     #[error("{0}")]
@@ -42,8 +41,8 @@ pub enum StatusError {
 }
 
 fn run(
-    repo: &RepoConfig,
-    global: &crate::context::Config,
+    repo: &RepoCtx,
+    global: &crate::context::AppConfig,
     cmd: &Status,
 ) -> Result<StatusOutput, StatusError> {
     let status: IssueStatus = cmd
@@ -61,15 +60,15 @@ fn run(
 }
 
 impl Op for Status {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = StatusError;
     type Output = StatusOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, StatusError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, StatusError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
-        run(&ctx.repo, &ctx.config, self)
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        run(ctx.repo()?, &ctx.config, self)
     }
 }

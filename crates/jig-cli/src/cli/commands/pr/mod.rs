@@ -6,7 +6,7 @@ mod create;
 use clap::Args;
 
 use crate::cli::op::Op;
-use crate::context::AppPaths;
+use crate::context::AppCtx;
 
 pub use create::Create;
 
@@ -28,18 +28,18 @@ crate::command_enum! {
 }
 
 impl Op for Pr {
-    type Context = AppPaths;
+    type Context = AppCtx;
     type Output = OpOutput;
     type Error = OpError;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, Self::Error> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppCtx, Self::Error> {
+        Ok(app)
     }
 
-    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
+    fn run(&self, app: AppCtx) -> Result<Self::Output, Self::Error> {
         match &self.command {
-            Some(cmd) => cmd.run(paths),
-            None => Command::Create(self.create.clone()).run(paths),
+            Some(cmd) => cmd.run(app),
+            None => Command::Create(self.create.clone()).run(app),
         }
     }
 

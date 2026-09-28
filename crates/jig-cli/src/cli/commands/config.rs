@@ -1,4 +1,4 @@
-//! Config command
+//! AppConfig command
 
 use std::path::Path;
 
@@ -7,7 +7,8 @@ use jig_core::exec::Hook;
 
 use crate::context::ContextError;
 use crate::context::{
-    self, Config as GlobalConfig, JigToml, LinearIssuesConfig, RepoConfig, DEFAULT_BASE_BRANCH,
+    self, AppConfig as GlobalConfig, AppCtx, LinearIssuesConfig, RepoConfig, RepoCtx,
+    DEFAULT_BASE_BRANCH,
 };
 
 use crate::cli::op::Op;
@@ -77,7 +78,7 @@ impl std::fmt::Display for ConfigOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error(transparent)]
-    Context(#[from] ContextError),
+    Ctx(#[from] ContextError),
 }
 
 impl Op for Config {
@@ -85,8 +86,8 @@ impl Op for Config {
     type Error = ConfigError;
     type Output = ConfigOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, ConfigError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, ConfigError> {
+        Ok(app.paths)
     }
 
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
@@ -96,7 +97,7 @@ impl Op for Config {
         }
 
         match &self.subcommand {
-            None | Some(ConfigCommands::Show) => match RepoConfig::from_cwd() {
+            None | Some(ConfigCommands::Show) => match RepoCtx::from_cwd() {
                 Ok(repo) => show_config(paths, &repo),
                 Err(_) => show_global_config(paths),
             },
@@ -244,8 +245,8 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
     Ok(ConfigOutput(None))
 }
 
-fn show_config(paths: &AppPaths, repo: &RepoConfig) -> Result<ConfigOutput, ConfigError> {
-    let display = ConfigDisplay::load(paths, &repo.repo_root)?;
+fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigError> {
+    let display = ConfigDisplay::load(paths, &repo.paths.repo_root)?;
 
     fn src(s: &str) -> String {
         ui::source(&format!("({})", s))
@@ -418,8 +419,8 @@ fn handle_base(
             global_cfg.save(paths)?;
             ui::success("Unset global base branch");
         } else {
-            let repo = RepoConfig::from_cwd()?;
-            context::update_local_toml(&repo.repo_root, "worktree", "base", None)?;
+            let repo = RepoCtx::from_cwd()?;
+            context::update_local_toml(&repo.paths.repo_root, "worktree", "base", None)?;
             ui::success("Unset repo base branch");
         }
         return Ok(ConfigOutput(None));
@@ -433,8 +434,8 @@ fn handle_base(
                 global_cfg.save(paths)?;
                 ui::success(&format!("Set global base branch to '{}'", ui::highlight(b)));
             } else {
-                let repo = RepoConfig::from_cwd()?;
-                context::update_local_toml(&repo.repo_root, "worktree", "base", Some(b))?;
+                let repo = RepoCtx::from_cwd()?;
+                context::update_local_toml(&repo.paths.repo_root, "worktree", "base", Some(b))?;
                 ui::success(&format!("Set repo base branch to '{}'", ui::highlight(b)));
             }
             Ok(ConfigOutput(None))
@@ -450,31 +451,30 @@ fn handle_base(
                     }
                 }
             } else {
-                let ctx = crate::context::RepoCtx::from_cwd(paths)?;
-                Ok(ConfigOutput(Some(
-                    ctx.repo.base_branch(&ctx.config).to_string(),
-                )))
+                let repo = RepoCtx::from_cwd()?;
+                let config = crate::context::AppConfig::load(paths)?;
+                Ok(ConfigOutput(Some(repo.base_branch(&config).to_string())))
             }
         }
     }
 }
 
 fn handle_on_create(command: Option<&str>, unset: bool) -> Result<ConfigOutput, ConfigError> {
-    let repo = RepoConfig::from_cwd()?;
+    let repo = RepoCtx::from_cwd()?;
 
     if unset {
-        context::update_local_toml(&repo.repo_root, "worktree", "on_create", None)?;
+        context::update_local_toml(&repo.paths.repo_root, "worktree", "on_create", None)?;
         ui::success("Unset on-create hook");
         return Ok(ConfigOutput(None));
     }
 
     match command {
         Some(cmd) => {
-            context::update_local_toml(&repo.repo_root, "worktree", "on_create", Some(cmd))?;
+            context::update_local_toml(&repo.paths.repo_root, "worktree", "on_create", Some(cmd))?;
             ui::success(&format!("Set on-create hook to '{}'", ui::highlight(cmd)));
             Ok(ConfigOutput(None))
         }
-        None => match repo.repo.worktree.on_create.as_ref() {
+        None => match repo.config.worktree.on_create.as_ref() {
             Some(hook) => Ok(ConfigOutput(Some(hook.command.clone()))),
             None => {
                 eprintln!("No on-create hook set");
@@ -505,7 +505,7 @@ struct ConfigDisplay {
 
 impl ConfigDisplay {
     fn load(paths: &AppPaths, repo_path: &Path) -> Result<Self, ContextError> {
-        let jig_toml = JigToml::load(repo_path)?.unwrap_or_default();
+        let jig_toml = RepoConfig::load(repo_path)?.unwrap_or_default();
         let global_config = GlobalConfig::load(paths).unwrap_or_default();
 
         let worktree_source = jig_toml.source_label("worktree");

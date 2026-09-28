@@ -9,7 +9,8 @@
 
 use clap::Args;
 
-use crate::context::RepoConfig;
+use crate::context::AppCtx;
+use crate::context::RepoCtx;
 use crate::context::RepoRegistry;
 use crate::worker::Worker;
 use jig_core::git::Branch;
@@ -36,7 +37,7 @@ pub struct Attach {
 #[derive(Debug, thiserror::Error)]
 pub enum AttachError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Worker(#[from] crate::worker::WorkerError),
     #[error(transparent)]
@@ -50,8 +51,8 @@ impl Op for Attach {
     type Error = AttachError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, AttachError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, AttachError> {
+        Ok(app.paths)
     }
 
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
@@ -67,12 +68,12 @@ impl Op for Attach {
         let local = if self.global {
             None
         } else {
-            RepoConfig::from_cwd().ok()
+            RepoCtx::from_cwd().ok()
         };
 
         match (&local, branch) {
             (Some(cfg), None) => attach(&paths, cfg, kind, None)?,
-            (Some(cfg), Some(b)) if cfg.worktrees_path.join(b).exists() => {
+            (Some(cfg), Some(b)) if cfg.paths.worktrees_path.join(b).exists() => {
                 attach(&paths, cfg, kind, Some(&Branch::new(b)))?
             }
             (_, Some(b)) => {
@@ -92,20 +93,22 @@ impl Op for Attach {
 /// Attach has no Op context (it resolves the repo itself), so the mux
 /// choice comes straight from global config.
 fn mux_kind(paths: &AppPaths) -> jig_core::mux::MuxKind {
-    crate::context::Config::load(paths).unwrap_or_default().mux
+    crate::context::AppConfig::load(paths)
+        .unwrap_or_default()
+        .mux
 }
 
-fn registered_repos(paths: &AppPaths) -> Vec<RepoConfig> {
+fn registered_repos(paths: &AppPaths) -> Vec<RepoCtx> {
     let registry = RepoRegistry::load(paths).unwrap_or_default();
     registry
         .repos()
         .iter()
         .filter(|e| e.path.exists())
-        .filter_map(|e| RepoConfig::from_path(&e.path).ok())
+        .filter_map(|e| RepoCtx::from_path(&e.path).ok())
         .collect()
 }
 
-fn find_repo_by_name(paths: &AppPaths, name: &str) -> Result<RepoConfig, AttachError> {
+fn find_repo_by_name(paths: &AppPaths, name: &str) -> Result<RepoCtx, AttachError> {
     registered_repos(paths)
         .into_iter()
         .find(|c| c.name() == name)
@@ -114,10 +117,10 @@ fn find_repo_by_name(paths: &AppPaths, name: &str) -> Result<RepoConfig, AttachE
 
 /// Registry-wide search for the repo holding a worker branch.
 /// Ambiguity is an error: the same branch name in two repos needs `--repo`.
-fn find_repo_by_branch(paths: &AppPaths, branch: &str) -> Result<RepoConfig, AttachError> {
-    let mut matches: Vec<RepoConfig> = registered_repos(paths)
+fn find_repo_by_branch(paths: &AppPaths, branch: &str) -> Result<RepoCtx, AttachError> {
+    let mut matches: Vec<RepoCtx> = registered_repos(paths)
         .into_iter()
-        .filter(|c| c.worktrees_path.join(branch).exists())
+        .filter(|c| c.paths.worktrees_path.join(branch).exists())
         .collect();
     match matches.len() {
         0 => Err(AttachError::Worker(crate::worker::WorkerError::NotFound(
@@ -137,14 +140,15 @@ fn find_repo_by_branch(paths: &AppPaths, branch: &str) -> Result<RepoConfig, Att
 
 fn attach(
     paths: &AppPaths,
-    cfg: &RepoConfig,
+    cfg: &RepoCtx,
     kind: jig_core::mux::MuxKind,
     branch: Option<&Branch>,
 ) -> Result<(), AttachError> {
     let mux = jig_core::mux::from_group_name(kind, cfg.session_name());
     match branch {
         Some(branch) => {
-            let workers = Worker::discover(&jig_core::git::Repo::open(&cfg.repo_root).unwrap());
+            let workers =
+                Worker::discover(&jig_core::git::Repo::open(&cfg.paths.repo_root).unwrap());
             let worker = workers
                 .iter()
                 .find(|w| w.branch() == branch)

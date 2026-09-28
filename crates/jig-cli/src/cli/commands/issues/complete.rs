@@ -5,8 +5,7 @@ use clap::Args;
 use jig_core::issues::IssueStatus;
 
 use crate::cli::op::Op;
-use crate::context::AppPaths;
-use crate::context::{RepoConfig, RepoCtx};
+use crate::context::{AppCtx, Ctx, RepoCtx};
 
 /// Mark an issue as complete
 #[derive(Args, Debug, Clone)]
@@ -38,14 +37,14 @@ impl fmt::Display for CompleteOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum CompleteError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
 }
 
 fn run(
-    repo: &RepoConfig,
-    global: &crate::context::Config,
+    repo: &RepoCtx,
+    global: &crate::context::AppConfig,
     cmd: &Complete,
 ) -> Result<CompleteOutput, CompleteError> {
     let linear_provider = repo.linear_provider(global)?;
@@ -58,15 +57,15 @@ fn run(
 }
 
 impl Op for Complete {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = CompleteError;
     type Output = CompleteOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CompleteError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, CompleteError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
-        run(&ctx.repo, &ctx.config, self)
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        run(ctx.repo()?, &ctx.config, self)
     }
 }

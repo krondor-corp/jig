@@ -2,12 +2,12 @@
 
 use clap::{Args, Subcommand};
 
-use crate::context::JigToml;
+use crate::context::AppCtx;
+use crate::context::Ctx;
+use crate::context::RepoConfig;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
-use crate::context::RepoCtx;
 
 /// Manage hook integrations
 #[derive(Args, Debug, Clone)]
@@ -64,24 +64,24 @@ pub enum HooksCommands {
 #[derive(Debug, thiserror::Error)]
 pub enum HooksError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Hook(#[from] crate::hooks::HookError),
 }
 
 impl Op for Hooks {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = HooksError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, HooksError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, HooksError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
         match &self.subcommand {
             HooksCommands::Init { force } => {
-                let repo_path = &ctx.repo.repo_root;
+                let repo_path = &ctx.repo()?.paths.repo_root;
 
                 // Install git hooks
                 eprintln!("Installing git hooks...");
@@ -123,7 +123,7 @@ impl Op for Hooks {
                 }
 
                 // Install agent-specific hooks based on config
-                let jig_toml = JigToml::load(repo_path)?.unwrap_or_default();
+                let jig_toml = RepoConfig::load(repo_path)?.unwrap_or_default();
                 if let Some(agent) = jig_core::agents::Agent::from_config(
                     &jig_toml.agent.agent_type,
                     jig_toml.agent.model.as_deref(),
@@ -152,7 +152,7 @@ impl Op for Hooks {
                 Ok(NoOutput)
             }
             HooksCommands::Uninstall { hook } => {
-                let repo_path = &ctx.repo.repo_root;
+                let repo_path = &ctx.repo()?.paths.repo_root;
 
                 eprintln!("Uninstalling jig hooks...");
                 eprintln!();
@@ -186,19 +186,19 @@ impl Op for Hooks {
                 Ok(NoOutput)
             }
             HooksCommands::PostCommit { .. } => {
-                crate::hooks::handle_post_commit(&ctx.paths, &ctx.repo.repo_root)?;
+                crate::hooks::handle_post_commit(&ctx.paths, &ctx.repo()?.paths.repo_root)?;
                 Ok(NoOutput)
             }
             HooksCommands::PostMerge { .. } => {
-                crate::hooks::handle_post_merge(&ctx.paths, &ctx.repo.repo_root)?;
+                crate::hooks::handle_post_merge(&ctx.paths, &ctx.repo()?.paths.repo_root)?;
                 Ok(NoOutput)
             }
             HooksCommands::CommitMsg { file, .. } => {
-                crate::hooks::handle_commit_msg(&ctx.repo.repo_root, file)?;
+                crate::hooks::handle_commit_msg(&ctx.repo()?.paths.repo_root, file)?;
                 Ok(NoOutput)
             }
             HooksCommands::PreCommit { .. } => {
-                crate::hooks::handle_pre_commit(&ctx.repo.repo_root)?;
+                crate::hooks::handle_pre_commit(&ctx.repo()?.paths.repo_root)?;
                 Ok(NoOutput)
             }
         }

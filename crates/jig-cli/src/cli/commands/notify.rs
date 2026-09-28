@@ -4,7 +4,7 @@ use std::fmt;
 
 use clap::{Args, Subcommand};
 
-use crate::context::{Config, NotifyConfig};
+use crate::context::{AppConfig, AppCtx, NotifyConfig};
 use crate::notify::{NotificationEvent, NotificationQueue, Notifier};
 
 use crate::cli::op::Op;
@@ -186,7 +186,7 @@ impl fmt::Display for NotifyOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum NotifyError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Notify(#[from] crate::notify::NotifyError),
     #[error(transparent)]
@@ -200,8 +200,8 @@ impl Op for Notify {
     type Error = NotifyError;
     type Output = NotifyOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, NotifyError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, NotifyError> {
+        Ok(app.paths)
     }
 
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
@@ -219,7 +219,7 @@ fn run_doctor(paths: &AppPaths) -> Result<NotifyOutput, NotifyError> {
     let config_path_str = config_path.display().to_string();
 
     // Try to load config, capturing parse errors
-    let (notify_config, parse_error) = match Config::load_from(&config_path) {
+    let (notify_config, parse_error) = match AppConfig::load_from(&config_path) {
         Ok(cfg) => (cfg.notify, None),
         Err(e) => (NotifyConfig::default(), Some(e.to_string())),
     };
@@ -297,7 +297,7 @@ fn run_doctor(paths: &AppPaths) -> Result<NotifyOutput, NotifyError> {
 }
 
 fn run_test(paths: &AppPaths) -> Result<NotifyOutput, NotifyError> {
-    let config = Config::load(paths)?;
+    let config = AppConfig::load(paths)?;
     let queue = NotificationQueue::global(paths);
     let notifier = Notifier::new(config.notify, queue);
 
@@ -330,7 +330,7 @@ fn run_tail(paths: &AppPaths, n: usize) -> Result<NotifyOutput, NotifyError> {
 }
 
 fn run_send(paths: &AppPaths, kind: SendKind) -> Result<NotifyOutput, NotifyError> {
-    let config = Config::load(paths)?;
+    let config = AppConfig::load(paths)?;
     let queue = NotificationQueue::global(paths);
     let notifier = Notifier::new(config.notify, queue);
 

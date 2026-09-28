@@ -3,13 +3,12 @@
 use clap::Args;
 use glob::Pattern;
 
-use crate::context::{RepoConfig, ScopedCtx};
+use crate::context::{AppCtx, Ctx, RepoCtx};
 use jig_core::git::Repo;
 use jig_core::Worktree;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
 
 /// Remove worktree(s)
 #[derive(Args, Debug, Clone)]
@@ -29,7 +28,7 @@ pub struct Remove {
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error("{0}")]
     NotFound(String),
     #[error("Invalid pattern: {0}")]
@@ -41,38 +40,33 @@ pub enum RemoveError {
 }
 
 impl Op for Remove {
-    type Context = ScopedCtx;
+    type Context = Ctx;
     type Error = RemoveError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, RemoveError> {
-        Ok(ScopedCtx::from_global(paths, self.global)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, RemoveError> {
+        Ok(Ctx::scoped(app, self.global)?)
     }
 
-    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
-        match ctx {
-            ScopedCtx::Global(g) => {
-                for repo in &g.repos {
-                    let git_repo = Repo::open(&repo.repo_root)?;
-                    let worktrees = git_repo.list_worktrees()?;
-                    let has_match = worktrees.iter().any(|wt| wt.branch_name() == self.pattern);
-                    if has_match {
-                        return self.remove_from_repo(repo);
-                    }
-                }
-                Err(RemoveError::NotFound(format!(
-                    "worktree '{}' not found",
-                    self.pattern
-                )))
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        // One repo or every tracked one: remove from the first that has a
+        // match, and report only if none did.
+        for repo in ctx.repos() {
+            match self.remove_from_repo(repo) {
+                Err(RemoveError::NotFound(_)) => continue,
+                result => return result,
             }
-            ScopedCtx::Repo(r) => self.remove_from_repo(&r.repo),
         }
+        Err(RemoveError::NotFound(format!(
+            "no worktrees matching '{}'",
+            self.pattern
+        )))
     }
 }
 
 impl Remove {
-    fn remove_from_repo(&self, repo: &RepoConfig) -> Result<NoOutput, RemoveError> {
-        let git_repo = Repo::open(&repo.repo_root)?;
+    fn remove_from_repo(&self, repo: &RepoCtx) -> Result<NoOutput, RemoveError> {
+        let git_repo = Repo::open(&repo.paths.repo_root)?;
         let worktrees = git_repo.list_worktrees()?;
         let names: Vec<String> = worktrees
             .iter()
@@ -90,7 +84,7 @@ impl Remove {
 
         if matching.is_empty() {
             // If not a pattern match, try exact match
-            let exact_path = repo.worktrees_path.join(pattern.as_str());
+            let exact_path = repo.paths.worktrees_path.join(pattern.as_str());
             if exact_path.exists() {
                 Worktree::open(&exact_path)?.remove(self.force)?;
                 ui::success(&format!(
@@ -107,7 +101,7 @@ impl Remove {
 
         // Remove each matching worktree
         for name in matching {
-            let path = repo.worktrees_path.join(&name);
+            let path = repo.paths.worktrees_path.join(&name);
             Worktree::open(&path)?.remove(self.force)?;
             ui::success(&format!("Removed worktree '{}'", ui::highlight(&name)));
         }

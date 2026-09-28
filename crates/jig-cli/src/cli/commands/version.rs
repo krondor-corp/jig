@@ -6,7 +6,7 @@ use clap::Args;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
+use crate::context::AppCtx;
 
 /// Show version information
 #[derive(Args, Debug, Clone)]
@@ -17,7 +17,7 @@ impl Op for Version {
     type Error = Infallible;
     type Output = NoOutput;
 
-    fn build_context(&self, _paths: &AppPaths) -> Result<(), Infallible> {
+    fn build_context(&self, _app: AppCtx) -> Result<(), Infallible> {
         Ok(())
     }
 
