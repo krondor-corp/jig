@@ -7,9 +7,9 @@ use std::path::Path;
 
 use super::{JIG_LOCAL_TOML, JIG_TOML};
 
-/// JigToml configuration from jig.toml
+/// RepoConfig configuration from jig.toml
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct JigToml {
+pub struct RepoConfig {
     #[serde(default)]
     pub worktree: WorktreeConfig,
     #[serde(default)]
@@ -126,7 +126,7 @@ impl Default for TriageConfig {
     }
 }
 
-impl JigToml {
+impl RepoConfig {
     pub fn load(repo_root: &Path) -> Result<Option<Self>, super::ContextError> {
         let toml_path = repo_root.join(JIG_TOML);
         let local_path = repo_root.join(JIG_LOCAL_TOML);
@@ -140,7 +140,7 @@ impl JigToml {
                     .as_table()
                     .map(|t| t.keys().cloned().collect())
                     .unwrap_or_default();
-                let mut config: JigToml = local_value.try_into()?;
+                let mut config: RepoConfig = local_value.try_into()?;
                 config.local_only = true;
                 config.local_keys = local_keys;
                 return Ok(Some(config));
@@ -164,13 +164,13 @@ impl JigToml {
                 .unwrap_or_default();
             let mut merged = base_value;
             deep_merge(&mut merged, local_value);
-            let mut config: JigToml = merged.try_into()?;
+            let mut config: RepoConfig = merged.try_into()?;
             config.has_local_overlay = true;
             config.base_keys = base_keys;
             config.local_keys = local_keys;
             Ok(Some(config))
         } else {
-            let mut config: JigToml = base_value.try_into()?;
+            let mut config: RepoConfig = base_value.try_into()?;
             config.base_keys = base_keys;
             Ok(Some(config))
         }
@@ -228,7 +228,7 @@ projects = ["Backend"]
 assignee = "alice@co.com"
 labels = ["auto"]
 "#;
-        let config: JigToml = toml::from_str(toml_str).unwrap();
+        let config: RepoConfig = toml::from_str(toml_str).unwrap();
         let linear = config.issues.linear.unwrap();
         assert_eq!(linear.profile, "work");
         assert_eq!(linear.team.as_deref(), Some("ENG"));
@@ -243,7 +243,7 @@ labels = ["auto"]
 [issues.linear]
 profile = "work"
 "#;
-        let config: JigToml = toml::from_str(toml_str).unwrap();
+        let config: RepoConfig = toml::from_str(toml_str).unwrap();
         let linear = config.issues.linear.unwrap();
         assert_eq!(linear.profile, "work");
         assert!(linear.team.is_none());
@@ -264,7 +264,7 @@ profile = "work"
 [spawn]
 max_concurrent_workers = 5
 "#;
-        let config: JigToml = toml::from_str(toml_str).unwrap();
+        let config: RepoConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.spawn.max_concurrent_workers, 5);
     }
 
@@ -274,7 +274,7 @@ max_concurrent_workers = 5
 [worktree]
 base = "origin/main"
 "#;
-        let config: JigToml = toml::from_str(toml_str).unwrap();
+        let config: RepoConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.worktree.base.as_deref(), Some("origin/main"));
     }
 

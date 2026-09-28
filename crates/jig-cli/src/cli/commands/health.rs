@@ -2,12 +2,12 @@
 
 use clap::Args;
 
-use crate::context::JigToml;
+use crate::context::AppCtx;
+use crate::context::RepoConfig;
 use crate::terminal::check_dep;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::AppPaths;
 use crate::context::RepoCtx;
 
 /// Show terminal and dependency status
@@ -19,19 +19,20 @@ pub enum HealthError {
     #[error("Health check failed")]
     CheckFailed,
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
 }
 
 impl Op for Health {
-    type Context = AppPaths;
+    type Context = AppCtx;
     type Error = HealthError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, HealthError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppCtx, HealthError> {
+        Ok(app)
     }
 
-    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
+    fn run(&self, app: AppCtx) -> Result<Self::Output, Self::Error> {
+        let _paths = &app.paths;
         let version = env!("CARGO_PKG_VERSION");
         let mut all_passed = true;
 
@@ -95,18 +96,17 @@ impl Op for Health {
 
         // Section 2: Repository
         eprintln!();
-        let ctx = RepoCtx::from_cwd(&paths).ok();
-        let global = ctx.as_ref().map(|c| &c.config);
-
-        let repo = ctx.as_ref().map(|c| &c.repo);
-        match repo {
+        // Health reports on the repo you are standing in, if any — being
+        // outside one is a finding, not a failure.
+        let repo = RepoCtx::from_cwd().ok();
+        match repo.as_ref() {
             Some(repo) => {
                 let repo_name = repo.name();
                 ui::header(&format!("Repository: {}", repo_name));
 
-                if JigToml::exists(&repo.repo_root) {
+                if RepoConfig::exists(&repo.paths.repo_root) {
                     check_ok("jig.toml", None);
-                } else if JigToml::local_only_exists(&repo.repo_root) {
+                } else if RepoConfig::local_only_exists(&repo.paths.repo_root) {
                     check_warn(
                         "jig.toml",
                         Some("(not found — using jig.local.toml standalone; consider committing a base jig.toml)"),
@@ -116,11 +116,10 @@ impl Op for Health {
                     all_passed = false;
                 }
 
-                let global_ref = global.cloned().unwrap_or_default();
-                let branch = repo.base_branch(&global_ref);
+                let branch = repo.base_branch(&app.config);
                 eprintln!("  {} Base branch: {}", ui::SYM_OK, branch);
 
-                if repo.worktrees_path.is_dir() {
+                if repo.paths.worktrees_path.is_dir() {
                     check_ok(&format!("{} directory", crate::context::JIG_DIR), None);
                 } else {
                     check_fail(
@@ -132,7 +131,7 @@ impl Op for Health {
 
                 // Section 3: Agent — init from config, use its health + scaffolding
                 eprintln!();
-                let jig_config = JigToml::load(&repo.repo_root)
+                let jig_config = RepoConfig::load(&repo.paths.repo_root)
                     .ok()
                     .flatten()
                     .unwrap_or_default();
@@ -155,7 +154,7 @@ impl Op for Health {
                         }
 
                         let project_file = agent.project_file();
-                        if repo.repo_root.join(project_file).is_file() {
+                        if repo.paths.repo_root.join(project_file).is_file() {
                             check_ok(&project_file.display().to_string(), None);
                         } else {
                             check_fail(&project_file.display().to_string(), Some("(not found)"));
@@ -163,7 +162,7 @@ impl Op for Health {
                         }
 
                         if let Some(settings) = agent.settings_file() {
-                            if repo.repo_root.join(settings).is_file() {
+                            if repo.paths.repo_root.join(settings).is_file() {
                                 check_ok(&settings.display().to_string(), None);
                             } else {
                                 check_fail(&settings.display().to_string(), Some("(not found)"));
@@ -171,7 +170,7 @@ impl Op for Health {
                             }
                         }
 
-                        let skills_dir = repo.repo_root.join(agent.skills_dir());
+                        let skills_dir = repo.paths.repo_root.join(agent.skills_dir());
                         if skills_dir.is_dir() {
                             eprintln!("  Skills ({}):", agent.skills_dir().display());
                             if let Ok(entries) = std::fs::read_dir(&skills_dir) {

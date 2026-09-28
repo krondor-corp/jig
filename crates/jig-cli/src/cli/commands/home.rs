@@ -4,8 +4,8 @@ use clap::Args;
 use std::path::PathBuf;
 
 use crate::cli::op::Op;
-use crate::context::AppPaths;
-use crate::context::RepoCtx;
+use crate::context::AppCtx;
+use crate::context::Ctx;
 
 /// Go to base repository root
 #[derive(Args, Debug, Clone)]
@@ -23,19 +23,19 @@ impl std::fmt::Display for HomeOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum HomeError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
 }
 
 impl Op for Home {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = HomeError;
     type Output = HomeOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, HomeError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, HomeError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
-        Ok(HomeOutput(ctx.repo.repo_root.clone()))
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        Ok(HomeOutput(ctx.repo()?.paths.repo_root.clone()))
     }
 }

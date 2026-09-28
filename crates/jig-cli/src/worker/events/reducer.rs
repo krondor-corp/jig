@@ -110,14 +110,14 @@ impl ReducibleKind for EventKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::Config;
+    use crate::context::AppConfig;
     use jig_core::issues::issue::IssueRef;
 
-    fn default_config() -> Config {
-        Config::default()
+    fn default_config() -> AppConfig {
+        AppConfig::default()
     }
 
-    fn reduce(events: &[Event], config: &Config) -> WorkerState {
+    fn reduce(events: &[Event], config: &AppConfig) -> WorkerState {
         let mut state = WorkerState::default();
         for event in events {
             EventKind::apply(&mut state, event.ts, &event.kind);
@@ -333,7 +333,7 @@ mod tests {
             ts: old_ts,
             kind: EventKind::ToolUseEnd,
         }];
-        let config = Config {
+        let config = AppConfig {
             silence_threshold_seconds: 300,
             ..Default::default()
         };
@@ -398,7 +398,7 @@ mod tests {
                 auto: false,
             },
         }];
-        let config = Config {
+        let config = AppConfig {
             silence_threshold_seconds: 300,
             ..Default::default()
         };

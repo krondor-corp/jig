@@ -5,7 +5,7 @@ use std::path::Path;
 use clap::Args;
 use comfy_table::{Cell, CellAlignment, Color};
 
-use crate::context::{Config, RepoConfig, ScopedCtx};
+use crate::context::{AppConfig, AppCtx, Ctx, RepoCtx};
 use crate::worker::events::{self, WorkerState};
 use crate::worker::WorkerStatus;
 use jig_core::git::{Branch, Repo};
@@ -43,62 +43,63 @@ impl std::fmt::Display for ListOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum ListError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Git(#[from] jig_core::GitError),
 }
 
 impl Op for List {
-    type Context = ScopedCtx;
+    type Context = Ctx;
     type Error = ListError;
     type Output = ListOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, ListError> {
-        Ok(ScopedCtx::from_global(paths, self.global)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, ListError> {
+        Ok(Ctx::scoped(app, self.global)?)
     }
 
-    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
         if self.all {
             return self.list_all_git_worktrees();
         }
 
-        match ctx {
-            ScopedCtx::Global(g) => {
-                if self.plain || ui::is_plain() {
-                    return self.run_global_plain(&g.repos, &g.config);
-                }
-                self.run_global_table(&g.paths, &g.repos, &g.config)
+        // `-g` renders one table across repos; without it, the worktrees of
+        // the repo you are standing in. The command knows which was asked
+        // for — it does not need the context to tell it.
+        if self.global {
+            if self.plain || ui::is_plain() {
+                return self.run_global_plain(ctx.repos(), &ctx.config);
             }
-            ScopedCtx::Repo(r) => {
-                let git_repo = Repo::open(&r.repo.repo_root)?;
-                let worktrees = git_repo.list_worktrees()?;
-                let names: Vec<String> = worktrees
-                    .iter()
-                    .map(|wt| wt.branch_name().to_string())
-                    .collect();
-                if names.is_empty() {
-                    eprintln!("No worktrees found");
-                }
-
-                if self.plain || ui::is_plain() {
-                    let out = names.iter().map(|w| format!("{w}\n")).collect::<String>();
-                    return Ok(ListOutput(out));
-                }
-
-                let base_branch = r.repo.base_branch(&r.config);
-                let table = build_worktree_table(
-                    &r.paths,
-                    &r.config,
-                    &names,
-                    &r.repo.worktrees_path,
-                    &base_branch,
-                    &r.repo.name(),
-                );
-                eprintln!("{table}");
-                note_foreign_worktrees(&git_repo, &r.repo.repo_root);
-                Ok(ListOutput(String::new()))
-            }
+            return self.run_global_table(&ctx.paths, ctx.repos(), &ctx.config);
         }
+
+        let repo = ctx.repo()?;
+        let git_repo = Repo::open(&repo.paths.repo_root)?;
+        let worktrees = git_repo.list_worktrees()?;
+        let names: Vec<String> = worktrees
+            .iter()
+            .map(|wt| wt.branch_name().to_string())
+            .collect();
+        if names.is_empty() {
+            eprintln!("No worktrees found");
+        }
+
+        if self.plain || ui::is_plain() {
+            let out = names.iter().map(|w| format!("{w}\n")).collect::<String>();
+            return Ok(ListOutput(out));
+        }
+
+        let base_branch = repo.base_branch(&ctx.config);
+        let table = build_worktree_table(
+            &ctx.paths,
+            &ctx.config,
+            &names,
+            &repo.paths.worktrees_path,
+            &base_branch,
+            &repo.name(),
+        );
+        eprintln!("{table}");
+        note_foreign_worktrees(&git_repo, &repo.paths.repo_root);
+        Ok(ListOutput(String::new()))
     }
 }
 
@@ -118,13 +119,13 @@ impl List {
 
     fn run_global_plain(
         &self,
-        repos: &[RepoConfig],
-        _global: &Config,
+        repos: &[RepoCtx],
+        _global: &AppConfig,
     ) -> Result<ListOutput, ListError> {
         let mut out = String::new();
         let mut first = true;
         for cfg in repos {
-            let git_repo = Repo::open(&cfg.repo_root)?;
+            let git_repo = Repo::open(&cfg.paths.repo_root)?;
             let worktrees = git_repo.list_worktrees()?;
             if worktrees.is_empty() {
                 continue;
@@ -145,12 +146,12 @@ impl List {
     fn run_global_table(
         &self,
         paths: &AppPaths,
-        repos: &[RepoConfig],
-        global: &Config,
+        repos: &[RepoCtx],
+        global: &AppConfig,
     ) -> Result<ListOutput, ListError> {
         let mut first = true;
         for cfg in repos {
-            let git_repo = Repo::open(&cfg.repo_root)?;
+            let git_repo = Repo::open(&cfg.paths.repo_root)?;
             let wts = git_repo.list_worktrees()?;
             if wts.is_empty() {
                 continue;
@@ -168,12 +169,12 @@ impl List {
                 paths,
                 global,
                 &worktrees,
-                &cfg.worktrees_path,
+                &cfg.paths.worktrees_path,
                 &base_branch,
                 &cfg.name(),
             );
             eprintln!("{table}");
-            note_foreign_worktrees(&git_repo, &cfg.repo_root);
+            note_foreign_worktrees(&git_repo, &cfg.paths.repo_root);
         }
         Ok(ListOutput(String::new()))
     }
@@ -208,7 +209,7 @@ fn note_foreign_worktrees(repo: &Repo, repo_root: &Path) {
 /// Get worker status from event log for a worktree.
 fn worktree_event_status(
     paths: &AppPaths,
-    config: &Config,
+    config: &AppConfig,
     repo_name: &str,
     name: &str,
 ) -> Option<WorkerStatus> {
@@ -223,7 +224,7 @@ fn worktree_event_status(
 
 fn build_worktree_table(
     paths: &AppPaths,
-    config: &Config,
+    config: &AppConfig,
     names: &[String],
     worktrees_path: &Path,
     base_branch: &Branch,

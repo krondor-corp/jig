@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use url::Url;
 
-use crate::context::{self, AppPaths, Config, JigToml, RepoConfig, RepoEntry};
+use crate::context::{self, AppConfig, AppPaths, RepoConfig, RepoCtx, RepoEntry};
 use crate::daemon::checks::{self, PrHealth, PrStatus};
 use crate::notify::{NotificationEvent, NotificationQueue, Notifier};
 use crate::worker::events::{self, Event, EventKind, TerminalKind, WorkerState};
@@ -153,7 +153,7 @@ impl MonitorActor {
         repo_entry: &RepoEntry,
         worker: &Worker,
         key: &str,
-        global_config: &Config,
+        global_config: &AppConfig,
         notifier: &Notifier,
     ) -> Result<(WorkerState, Vec<PruneTarget>), crate::worker::WorkerError> {
         let worker_name = worker.branch().to_string();
@@ -365,7 +365,7 @@ impl MonitorActor {
         repo_path: &std::path::Path,
         old_state: &WorkerState,
         state: &WorkerState,
-        global_config: &Config,
+        global_config: &AppConfig,
         actions: &mut Vec<DispatchAction>,
     ) {
         // Check for merged/closed via PR health + worker status
@@ -379,7 +379,7 @@ impl MonitorActor {
                 },
             });
 
-            let auto_complete = JigToml::load(repo_path)
+            let auto_complete = RepoConfig::load(repo_path)
                 .ok()
                 .flatten()
                 .map(|t| t.issues.auto_complete_on_merge)
@@ -428,7 +428,7 @@ impl MonitorActor {
                 });
             }
 
-            let base = JigToml::load(repo_path)
+            let base = RepoConfig::load(repo_path)
                 .ok()
                 .flatten()
                 .and_then(|t| t.worktree.base)
@@ -471,7 +471,7 @@ impl MonitorActor {
         mux: &dyn Mux,
         event_log: &crate::worker::events::EventLog,
         _state: &WorkerState,
-        global_config: &Config,
+        global_config: &AppConfig,
         notifier: &Notifier,
     ) -> Vec<PruneTarget> {
         let mut prune_targets = Vec::new();
@@ -530,7 +530,7 @@ impl MonitorActor {
                     }
                 }
                 DispatchAction::UpdateIssueStatus { issue_id } => {
-                    if let Ok(ctx) = RepoConfig::from_path(repo_path) {
+                    if let Ok(ctx) = RepoCtx::from_path(repo_path) {
                         if let Ok(provider) = ctx.issue_provider(global_config) {
                             let should_update = match provider.get(issue_id) {
                                 Ok(Some(issue)) => !matches!(
@@ -675,7 +675,7 @@ fn try_resume_worker(
         return Ok(false);
     }
     let wt = worker.worktree()?;
-    let jig_config = JigToml::load(repo_root)?.unwrap_or_default();
+    let jig_config = RepoConfig::load(repo_root)?.unwrap_or_default();
     let agent = jig_core::agents::Agent::from_config(
         &jig_config.agent.agent_type,
         jig_config.agent.model.as_deref(),
@@ -692,7 +692,7 @@ fn url_text(pr_url: &Option<Url>) -> String {
     pr_url.as_ref().map(Url::to_string).unwrap_or_default()
 }
 
-fn git_stats(repo_path: &std::path::Path, worker_name: &str, config: &Config) -> (usize, bool) {
+fn git_stats(repo_path: &std::path::Path, worker_name: &str, config: &AppConfig) -> (usize, bool) {
     let worktree_path = context::worktree_path(repo_path, worker_name);
     if !worktree_path.exists() {
         return (0, false);
@@ -709,7 +709,7 @@ fn git_stats(repo_path: &std::path::Path, worker_name: &str, config: &Config) ->
     (ahead, dirty)
 }
 
-fn nudge_cooldown(state: &WorkerState, config: &Config) -> Option<u64> {
+fn nudge_cooldown(state: &WorkerState, config: &AppConfig) -> Option<u64> {
     let now = chrono::Utc::now().timestamp();
     let mut min_remaining: Option<u64> = None;
     for &last_ts in state.last_nudge_at.values() {

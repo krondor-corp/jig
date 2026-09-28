@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 use crate::cli::op::{NoOutput, Op};
-use crate::context::AppPaths;
+use crate::context::AppCtx;
 use crate::terminal::shell::{self, Shell, ShellError};
 
 /// Automatically configure shell integration
@@ -36,7 +36,7 @@ impl Op for ShellSetup {
     type Error = ShellSetupError;
     type Output = NoOutput;
 
-    fn build_context(&self, _paths: &AppPaths) -> Result<(), ShellSetupError> {
+    fn build_context(&self, _app: AppCtx) -> Result<(), ShellSetupError> {
         Ok(())
     }
 

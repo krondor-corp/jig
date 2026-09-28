@@ -9,8 +9,8 @@ use jig_core::Worktree;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::AppPaths;
-use crate::context::RepoCtx;
+use crate::context::AppCtx;
+use crate::context::Ctx;
 
 /// Create a new worktree.
 ///
@@ -58,7 +58,7 @@ impl std::fmt::Display for CreateOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum CreateError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Git(#[from] jig_core::GitError),
     #[error(transparent)]
@@ -66,31 +66,31 @@ pub enum CreateError {
 }
 
 impl Op for Create {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CreateError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, CreateError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
-        let repo = &ctx.repo;
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        let repo = ctx.repo()?;
         let base_branch = match &self.base {
             Some(b) => Branch::new(b),
             None => repo.base_branch(&ctx.config),
         };
 
-        let git_repo = jig_core::Repo::open(&repo.repo_root)?;
+        let git_repo = jig_core::Repo::open(&repo.paths.repo_root)?;
         let branch = Branch::new(&self.branch);
         let copy_files: Vec<std::path::PathBuf> = repo
-            .repo
+            .config
             .worktree
             .copy
             .iter()
             .map(std::path::PathBuf::from)
             .collect();
-        let on_create = repo.repo.worktree.on_create();
+        let on_create = repo.config.worktree.on_create();
         let wt = Worktree::create(&git_repo, &branch, &base_branch, &copy_files, on_create)?;
 
         let repo_name = repo.name();

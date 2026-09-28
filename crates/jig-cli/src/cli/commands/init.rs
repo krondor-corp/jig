@@ -4,7 +4,7 @@ use clap::Args;
 use std::fs;
 use std::path::Path;
 
-use crate::context::{Config, JigToml, RepoCtx, JIG_DIR, JIG_LOCAL_TOML};
+use crate::context::{AppConfig, AppCtx, RepoConfig, RepoCtx, JIG_DIR, JIG_LOCAL_TOML};
 use jig_core::git::Repo;
 use jig_core::{agents, Prompt};
 
@@ -59,7 +59,7 @@ pub struct Init {
 #[derive(Debug, thiserror::Error)]
 pub enum InitError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Hook(#[from] crate::hooks::HookError),
     #[error(transparent)]
@@ -77,8 +77,8 @@ impl Op for Init {
     type Error = InitError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, InitError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, InitError> {
+        Ok(app.paths)
     }
 
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
@@ -100,10 +100,10 @@ impl Op for Init {
             )
         })?;
 
-        // Init needs to discover repo root directly because Config may not exist
-        // (init is often the first jig command run in a repo)
-        let repo_root = match RepoCtx::from_cwd(&paths) {
-            Ok(ctx) => ctx.repo.repo_root,
+        // Init discovers the repo root directly: jig.toml may not exist yet,
+        // since init is often the first jig command run in a repo.
+        let repo_root = match RepoCtx::from_cwd() {
+            Ok(repo) => repo.paths.repo_root,
             Err(_) => {
                 let git_repo = Repo::discover()?;
                 git_repo.clone_path()
@@ -131,7 +131,7 @@ impl Op for Init {
         }
 
         // If already initialized, just ensure hooks are set up
-        if JigToml::exists(&repo_root) && !self.force {
+        if RepoConfig::exists(&repo_root) && !self.force {
             ui::progress("Already initialized, ensuring hooks are set up...");
             install_hooks(&repo_root, &agent, false);
             eprintln!();
@@ -401,7 +401,7 @@ fn launch_audit(
 }
 
 fn init_global(paths: &AppPaths, force: bool) -> Result<NoOutput, InitError> {
-    match Config::init(paths, force)? {
+    match AppConfig::init(paths, force)? {
         Some(path) => ui::success(&format!("Created {}", path.display())),
         None => {
             let path = paths.config_file();

@@ -6,8 +6,7 @@ use clap::Args;
 use jig_core::issues::{IssuePriority, IssueStatus};
 
 use crate::cli::op::Op;
-use crate::context::AppPaths;
-use crate::context::{RepoConfig, RepoCtx};
+use crate::context::{AppCtx, Ctx, RepoCtx};
 
 /// Create a new issue
 #[derive(Args, Debug, Clone)]
@@ -56,7 +55,7 @@ impl fmt::Display for CreateOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum CreateError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
     #[error("{0}")]
@@ -78,8 +77,8 @@ fn read_body(body: Option<&str>) -> Result<Option<String>, CreateError> {
 }
 
 fn run(
-    repo: &RepoConfig,
-    global: &crate::context::Config,
+    repo: &RepoCtx,
+    global: &crate::context::AppConfig,
     cmd: &Create,
 ) -> Result<CreateOutput, CreateError> {
     let pri: Option<IssuePriority> = cmd.priority.as_deref().and_then(|s| s.parse().ok());
@@ -104,15 +103,15 @@ fn run(
 }
 
 impl Op for Create {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CreateError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, CreateError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
-        run(&ctx.repo, &ctx.config, self)
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        run(ctx.repo()?, &ctx.config, self)
     }
 }

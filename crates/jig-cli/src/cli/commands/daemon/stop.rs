@@ -4,6 +4,7 @@ use clap::Args;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
+use crate::context::AppCtx;
 use crate::context::AppPaths;
 use crate::daemon::ipc::{self, IpcError, Request, Response};
 
@@ -24,8 +25,8 @@ impl Op for Stop {
     type Error = StopError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, StopError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, StopError> {
+        Ok(app.paths)
     }
 
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {

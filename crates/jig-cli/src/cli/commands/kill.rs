@@ -2,7 +2,7 @@
 
 use clap::Args;
 
-use crate::context::{RepoConfig, ScopedCtx};
+use crate::context::{AppCtx, Ctx, RepoCtx};
 use crate::worker::Worker;
 
 use crate::cli::op::{NoOutput, Op};
@@ -27,7 +27,7 @@ pub struct Kill {
 #[derive(Debug, thiserror::Error)]
 pub enum KillError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Worker(#[from] crate::worker::WorkerError),
     #[error(transparent)]
@@ -39,79 +39,54 @@ pub enum KillError {
 }
 
 impl Op for Kill {
-    type Context = ScopedCtx;
+    type Context = Ctx;
     type Error = KillError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, KillError> {
-        Ok(ScopedCtx::from_global(paths, self.global)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, KillError> {
+        Ok(Ctx::scoped(app, self.global)?)
     }
 
-    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
-        let paths = ctx.paths().clone();
-        match ctx {
-            ScopedCtx::Global(g) => {
-                if self.all {
-                    let mut killed = 0;
-                    for repo in &g.repos {
-                        killed += kill_all_in_repo(&paths, repo, g.config.mux)?;
-                    }
-                    if killed == 0 {
-                        eprintln!("{}", ui::dim("No workers to kill."));
-                    }
-                    return Ok(NoOutput);
-                }
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        let paths = ctx.paths.clone();
+        let kind = ctx.config.mux;
 
-                let name = self.branch.as_deref().ok_or(KillError::NoTarget)?;
-                for repo in &g.repos {
-                    let git_repo = jig_core::git::Repo::open(&repo.repo_root)?;
-                    let repo_name = repo.name();
-                    let mux = jig_core::mux::for_repo(g.config.mux, &repo_name);
-                    let workers = Worker::discover(&git_repo);
-                    if let Some(worker) = workers.iter().find(|w| w.branch() == name) {
-                        let _ = worker.kill(&mux);
-                        worker.unregister(&paths)?;
-                        ui::success(&format!("Killed '{}'", ui::highlight(name)));
-                        return Ok(NoOutput);
-                    }
-                }
-                Err(KillError::NotFound(format!("worker '{}' not found", name)))
+        if self.all {
+            let mut killed = 0;
+            for repo in ctx.repos() {
+                killed += kill_all_in_repo(&paths, repo, kind)?;
             }
-            ScopedCtx::Repo(r) => {
-                let repo_name = r.repo.name();
-                let mux = jig_core::mux::for_repo(r.config.mux, &repo_name);
+            if killed == 0 {
+                eprintln!("{}", ui::dim("No workers to kill."));
+            }
+            return Ok(NoOutput);
+        }
 
-                if self.all {
-                    let killed = kill_all_in_repo(&paths, &r.repo, r.config.mux)?;
-                    if killed == 0 {
-                        eprintln!("{}", ui::dim("No workers to kill."));
-                    }
-                    return Ok(NoOutput);
-                }
-
-                let name = self.branch.as_deref().ok_or(KillError::NoTarget)?;
-                let workers = Worker::discover(&jig_core::git::Repo::open(&r.repo.repo_root)?);
-                let worker = workers
-                    .iter()
-                    .find(|w| w.branch() == name)
-                    .ok_or_else(|| KillError::NotFound(format!("worker '{}' not found", name)))?;
+        // One repo or every tracked one, the search is the same.
+        let name = self.branch.as_deref().ok_or(KillError::NoTarget)?;
+        for repo in ctx.repos() {
+            let git_repo = jig_core::git::Repo::open(&repo.paths.repo_root)?;
+            let mux = jig_core::mux::for_repo(kind, &repo.name());
+            let workers = Worker::discover(&git_repo);
+            if let Some(worker) = workers.iter().find(|w| w.branch() == name) {
                 let _ = worker.kill(&mux);
                 worker.unregister(&paths)?;
                 ui::success(&format!("Killed '{}'", ui::highlight(name)));
-                Ok(NoOutput)
+                return Ok(NoOutput);
             }
         }
+        Err(KillError::NotFound(format!("worker '{}' not found", name)))
     }
 }
 
 fn kill_all_in_repo(
     paths: &AppPaths,
-    repo: &RepoConfig,
+    repo: &RepoCtx,
     kind: jig_core::mux::MuxKind,
 ) -> Result<usize, KillError> {
     let repo_name = repo.name();
     let mux = jig_core::mux::for_repo(kind, &repo_name);
-    let workers = Worker::discover(&jig_core::git::Repo::open(&repo.repo_root)?);
+    let workers = Worker::discover(&jig_core::git::Repo::open(&repo.paths.repo_root)?);
     for worker in &workers {
         let _ = worker.kill(&mux);
         worker.unregister(paths)?;

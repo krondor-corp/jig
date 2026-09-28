@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::context::{self, RepoConfig};
+use crate::context::{self, RepoCtx};
 use jig_core::agents;
 use jig_core::exec::{Exec, Timeout};
 use jig_core::git::Repo;
@@ -90,7 +90,7 @@ impl Actor for TriageActor {
                 continue;
             }
 
-            let cfg = match RepoConfig::from_path(&repo_root) {
+            let cfg = match RepoCtx::from_path(&repo_root) {
                 Ok(cfg) => cfg,
                 Err(e) => {
                     tracing::debug!(repo = %repo_name, error = %e, "failed to load config");
@@ -98,7 +98,7 @@ impl Actor for TriageActor {
                 }
             };
 
-            if !cfg.repo.triage.enabled {
+            if !cfg.config.triage.enabled {
                 continue;
             }
 
@@ -123,9 +123,9 @@ impl Actor for TriageActor {
                 Err(_) => continue,
             };
 
-            let timeout_seconds = cfg.repo.triage.timeout_seconds;
+            let timeout_seconds = cfg.config.triage.timeout_seconds;
             let model = cfg
-                .repo
+                .config
                 .triage
                 .model
                 .clone()
@@ -193,7 +193,7 @@ pub(crate) fn run_triage_subprocess(
 ) -> std::result::Result<(), String> {
     let prompt = crate::prompts::triage::triage_prompt(issue);
 
-    let jig_toml = context::JigToml::load(repo_root)
+    let jig_toml = context::RepoConfig::load(repo_root)
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
     let agent = agents::Agent::from_config(

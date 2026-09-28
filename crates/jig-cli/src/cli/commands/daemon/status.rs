@@ -14,6 +14,7 @@ use crate::daemon::ipc::{self, IpcError, Liveness, STUCK_ACTOR_SECS};
 use crate::daemon::pidfile::PidFile;
 
 use super::display_path;
+use crate::context::AppCtx;
 use crate::context::AppPaths;
 
 /// Show whether the daemon is running, ticking, and unstuck
@@ -37,8 +38,8 @@ impl Op for Status {
     type Error = StatusError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<AppPaths, StatusError> {
-        Ok(paths.clone())
+    fn build_context(&self, app: AppCtx) -> Result<AppPaths, StatusError> {
+        Ok(app.paths)
     }
 
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {

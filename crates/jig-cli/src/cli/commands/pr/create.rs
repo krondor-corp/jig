@@ -7,7 +7,7 @@ use clap::Args;
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::AppPaths;
-use crate::context::{RepoConfig, RepoCtx};
+use crate::context::{AppCtx, Ctx, RepoCtx};
 use crate::worker::events::{self, WorkerState};
 use jig_core::git::{Branch, Repo};
 use jig_core::github::GitHubClient;
@@ -37,7 +37,7 @@ impl fmt::Display for CreateOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum CreateError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Git(#[from] jig_core::GitError),
     #[error(transparent)]
@@ -49,21 +49,21 @@ pub enum CreateError {
 }
 
 impl Op for Create {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CreateError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, CreateError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
         let git_repo = Repo::discover()?;
         let branch = git_repo
             .current_branch()
             .map_err(|_| CreateError::NoBranch)?;
 
-        let base = resolve_base(&ctx.paths, &ctx.repo, &ctx.config)?;
+        let base = resolve_base(&ctx.paths, ctx.repo()?, &ctx.config)?;
         let base_str: &str = &base;
         let base_for_gh = base_str.strip_prefix("origin/").unwrap_or(base_str);
 
@@ -93,8 +93,8 @@ impl Op for Create {
 
 fn resolve_base(
     paths: &AppPaths,
-    repo: &RepoConfig,
-    global: &crate::context::Config,
+    repo: &RepoCtx,
+    global: &crate::context::AppConfig,
 ) -> Result<Branch, CreateError> {
     let worktree_name = match Worktree::current() {
         Ok(wt) => wt.branch_name(),

@@ -46,7 +46,7 @@ pub struct LinearProfile {
 /// Global configuration stored at `~/.config/jig/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Config {
+pub struct AppConfig {
     // Health
     pub silence_threshold_seconds: u64,
 
@@ -76,7 +76,7 @@ pub struct Config {
     pub default_base_branch: Option<String>,
 }
 
-impl Default for Config {
+impl Default for AppConfig {
     fn default() -> Self {
         Self {
             silence_threshold_seconds: 300,
@@ -95,7 +95,7 @@ impl Default for Config {
     }
 }
 
-impl Config {
+impl AppConfig {
     pub fn load(paths: &AppPaths) -> Result<Self, ContextError> {
         Self::load_from(&paths.config_file())
     }
@@ -105,7 +105,7 @@ impl Config {
             return Ok(Self::default());
         }
         let content = fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)?;
+        let config: AppConfig = toml::from_str(&content)?;
         Ok(config)
     }
 
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn defaults() {
-        let cfg = Config::default();
+        let cfg = AppConfig::default();
         assert_eq!(cfg.silence_threshold_seconds, 300);
         assert_eq!(cfg.max_concurrent_workers, 3);
         assert_eq!(cfg.poll_interval, 120);

@@ -7,8 +7,8 @@ use jig_core::Worktree;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::AppPaths;
-use crate::context::RepoCtx;
+use crate::context::AppCtx;
+use crate::context::Ctx;
 
 /// Exit current worktree and remove it
 #[derive(Args, Debug, Clone)]
@@ -31,7 +31,7 @@ impl std::fmt::Display for ExitOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum ExitError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -39,15 +39,15 @@ pub enum ExitError {
 }
 
 impl Op for Exit {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = ExitError;
     type Output = ExitOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, ExitError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, ExitError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
         let wt = Worktree::current()?;
         let name = wt.branch_name();
 
@@ -55,7 +55,7 @@ impl Op for Exit {
 
         ui::success(&format!("Exited worktree '{}'", ui::highlight(&name)));
 
-        let canonical = ctx.repo.repo_root.canonicalize()?;
+        let canonical = ctx.repo()?.paths.repo_root.canonicalize()?;
         Ok(ExitOutput(canonical))
     }
 }

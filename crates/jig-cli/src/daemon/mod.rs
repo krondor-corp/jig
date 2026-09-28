@@ -16,12 +16,12 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::context::{AppPaths, Config, Context, ContextError, JigToml, RepoEntry, RepoRegistry};
+use crate::context::{AppConfig, AppPaths, ContextError, Ctx, RepoConfig, RepoEntry, RepoRegistry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
     #[error(transparent)]
-    Context(#[from] ContextError),
+    Ctx(#[from] ContextError),
     #[error(transparent)]
     Worker(#[from] crate::worker::WorkerError),
     #[error(transparent)]
@@ -34,7 +34,7 @@ pub enum DaemonError {
 #[derive(Clone)]
 pub struct TickContext {
     pub paths: AppPaths,
-    pub config: Arc<Config>,
+    pub config: Arc<AppConfig>,
     pub repos: Arc<Vec<RepoEntry>>,
     pub session_prefix: String,
 }
@@ -111,7 +111,7 @@ pub struct Daemon {
     pub triage: ActorHandle<TriageActor>,
 
     paths: AppPaths,
-    config: Config,
+    config: AppConfig,
     registry: RepoRegistry,
     last_poll: Instant,
     /// Long-running (`jig daemon start`, `ps --watch`) rather than a single
@@ -123,17 +123,17 @@ pub struct Daemon {
 impl Daemon {
     /// Start a long-running daemon: records lifecycle events in
     /// `daemon.jsonl` and can serve IPC via [`Self::shared`].
-    pub fn start(cfg: Context) -> Result<Self, DaemonError> {
+    pub fn start(cfg: Ctx) -> Result<Self, DaemonError> {
         Self::new(cfg, true)
     }
 
     /// Start a daemon for a one-shot tick (plain `jig ps` with no daemon
     /// running). Leaves the lifecycle log to any long-running daemon.
-    pub fn oneshot(cfg: Context) -> Result<Self, DaemonError> {
+    pub fn oneshot(cfg: Ctx) -> Result<Self, DaemonError> {
         Self::new(cfg, false)
     }
 
-    fn new(cfg: Context, persistent: bool) -> Result<Self, DaemonError> {
+    fn new(cfg: Ctx, persistent: bool) -> Result<Self, DaemonError> {
         if persistent {
             log_startup(&cfg.paths);
         }
@@ -181,7 +181,7 @@ impl Daemon {
         })
     }
 
-    pub fn config(&self) -> &Config {
+    pub fn config(&self) -> &AppConfig {
         &self.config
     }
 
@@ -321,7 +321,7 @@ fn try_resume_worker(
         return Ok(false);
     }
     let wt = worker.worktree()?;
-    let jig_config = JigToml::load(repo_root)?.unwrap_or_default();
+    let jig_config = RepoConfig::load(repo_root)?.unwrap_or_default();
     let agent = jig_core::agents::Agent::from_config(
         &jig_config.agent.agent_type,
         jig_config.agent.model.as_deref(),
@@ -358,7 +358,7 @@ fn log_startup(paths: &AppPaths) {
 }
 
 /// Resume workers whose mux window died, if `auto_recover` is on.
-fn recover_orphans(paths: &AppPaths, global_config: &Config, registry: &RepoRegistry) {
+fn recover_orphans(paths: &AppPaths, global_config: &AppConfig, registry: &RepoRegistry) {
     if global_config.auto_recover {
         let mut recovered = Vec::new();
         for entry in registry.repos() {

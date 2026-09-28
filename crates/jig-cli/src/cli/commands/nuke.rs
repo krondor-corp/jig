@@ -1,6 +1,6 @@
 //! Nuke command — kill all workers, remove worktrees, clear state
 
-use crate::context::{RepoConfig, ScopedCtx};
+use crate::context::{AppCtx, Ctx, RepoCtx};
 use jig_core::git::Repo;
 use jig_core::mux::Mux;
 
@@ -19,7 +19,7 @@ pub struct Nuke {
 #[derive(Debug, thiserror::Error)]
 pub enum NukeError {
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Mux(#[from] jig_core::MuxError),
     #[error(transparent)]
@@ -27,28 +27,21 @@ pub enum NukeError {
 }
 
 impl Op for Nuke {
-    type Context = ScopedCtx;
+    type Context = Ctx;
     type Error = NukeError;
     type Output = NoOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<ScopedCtx, NukeError> {
-        Ok(ScopedCtx::from_global(paths, self.global)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, NukeError> {
+        Ok(Ctx::scoped(app, self.global)?)
     }
 
-    fn run(&self, ctx: ScopedCtx) -> Result<Self::Output, Self::Error> {
-        let paths = ctx.paths().clone();
-        match ctx {
-            ScopedCtx::Global(g) => {
-                if g.repos.is_empty() {
-                    return Err(crate::context::ContextError::NotInGitRepo.into());
-                }
-                for repo in &g.repos {
-                    nuke_repo(&paths, repo, g.config.mux)?;
-                }
-            }
-            ScopedCtx::Repo(r) => {
-                nuke_repo(&paths, &r.repo, r.config.mux)?;
-            }
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        let paths = ctx.paths.clone();
+        // Nothing to nuke is an error, whether that is an empty registry
+        // under `-g` or a directory that is not a repo.
+        ctx.repo()?;
+        for repo in ctx.repos() {
+            nuke_repo(&paths, repo, ctx.config.mux)?;
         }
 
         let logs_dir = paths.logs_dir();
@@ -67,7 +60,7 @@ impl Op for Nuke {
 
 fn nuke_repo(
     paths: &AppPaths,
-    cfg: &RepoConfig,
+    cfg: &RepoCtx,
     kind: jig_core::mux::MuxKind,
 ) -> Result<(), NukeError> {
     let repo_name = cfg.name();
@@ -101,7 +94,7 @@ fn nuke_repo(
     }
 
     // 3. Remove git worktrees
-    let worktrees = Repo::open(&cfg.repo_root)
+    let worktrees = Repo::open(&cfg.paths.repo_root)
         .and_then(|r| r.list_worktrees())
         .unwrap_or_default();
     for wt in &worktrees {
