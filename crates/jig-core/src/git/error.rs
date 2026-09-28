@@ -33,6 +33,11 @@ pub enum GitError {
     #[error("invalid path: {0}")]
     InvalidPath(PathBuf),
 
+    /// `git` itself said no — its own message, which is more use than
+    /// libgit2's error codes ever were.
+    #[error("{0}")]
+    Cli(String),
+
     #[error("fetch failed: {0}")]
     FetchFailed(String),
 

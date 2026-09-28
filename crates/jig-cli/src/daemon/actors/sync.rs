@@ -40,7 +40,7 @@ impl Actor for SyncActor {
                     continue;
                 }
             };
-            match repo.fetch("origin", &[]) {
+            match repo.fetch("origin", &[], req.ctx.config.git.timeout) {
                 Ok(()) => tracing::debug!(repo = %name, "fetched origin"),
                 Err(e) => tracing::warn!(repo = %name, "fetch failed: {}", e),
             }

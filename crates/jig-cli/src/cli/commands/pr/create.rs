@@ -74,7 +74,7 @@ impl Op for Create {
         ));
 
         ui::detail("Pushing...");
-        git_repo.push_branch(&branch)?;
+        git_repo.push_branch(&branch, ctx.config.git.timeout)?;
 
         let branch_str = branch.to_string();
         let gh = GitHubClient::from_remote()?;

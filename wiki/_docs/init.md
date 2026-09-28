@@ -227,17 +227,16 @@ on_create = "npm install"
 
 ### Git remote timeouts
 
-Fetching and pushing are bounded too, in `~/.config/jig/config.toml`:
+Fetching and pushing are bounded, in `~/.config/jig/config.toml`:
 
 ```toml
 [git]
-connect_timeout = 10           # seconds waiting for a remote to answer
-idle_timeout = 60              # seconds of silence before giving up
+timeout = 600                  # seconds a fetch or push may take, or "none"
 ```
 
-`idle_timeout` is a limit on *silence*, not on slowness — a large clone streaming steadily will not be cut off. Raise `connect_timeout` if you are behind a slow proxy; `"none"` on either disables it.
+This bounds the **whole command**, not idle time — a legitimately slow fetch of a large repo counts against it, so set it above your slowest real fetch rather than near it. It exists because a remote that accepts a connection and then goes quiet would otherwise hang the daemon's sync and spawn work indefinitely.
 
-Unlike hook timeouts these are per-machine rather than per-repo, because the underlying git library only offers them process-wide. They exist because it otherwise waits forever, which in the daemon means a single unreachable remote stops auto-spawn until you restart it.
+Authentication is whatever your `git` already does: `~/.ssh/config` and its per-host `IdentityFile`, the agent, the keychain, credential helpers, deploy keys, HTTPS tokens. jig runs `git fetch` and `git push` rather than speaking the protocols itself, so there is nothing separate to configure — if `git fetch` works in that repo, jig works.
 
 ## Iterating after init
 
