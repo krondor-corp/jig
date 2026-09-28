@@ -48,9 +48,13 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
 /// one wedged client cannot stall the accept loop.
 const SERVER_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Accept-loop poll interval — the gap between "quit was set" and the
-/// listener thread noticing.
-const ACCEPT_POLL: Duration = Duration::from_millis(500);
+/// The longest the listener thread waits before re-checking `quit`.
+///
+/// This is shutdown latency only. It used to be request latency too — the
+/// loop slept for it between `accept` attempts, so a client connecting just
+/// after one attempt waited the whole interval to be served. It now sleeps on
+/// the socket, so a connection wakes it immediately.
+const SHUTDOWN_CHECK: Duration = Duration::from_millis(500);
 
 // ── Protocol ────────────────────────────────────────────────────────
 
@@ -422,21 +426,45 @@ impl Server {
             .expect("failed to spawn jig-ipc thread")
     }
 
+    /// Block until a client connects or it is time to re-check `quit`.
+    ///
+    /// The listener is non-blocking so that shutdown is never waiting on a
+    /// client that may never arrive; polling the descriptor gets that without
+    /// paying for it on every request.
+    fn wait_for_client(&self) {
+        use std::os::fd::AsFd;
+
+        use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+
+        let fd = self.listener.as_fd();
+        let mut fds = [PollFd::new(fd, PollFlags::POLLIN)];
+        let timeout = PollTimeout::try_from(SHUTDOWN_CHECK).unwrap_or(PollTimeout::MAX);
+        // EINTR (a signal arrived) and any other failure just means looping
+        // round to check `quit` and try `accept` again.
+        let _ = poll(&mut fds, timeout);
+    }
+
     fn serve(&self, shared: &DaemonShared, quit: &AtomicBool) {
         tracing::info!(socket = %self.path.display(), "daemon listening");
         while !quit.load(Ordering::Relaxed) {
             match self.listener.accept() {
                 Ok((stream, _)) => {
+                    // macOS hands the listener's non-blocking flag down to
+                    // accepted sockets. Reads below must block — bounded by
+                    // `SERVER_TIMEOUT` — or a client that has connected but
+                    // not yet written its request reads as a closed one.
+                    let _ = stream.set_nonblocking(false);
                     if let Err(e) = handle_connection(&stream, shared, quit) {
                         tracing::warn!("ipc request failed: {}", e);
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(ACCEPT_POLL)
-                }
+                // Nothing waiting: sleep on the socket itself rather than on
+                // the clock, so a client that connects a microsecond later is
+                // served immediately.
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => self.wait_for_client(),
                 Err(e) => {
                     tracing::warn!("ipc accept failed: {}", e);
-                    std::thread::sleep(ACCEPT_POLL);
+                    std::thread::sleep(SHUTDOWN_CHECK);
                 }
             }
         }
