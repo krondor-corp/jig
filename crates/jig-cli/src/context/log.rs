@@ -80,6 +80,62 @@ impl LogTailer {
     }
 }
 
+/// How many session logs to keep when pruning.
+///
+/// Enough to look back over a few daemon restarts, few enough that the
+/// directory stays readable.
+pub const KEEP_LOGS: usize = 20;
+
+/// Delete old session logs, keeping the newest `keep` that have content.
+///
+/// Empty logs go first and do not count against `keep`: most of them are from
+/// commands that opened a log and never wrote to it, and on one machine they
+/// were 1,505 of 1,522 files.
+///
+/// `in_use` is never removed. The daemon writes to its log for as long as it
+/// runs, and deleting that file out from under it would strand everything it
+/// logged afterwards.
+///
+/// Returns how many were removed. Errors are ignored throughout: tidying up
+/// must not stop the daemon from starting.
+pub fn prune(dir: &Path, keep: usize, in_use: Option<&Path>) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+
+    let mut kept: Vec<PathBuf> = Vec::new();
+    let mut removed = 0;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "log") {
+            continue;
+        }
+        if in_use.is_some_and(|live| live == path) {
+            continue;
+        }
+        match entry.metadata() {
+            Ok(meta) if meta.len() == 0 => {
+                if std::fs::remove_file(&path).is_ok() {
+                    removed += 1;
+                }
+            }
+            Ok(_) => kept.push(path),
+            Err(_) => {}
+        }
+    }
+
+    // Names begin with a sortable UTC timestamp, so this is oldest first.
+    kept.sort();
+    let surplus = kept.len().saturating_sub(keep);
+    for path in kept.into_iter().take(surplus) {
+        if std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// The last `n` lines of a file.
 pub fn tail_lines(path: &Path, n: usize) -> std::io::Result<Vec<String>> {
     let reader = BufReader::new(File::open(path)?);
