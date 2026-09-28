@@ -226,11 +226,14 @@ pub fn wait_for(mut ready: impl FnMut() -> bool, what: &str) {
     panic!("timed out waiting for {what}");
 }
 
-/// The PID recorded in a PID file.
+/// The PID recorded in a PID file, which also carries the boot it was
+/// claimed in — see `daemon::pidfile`.
 pub fn pid_in(path: &Path) -> u32 {
     std::fs::read_to_string(path)
         .expect("pid file")
-        .trim()
+        .split_whitespace()
+        .next()
+        .expect("pid file is not empty")
         .parse()
-        .expect("pid file holds a number")
+        .expect("pid file starts with a number")
 }
