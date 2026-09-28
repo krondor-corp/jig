@@ -225,6 +225,20 @@ The plain string form still works everywhere and picks up the default:
 on_create = "npm install"
 ```
 
+### Git remote timeouts
+
+Fetching and pushing are bounded too, in `~/.config/jig/config.toml`:
+
+```toml
+[git]
+connect_timeout = 10           # seconds waiting for a remote to answer
+idle_timeout = 60              # seconds of silence before giving up
+```
+
+`idle_timeout` is a limit on *silence*, not on slowness — a large clone streaming steadily will not be cut off. Raise `connect_timeout` if you are behind a slow proxy; `"none"` on either disables it.
+
+Unlike hook timeouts these are per-machine rather than per-repo, because the underlying git library only offers them process-wide. They exist because it otherwise waits forever, which in the daemon means a single unreachable remote stops auto-spawn until you restart it.
+
 ## Iterating after init
 
 `jig init` is a first pass. Iterate on the generated docs — ask your agent to improve `docs/index.md`, or edit by hand. Consider adding:

@@ -7,7 +7,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::paths::AppPaths;
-use jig_core::exec::Hook;
+use jig_core::exec::{Hook, Timeout};
 
 use super::ContextError;
 
@@ -73,7 +73,35 @@ pub struct AppConfig {
     #[serde(default)]
     pub linear: LinearConfig,
 
+    #[serde(default)]
+    pub git: GitConfig,
+
     pub default_base_branch: Option<String>,
+}
+
+/// How long git may wait on a remote.
+///
+/// Machine-level rather than per-repo: this describes your network, not your
+/// project. libgit2 exposes these only as process-wide settings, so they apply
+/// to every remote in every repo this process touches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GitConfig {
+    /// Waiting for a remote to accept a connection.
+    pub connect_timeout: Timeout,
+    /// Waiting on a remote that accepted and then went quiet. Generous, since
+    /// this is a timeout against silence rather than slowness — a large clone
+    /// streaming slowly must not be cut off.
+    pub idle_timeout: Timeout,
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Timeout::secs(10),
+            idle_timeout: Timeout::secs(60),
+        }
+    }
 }
 
 impl Default for AppConfig {
@@ -90,6 +118,7 @@ impl Default for AppConfig {
             auto_cleanup_closed: false,
             notify: NotifyConfig::default(),
             linear: LinearConfig::default(),
+            git: GitConfig::default(),
             default_base_branch: None,
         }
     }
@@ -148,6 +177,10 @@ auto_cleanup_closed = false      # clean up workers when PR closed without merge
 max_concurrent_workers = 3       # max auto-spawned workers per repo
 poll_interval = 120              # seconds between issue polls
 
+[git]
+connect_timeout = 10             # seconds waiting for a remote to answer
+idle_timeout = 60                # seconds of silence before giving up, or "none"
+
 # [notify]
 # exec = "~/.config/jig/hooks/notify.sh"
 # events = ["needs_intervention", "worker_failed"]
@@ -176,5 +209,34 @@ mod tests {
         assert_eq!(cfg.tick_interval, 30);
         assert!(cfg.notify.exec.is_none());
         assert!(cfg.default_base_branch.is_none());
+    }
+
+    #[test]
+    fn git_timeouts_default_to_something_bounded() {
+        let git = AppConfig::default().git;
+        assert_eq!(git.connect_timeout, Timeout::secs(10));
+        assert_eq!(git.idle_timeout, Timeout::secs(60));
+    }
+
+    #[test]
+    fn git_timeouts_can_be_configured() {
+        let cfg: AppConfig = toml::from_str(
+            r#"
+[git]
+connect_timeout = 5
+idle_timeout = "none"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.git.connect_timeout, Timeout::secs(5));
+        assert_eq!(cfg.git.idle_timeout, Timeout::Unlimited);
+    }
+
+    #[test]
+    fn a_config_without_a_git_section_still_gets_the_defaults() {
+        let cfg: AppConfig = toml::from_str("tick_interval = 5").unwrap();
+        let expected = GitConfig::default();
+        assert_eq!(cfg.git.connect_timeout, expected.connect_timeout);
+        assert_eq!(cfg.git.idle_timeout, expected.idle_timeout);
     }
 }
