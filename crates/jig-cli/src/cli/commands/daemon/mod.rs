@@ -38,6 +38,8 @@ crate::command_enum! {
     (Install, service::Install),
     /// Remove the daemon's OS service
     (Uninstall, service::Uninstall),
+    /// Restart the daemon service, e.g. after `jig update`
+    (Restart, service::Restart),
 }
 
 impl Op for Daemon {
