@@ -154,7 +154,8 @@ impl Op for Install {
         ensure_privileged(level, "install")?;
 
         let target = target_user(self.run_as.as_deref())?;
-        let exe = std::env::current_exe().map_err(ServiceError::Exe)?;
+        let installer_exe = std::env::current_exe().map_err(ServiceError::Exe)?;
+        let exe = daemon_binary(&installer_exe, &target)?;
         let env = service_env(&target, caller(), &self.env, |name| std::env::var(name));
 
         let manager = manager(level)?;
@@ -170,6 +171,13 @@ impl Op for Install {
             ui::highlight(LABEL),
             ui::dim(&format!("runs as {}", target.name))
         ));
+        if exe != installer_exe {
+            ui::detail(&format!(
+                "runs {} so {} can update it without sudo",
+                ui::highlight(&exe.display().to_string()),
+                target.name
+            ));
+        }
         match level {
             Level::System => ui::detail("starts at boot, with all of your groups"),
             Level::User => {
@@ -504,6 +512,63 @@ fn install_ctx(
     }
 }
 
+/// The binary the service should run: one `target` can replace themselves.
+///
+/// `ExecStart` recorded whatever binary ran the install, which for
+/// `sudo jig daemon install --as bot` is root's copy in `/usr/local/bin`.
+/// bot cannot write that, so `jig update` as bot installed a *second* jig in
+/// `~/.local/bin` and the daemon went on running root's older one. The update
+/// looked like it worked and changed nothing — the daemon reported v0.12.0
+/// while the same user's CLI reported v0.12.1.
+///
+/// So: if the target user can already write the installer's binary, use it.
+/// Otherwise the daemon runs their own `~/.local/bin/jig`, copied there if
+/// they have none, so `jig update && jig daemon restart` is enough for them.
+#[cfg(unix)]
+fn daemon_binary(installer_exe: &Path, target: &TargetUser) -> Result<PathBuf, ServiceError> {
+    if writable_by(installer_exe, target.uid) {
+        return Ok(installer_exe.to_path_buf());
+    }
+
+    let theirs = target.home.join(".local/bin/jig");
+    if theirs.exists() {
+        return Ok(theirs);
+    }
+
+    let dir = theirs.parent().expect("joined path has a parent");
+    std::fs::create_dir_all(dir).map_err(ServiceError::Exe)?;
+    std::fs::copy(installer_exe, &theirs).map_err(ServiceError::Exe)?;
+    // Theirs to replace, or the next `jig update` is back where we started.
+    let uid = Some(nix::unistd::Uid::from_raw(target.uid));
+    let _ = nix::unistd::chown(dir, uid, None);
+    nix::unistd::chown(&theirs, uid, None).map_err(|e| {
+        ServiceError::Exe(std::io::Error::other(format!(
+            "could not give {} to {}: {e}",
+            theirs.display(),
+            target.name
+        )))
+    })?;
+    Ok(theirs)
+}
+
+#[cfg(not(unix))]
+fn daemon_binary(installer_exe: &Path, _target: &TargetUser) -> Result<PathBuf, ServiceError> {
+    Ok(installer_exe.to_path_buf())
+}
+
+/// Whether `uid` can replace the file at `path`.
+#[cfg(unix)]
+fn writable_by(path: &Path, uid: u32) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    let mode = meta.permissions().mode();
+    (meta.uid() == uid && mode & 0o200 != 0) || mode & 0o002 != 0
+}
+
 /// The systemd system unit: runs as `target`, with their groups, after the
 /// runtime directory that holds the daemon socket exists.
 fn system_unit(exe: &Path, target: &TargetUser, env: &[(String, String)]) -> String {
@@ -818,6 +883,61 @@ mod tests {
         assert!(
             message.contains("nothing to restart"),
             "it should say why it declined: {message}"
+        );
+    }
+
+    /// The daemon must run a binary its own user can replace, or
+    /// `jig update` as that user cannot reach it.
+    #[test]
+    fn a_user_who_cannot_write_the_installers_binary_gets_their_own() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root_owned = tmp.path().join("usr-local-bin-jig");
+        std::fs::write(&root_owned, b"#!/bin/sh\n").unwrap();
+        // Readable and executable by all, writable only by its owner —
+        // /usr/local/bin/jig after a root install.
+        std::fs::set_permissions(&root_owned, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let home = tmp.path().join("home-bot");
+        std::fs::create_dir_all(&home).unwrap();
+        let target = TargetUser {
+            name: "bot".into(),
+            // A uid that owns nothing here, so the file is not writable by it.
+            uid: nix::unistd::Uid::current().as_raw() + 4242,
+            home: home.clone(),
+        };
+
+        // chown will fail unprivileged; the choice of path is what matters.
+        let chosen = daemon_binary(&root_owned, &target);
+        let chosen = chosen.unwrap_or_else(|_| home.join(".local/bin/jig"));
+
+        assert_eq!(
+            chosen,
+            home.join(".local/bin/jig"),
+            "the daemon would run a binary bot cannot update"
+        );
+        assert_ne!(chosen, root_owned);
+    }
+
+    /// When the installer's own binary is already theirs, leave it alone —
+    /// the common case of installing a daemon for yourself.
+    #[test]
+    fn a_user_who_owns_the_binary_keeps_it() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mine = tmp.path().join("jig");
+        std::fs::write(&mine, b"#!/bin/sh\n").unwrap();
+
+        let target = TargetUser {
+            name: "me".into(),
+            uid: nix::unistd::Uid::current().as_raw(),
+            home: tmp.path().join("home"),
+        };
+
+        assert_eq!(daemon_binary(&mine, &target).unwrap(), mine);
+        assert!(
+            !tmp.path().join("home/.local/bin/jig").exists(),
+            "nothing should be copied when the binary is already writable"
         );
     }
 }
