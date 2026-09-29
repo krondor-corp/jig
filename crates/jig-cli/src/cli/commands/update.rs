@@ -376,19 +376,30 @@ mod tests {
         assert!(!writable(&tmp.path().join("nope")));
     }
 
-    /// `/usr/local/bin` on a machine where jig was installed with
-    /// `INSTALL_DIR=/usr/local/bin` — a normal install that the old
-    /// path-substring check called "unknown" and refused to update.
+    /// A directory we genuinely cannot write to reads as not writable —
+    /// which is what makes `jig update` offer the sudo line instead of
+    /// failing halfway through an install.
+    ///
+    /// Built here rather than pointed at `/usr/local/bin`, which is writable
+    /// by the unprivileged user on some CI images and not on others. A test
+    /// that asserts something about the machine is not a test.
     #[test]
-    fn a_root_owned_bin_is_protected_not_unknown() {
-        let dir = Path::new("/usr/local/bin");
-        if !dir.exists() || nix::unistd::Uid::effective().is_root() {
-            return; // nothing to prove here
+    fn a_directory_we_cannot_write_to_is_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if nix::unistd::Uid::effective().is_root() {
+            return; // root writes anywhere; there is nothing to assert
         }
-        assert!(
-            !writable(dir),
-            "this test assumes /usr/local/bin is not writable by the test user"
-        );
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let locked = tmp.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        assert!(!writable(&locked));
+
+        // Give it back so the temp dir can clean itself up.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]
