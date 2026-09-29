@@ -1,7 +1,7 @@
 //! Update command - update jig to latest version
 
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use clap::Args;
@@ -36,23 +36,24 @@ pub enum UpdateError {
 /// Installation method detection
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum InstallMethod {
-    /// Installed via install script to ~/.local/bin
-    Script(PathBuf),
+    /// A released binary we can replace where it stands, wherever that is.
+    Binary(PathBuf),
+    /// A released binary in a directory this user cannot write to —
+    /// `/usr/local/bin` owned by root, typically.
+    Protected(PathBuf),
     /// Installed via cargo install
     Cargo(PathBuf),
     /// Running from source/target directory
     Source(PathBuf),
-    /// Unknown installation method
-    Unknown(PathBuf),
 }
 
 impl InstallMethod {
     fn description(&self) -> &str {
         match self {
-            InstallMethod::Script(_) => "install script (~/.local/bin)",
+            InstallMethod::Binary(_) => "released binary",
+            InstallMethod::Protected(_) => "released binary (not writable by you)",
             InstallMethod::Cargo(_) => "cargo install (~/.cargo/bin)",
             InstallMethod::Source(_) => "source build (target/)",
-            InstallMethod::Unknown(_) => "unknown",
         }
     }
 }
@@ -101,17 +102,36 @@ impl Op for Update {
         }
 
         match install_method {
-            InstallMethod::Script(_) => {
-                // Auto-update for script installations
-                run_install_script()?;
+            InstallMethod::Binary(ref path) => {
+                run_install_script(path.parent().unwrap_or(Path::new(".")))?;
+            }
+            InstallMethod::Protected(ref path) => {
+                let dir = path.parent().unwrap_or(Path::new("."));
+                eprintln!();
+                eprintln!(
+                    "{} is not writable by you.",
+                    ui::highlight(&dir.display().to_string())
+                );
+                eprintln!();
+                eprintln!("Re-run the installer as root:");
+                ui::detail(&format!(
+                    "curl -fsSL {} | sudo INSTALL_DIR={} bash",
+                    INSTALL_SCRIPT_URL,
+                    shell_quote(dir)
+                ));
+                return Ok(NoOutput);
             }
             InstallMethod::Cargo(_) | InstallMethod::Source(_) => {
                 // Prompt for dev builds
                 eprintln!();
                 eprintln!("You're running a development build.");
 
+                let home_bin = dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(".local")
+                    .join("bin");
                 if prompt_confirm("Install latest release to ~/.local/bin?", true)? {
-                    run_install_script()?;
+                    run_install_script(&home_bin)?;
 
                     // Check for old cargo bin if this was a cargo install
                     if matches!(install_method, InstallMethod::Cargo(_)) {
@@ -130,24 +150,6 @@ impl Op for Update {
                     ));
                     return Ok(NoOutput);
                 }
-            }
-            InstallMethod::Unknown(ref path) => {
-                // Show manual instructions for unknown installations
-                eprintln!();
-                eprintln!(
-                    "Unknown installation method: {}",
-                    ui::dim(&path.display().to_string())
-                );
-                eprintln!();
-                eprintln!("To install via script (recommended):");
-                ui::detail(&format!("curl -fsSL {} | bash", INSTALL_SCRIPT_URL));
-                eprintln!();
-                eprintln!("Or rebuild from source:");
-                ui::detail(&format!(
-                    "cargo install --git https://github.com/{}",
-                    GITHUB_REPO
-                ));
-                return Ok(NoOutput);
             }
         }
 
@@ -173,18 +175,40 @@ impl Op for Update {
 }
 
 /// Detect how jig was installed
+/// How this jig got here, and whether we can replace it.
+///
+/// What matters is not which directory it sits in but whether we can write
+/// there. `install.sh` honours `INSTALL_DIR`, so a released binary is just as
+/// likely to be in `/usr/local/bin` as `~/.local/bin`, and refusing to update
+/// the former because it is not on a hardcoded list helps nobody.
 fn detect_installation() -> Result<InstallMethod, UpdateError> {
     let exe_path = std::env::current_exe()?;
     let path_str = exe_path.to_string_lossy();
 
-    if path_str.contains("/.local/bin/") {
-        Ok(InstallMethod::Script(exe_path))
-    } else if path_str.contains("/.cargo/bin/") {
-        Ok(InstallMethod::Cargo(exe_path))
-    } else if path_str.contains("/target/") {
-        Ok(InstallMethod::Source(exe_path))
-    } else {
-        Ok(InstallMethod::Unknown(exe_path))
+    if path_str.contains("/.cargo/bin/") {
+        return Ok(InstallMethod::Cargo(exe_path));
+    }
+    if path_str.contains("/target/") {
+        return Ok(InstallMethod::Source(exe_path));
+    }
+    Ok(match exe_path.parent().is_some_and(writable) {
+        true => InstallMethod::Binary(exe_path),
+        false => InstallMethod::Protected(exe_path),
+    })
+}
+
+/// Whether this process could put a new file in `dir`.
+///
+/// Asked by trying, rather than reading permission bits: ownership, groups,
+/// ACLs and read-only mounts all decide this, and only the kernel knows.
+fn writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".jig-update-probe-{}", std::process::id()));
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
     }
 }
 
@@ -253,15 +277,33 @@ fn prompt_confirm(message: &str, default_yes: bool) -> Result<bool, UpdateError>
 }
 
 /// Run the install script
-fn run_install_script() -> Result<(), UpdateError> {
+/// Re-run the installer, targeting the directory we are replacing.
+///
+/// Without `INSTALL_DIR` the script defaults to `~/.local/bin`, which for a
+/// binary installed anywhere else would leave a second jig on the system and
+/// update whichever one PATH happened to prefer.
+/// Single-quote a path for the shell, so a directory with a space in it
+/// does not silently become two arguments.
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
+}
+
+fn run_install_script(dir: &Path) -> Result<(), UpdateError> {
     eprintln!();
-    ui::progress("Installing via install script...");
+    ui::progress(&format!("Installing to {}...", dir.display()));
     eprintln!();
 
     // Not an `Exec`: the installer streams its progress straight to the
     // user's terminal, and there is a person here who can ctrl-c it.
     let status = Command::new("bash")
-        .args(["-c", &format!("curl -fsSL {} | bash", INSTALL_SCRIPT_URL)])
+        .args([
+            "-c",
+            &format!(
+                "curl -fsSL {} | INSTALL_DIR={} bash",
+                INSTALL_SCRIPT_URL,
+                shell_quote(dir)
+            ),
+        ])
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -314,4 +356,55 @@ fn is_newer_version(current: &str, latest: &str) -> bool {
     let latest = parse_version(latest);
 
     latest > current
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_writable_directory_is_writable() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        assert!(writable(tmp.path()));
+        // And nothing is left behind by asking.
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_directory_that_is_not_there_is_not_writable() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        assert!(!writable(&tmp.path().join("nope")));
+    }
+
+    /// A directory we genuinely cannot write to reads as not writable —
+    /// which is what makes `jig update` offer the sudo line instead of
+    /// failing halfway through an install.
+    ///
+    /// Built here rather than pointed at `/usr/local/bin`, which is writable
+    /// by the unprivileged user on some CI images and not on others. A test
+    /// that asserts something about the machine is not a test.
+    #[test]
+    fn a_directory_we_cannot_write_to_is_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if nix::unistd::Uid::effective().is_root() {
+            return; // root writes anywhere; there is nothing to assert
+        }
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let locked = tmp.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        assert!(!writable(&locked));
+
+        // Give it back so the temp dir can clean itself up.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn paths_with_spaces_survive_the_shell() {
+        let quoted = shell_quote(Path::new("/opt/my tools/bin"));
+        assert_eq!(quoted, "'/opt/my tools/bin'");
+    }
 }
