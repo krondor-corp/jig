@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::common::seeded_repo as init_repo;
+use jig_core::exec::Timeout;
 use jig_core::git::{Branch, GitError, Repo, Worktree};
 use tempfile::TempDir;
 
@@ -354,5 +355,60 @@ fn remove_works_after_the_branch_is_renamed_inside_the_worktree() {
     assert!(
         repo.list_worktrees().unwrap().is_empty(),
         "registration should be gone"
+    );
+}
+
+/// `git push` must run in the worktree whose branch is being pushed.
+///
+/// Git runs hooks against the working tree it is invoked in, and
+/// `clone_path` is the main clone even for a linked worktree. Pushing from
+/// there ran a repo's `pre-push` hook over whatever the clone had checked
+/// out, so a hook that type-checks the tree checked `dev` instead of the
+/// branch being pushed — failing `jig pr` while a plain `git push` from the
+/// worktree passed.
+///
+/// The hook writes its `pwd`, which is the only way to see where git ran.
+#[test]
+fn push_runs_hooks_in_the_worktree_being_pushed() {
+    let tmp = TempDir::new().unwrap();
+    let origin_dir = tmp.path().join("origin");
+    std::fs::create_dir_all(&origin_dir).unwrap();
+    git2::Repository::init_bare(&origin_dir).unwrap();
+
+    let clone_dir = tmp.path().join("clone");
+    std::fs::create_dir_all(&clone_dir).unwrap();
+    let git = init_repo(&clone_dir);
+    git.remote("origin", origin_dir.to_str().unwrap()).unwrap();
+
+    // A worktree on its own branch, beside the clone.
+    let head = git.head().unwrap().peel_to_commit().unwrap();
+    let branch = git.branch("feature/x", &head, false).unwrap();
+    let wt_path = tmp.path().join("wt");
+    let mut opts = git2::WorktreeAddOptions::new();
+    opts.reference(Some(branch.get()));
+    git.worktree("wt", &wt_path, Some(&opts)).unwrap();
+
+    // A pre-push hook that records the directory git ran it in.
+    let witness = tmp.path().join("where.txt");
+    let hooks = clone_dir.join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("pre-push");
+    std::fs::write(&hook, format!("#!/bin/sh\npwd > {}\n", witness.display())).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let repo = Repo::open(&wt_path).unwrap();
+    repo.push_branch(&Branch::from("feature/x"), Timeout::QUICK)
+        .unwrap();
+
+    let ran_in = std::fs::read_to_string(&witness).expect("pre-push hook did not run");
+    let ran_in = std::fs::canonicalize(ran_in.trim()).unwrap();
+    assert_eq!(
+        ran_in,
+        std::fs::canonicalize(&wt_path).unwrap(),
+        "the hook ran in the clone, so it checked the wrong branch"
     );
 }

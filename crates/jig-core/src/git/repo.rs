@@ -104,9 +104,19 @@ impl Repo {
     /// guess what to hand it — which meant guessing key paths, and getting
     /// it wrong on any machine whose key is not `~/.ssh/id_*`. A service
     /// account's usually is not.
+    /// Runs in this repo's own working tree, not the clone it is linked to.
+    ///
+    /// `clone_path` is the main clone even when `self` is a linked worktree,
+    /// and git runs hooks against the working tree it is invoked in. Pushing
+    /// a worktree's branch from the clone ran the repo's `pre-push` hook over
+    /// whatever the clone had checked out — someone's `jig pr` kept failing
+    /// because the hook type-checked `dev` instead of the branch being
+    /// pushed, and passed as soon as they ran `git push` themselves.
     fn git(&self, args: &[&str], timeout: Timeout) -> Result<String> {
         let mut command = Command::new("git");
-        command.args(args).current_dir(self.clone_path());
+        command
+            .args(args)
+            .current_dir(self.root().unwrap_or_else(|_| self.clone_path()));
 
         let output = Exec::command(command)
             .labeled(format!("git {}", args.first().copied().unwrap_or_default()))
