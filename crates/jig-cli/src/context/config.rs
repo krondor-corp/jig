@@ -50,9 +50,6 @@ pub struct AppConfig {
     // Health
     pub silence_threshold_seconds: u64,
 
-    // Spawn
-    pub max_concurrent_workers: usize,
-
     // Daemon
     pub auto_recover: bool,
     pub tick_interval: u64,
@@ -101,7 +98,6 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             silence_threshold_seconds: 300,
-            max_concurrent_workers: 3,
             poll_interval: 120,
             auto_recover: true,
             tick_interval: 30,
@@ -161,7 +157,6 @@ impl AppConfig {
 silence_threshold_seconds = 300  # seconds of silence before worker is "stalled"
 
 [spawn]
-max_concurrent_workers = 3       # max auto-spawned workers per repo
 poll_interval = 120              # seconds between issue polls
 
 [git]
@@ -189,7 +184,6 @@ mod tests {
     fn defaults() {
         let cfg = AppConfig::default();
         assert_eq!(cfg.silence_threshold_seconds, 300);
-        assert_eq!(cfg.max_concurrent_workers, 3);
         assert_eq!(cfg.poll_interval, 120);
         assert!(cfg.auto_recover);
         assert_eq!(cfg.tick_interval, 30);
