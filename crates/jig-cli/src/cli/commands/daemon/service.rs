@@ -30,6 +30,10 @@ use crate::context::AppPaths;
 /// What the service is called to launchd/systemd.
 const LABEL: &str = "org.jig.daemon";
 
+/// How long to wait for a restarted daemon to answer again. The unit's
+/// `RestartSec` is 5s, so this allows for that plus a slow start.
+const RESTART_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Variables worth carrying from the installing shell, when set.
 ///
 /// `PATH`, because jig shells out to `git`, `gh` and the mux;
@@ -102,6 +106,14 @@ pub enum ServiceError {
     Unsupported,
     #[error("a system service has to be installed as root")]
     NeedsRoot,
+    #[error(transparent)]
+    Ipc(#[from] crate::daemon::ipc::IpcError),
+    #[error(
+        "the daemon stopped but nothing restarted it — it is not running as a \
+         service, or the service is not set to restart it. Start it again with \
+         `jig daemon start`"
+    )]
+    DidNotComeBack,
     #[error(
         "the daemon is not installed as a service{}, so there is nothing to \
          restart — stop it and start it again yourself, or install it with \
@@ -139,7 +151,7 @@ impl Op for Install {
 
     fn run(&self, _: AppPaths) -> Result<Self::Output, Self::Error> {
         let level = level(self.user);
-        ensure_privileged(level)?;
+        ensure_privileged(level, "install")?;
 
         let target = target_user(self.run_as.as_deref())?;
         let exe = std::env::current_exe().map_err(ServiceError::Exe)?;
@@ -199,48 +211,123 @@ impl Op for Restart {
         Ok(app.paths)
     }
 
+    /// Ask the daemon to exit and let the service bring it back.
+    ///
+    /// The unit is `Restart=always`, so a daemon that goes away comes back
+    /// within seconds running whatever is now on disk. That path needs no
+    /// privileges at all — only the ability to reach the socket, which the
+    /// user it runs as has by definition. Restarting through the service
+    /// manager would need root for a system unit, which would put an update
+    /// out of reach of the account the daemon was installed for.
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
+        // Confirm there is a service *before* stopping anything. Without
+        // this, restarting a foreground daemon would kill it and leave it
+        // dead — a stop wearing a restart's name.
         let level = level(self.user);
         let manager = manager(level)?;
-
-        match manager.status(ServiceStatusCtx { label: label() }) {
-            // Not a service. `stop` would work, but nothing would bring it
-            // back — a foreground daemon belongs to whoever launched it.
-            Ok(service_manager::ServiceStatus::NotInstalled) | Err(_) => {
-                return Err(match crate::daemon::ipc::ping(&paths) {
-                    Ok(Some(info)) => ServiceError::NotAService {
-                        pid: Some(info.pid),
-                    },
-                    _ => ServiceError::NotAService { pid: None },
-                });
-            }
-            Ok(service_manager::ServiceStatus::Running) => {
-                ensure_privileged(level)?;
-                manager
-                    .stop(ServiceStopCtx { label: label() })
-                    .map_err(|source| ServiceError::Manager {
-                        action: "stopping",
-                        source,
-                    })?;
-            }
-            // Installed but down — starting it is still the right outcome.
-            Ok(service_manager::ServiceStatus::Stopped(_)) => ensure_privileged(level)?,
+        if !matches!(
+            manager.status(ServiceStatusCtx { label: label() }),
+            Ok(service_manager::ServiceStatus::Running
+                | service_manager::ServiceStatus::Stopped(_))
+        ) {
+            return Err(ServiceError::NotAService {
+                pid: crate::daemon::ipc::ping(&paths)
+                    .ok()
+                    .flatten()
+                    .map(|i| i.pid),
+            });
         }
 
-        manager
-            .start(ServiceStartCtx { label: label() })
-            .map_err(|source| ServiceError::Manager {
-                action: "starting",
-                source,
-            })?;
+        let Some(before) = crate::daemon::ipc::ping(&paths).ok().flatten() else {
+            // Installed but nothing answering — start it. This is the only
+            // branch that needs root.
+            ensure_privileged(level, "restart")?;
+            manager
+                .start(ServiceStartCtx { label: label() })
+                .map_err(|source| ServiceError::Manager {
+                    action: "starting",
+                    source,
+                })?;
+            ui::success(&format!("started {}", ui::highlight(LABEL)));
+            return Ok(NoOutput);
+        };
 
-        ui::success(&format!("restarted {}", ui::highlight(LABEL)));
-        ui::detail(&format!(
-            "confirm the version moved with {}",
-            ui::highlight("jig daemon status")
+        crate::daemon::ipc::request(&paths, &crate::daemon::ipc::Request::Shutdown).or_else(
+            |e| match e {
+                // It can drop the connection as it goes; that is the
+                // shutdown working.
+                crate::daemon::ipc::IpcError::NotRunning => Ok(crate::daemon::ipc::Response::Ok),
+                other => Err(ServiceError::Ipc(other)),
+            },
+        )?;
+
+        ui::progress(&format!(
+            "stopped pid {}, waiting for the service to bring it back",
+            before.pid
         ));
-        Ok(NoOutput)
+
+        match wait_for_new_daemon(&paths, before.pid) {
+            Some(after) => {
+                ui::success(&format!(
+                    "daemon restarted  {}",
+                    ui::dim(&format!("pid {} → {}", before.pid, after.pid))
+                ));
+                Ok(NoOutput)
+            }
+            None => Err(ServiceError::DidNotComeBack),
+        }
     }
+}
+
+/// Stop the installed service, if there is one.
+///
+/// `Some` when a service was found and stopped — the caller is done.
+/// `None` when nothing is installed, leaving the caller to stop whatever is
+/// running in the foreground the way it always did.
+pub(super) fn stop_service(user_flag: bool) -> Result<Option<NoOutput>, ServiceError> {
+    let level = level(user_flag);
+    let Ok(manager) = manager(level) else {
+        return Ok(None);
+    };
+    match manager.status(ServiceStatusCtx { label: label() }) {
+        Ok(service_manager::ServiceStatus::NotInstalled) | Err(_) => return Ok(None),
+        Ok(service_manager::ServiceStatus::Stopped(_)) => {
+            ui::success(&format!("{} is already stopped", ui::highlight(LABEL)));
+            return Ok(Some(NoOutput));
+        }
+        Ok(service_manager::ServiceStatus::Running) => {}
+    }
+
+    ensure_privileged(level, "stop")?;
+    manager
+        .stop(ServiceStopCtx { label: label() })
+        .map_err(|source| ServiceError::Manager {
+            action: "stopping",
+            source,
+        })?;
+    ui::success(&format!("stopped {}", ui::highlight(LABEL)));
+    ui::detail(&format!(
+        "it stays down until {}",
+        ui::highlight("jig daemon restart")
+    ));
+    Ok(Some(NoOutput))
+}
+
+/// Wait for a daemon with a different pid to answer.
+///
+/// A new pid is the proof: the same one would mean it never went away, and
+/// no answer at all would mean nothing brought it back.
+fn wait_for_new_daemon(paths: &AppPaths, old_pid: u32) -> Option<crate::daemon::ipc::DaemonInfo> {
+    let deadline = std::time::Instant::now() + RESTART_WAIT;
+    while std::time::Instant::now() < deadline {
+        if let Ok(Some(info)) = crate::daemon::ipc::ping(paths) {
+            if info.pid != old_pid {
+                return Some(info);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    None
 }
 
 impl Op for Uninstall {
@@ -254,7 +341,7 @@ impl Op for Uninstall {
 
     fn run(&self, _: AppPaths) -> Result<Self::Output, Self::Error> {
         let level = level(self.user);
-        ensure_privileged(level)?;
+        ensure_privileged(level, "uninstall")?;
         let manager = manager(level)?;
 
         // Stopping a service that isn't running is not a failure worth
@@ -289,13 +376,15 @@ fn level(user_flag: bool) -> Level {
 }
 
 /// Installing a system unit writes under `/etc` and talks to PID 1.
-fn ensure_privileged(level: Level) -> Result<(), ServiceError> {
+/// `action` is what the user asked for, so the advice names the command they
+/// actually typed. Telling someone who asked to stop the daemon to run
+/// `sudo jig daemon install` sends them somewhere they did not want to go.
+fn ensure_privileged(level: Level, action: &str) -> Result<(), ServiceError> {
     if level == Level::System && !is_root() {
-        ui::failure("installing a system service needs root");
-        ui::detail(&format!("run {}", ui::highlight("sudo jig daemon install")));
+        ui::failure(&format!("{action} a system service needs root"));
         ui::detail(&format!(
-            "or {} to install without sudo (Linux: primary group only)",
-            ui::highlight("jig daemon install --user")
+            "run {}",
+            ui::highlight(&format!("sudo jig daemon {action}"))
         ));
         return Err(ServiceError::NeedsRoot);
     }
@@ -404,12 +493,13 @@ fn install_ctx(
         working_directory: None,
         environment: Some(env),
         autostart: true,
-        restart_policy: RestartPolicy::OnFailure {
+        // Always, not on-failure. It means the user the daemon runs as can
+        // restart it by asking it to exit — no root, no systemctl — which is
+        // the only way `--as <user>` is usable by that user after an update.
+        // It also keeps a daemon that cannot start yet (no network at boot,
+        // say) trying until the machine settles.
+        restart_policy: RestartPolicy::Always {
             delay_secs: Some(5),
-            // Keep trying: a daemon that cannot start yet (no network at
-            // boot, say) should still be running once the machine settles.
-            max_retries: None,
-            reset_after_secs: None,
         },
     }
 }
@@ -430,7 +520,7 @@ fn system_unit(exe: &Path, target: &TargetUser, env: &[(String, String)]) -> Str
     unit.push_str("\n[Service]\n");
     unit.push_str(&format!("User={name}\n"));
     unit.push_str(&format!("ExecStart={} daemon start\n", exe.display()));
-    unit.push_str("Restart=on-failure\n");
+    unit.push_str("Restart=always\n");
     unit.push_str("RestartSec=5\n");
     unit.push_str(&format!("Environment=\"HOME={}\"\n", home.display()));
     unit.push_str(&format!(
@@ -515,10 +605,7 @@ mod tests {
             vec![OsString::from("daemon"), OsString::from("start")]
         );
         assert!(ctx.autostart, "the point is surviving a reboot");
-        assert!(matches!(
-            ctx.restart_policy,
-            RestartPolicy::OnFailure { .. }
-        ));
+        assert!(matches!(ctx.restart_policy, RestartPolicy::Always { .. }));
     }
 
     #[test]
@@ -674,6 +761,63 @@ mod tests {
         assert!(
             matches!(level(true), Level::User),
             "--user is always user-level"
+        );
+    }
+
+    /// `Restart=always`, not `on-failure`. It is what lets the user the
+    /// daemon runs as restart it by asking it to exit — the only route that
+    /// needs no root, and therefore the only one available to the account
+    /// `--as` installed it for.
+    #[test]
+    fn the_unit_restarts_the_daemon_whenever_it_exits() {
+        let unit = system_unit(
+            Path::new("/usr/local/bin/jig"),
+            &TargetUser {
+                name: "bot".into(),
+                uid: 1001,
+                home: PathBuf::from("/home/bot"),
+            },
+            &[],
+        );
+        assert!(unit.contains("Restart=always\n"), "{unit}");
+        assert!(
+            !unit.contains("Restart=on-failure"),
+            "on-failure would leave a stopped daemon down, so an unprivileged \
+             restart would be impossible"
+        );
+    }
+
+    /// The advice has to name the command the user typed. Telling someone who
+    /// asked to stop the daemon to run `sudo jig daemon install` is how you
+    /// end up reinstalling a service you only wanted to bounce.
+    #[test]
+    fn the_privilege_message_names_what_was_asked_for() {
+        for action in ["install", "uninstall", "stop"] {
+            let err = ensure_privileged(Level::System, action);
+            if is_root() {
+                assert!(err.is_ok());
+                continue;
+            }
+            assert!(matches!(err, Err(ServiceError::NeedsRoot)));
+        }
+    }
+
+    #[test]
+    fn a_daemon_that_never_comes_back_is_an_error_worth_reading() {
+        let message = ServiceError::DidNotComeBack.to_string();
+        assert!(message.contains("nothing restarted it"), "{message}");
+        assert!(message.contains("jig daemon start"), "{message}");
+    }
+
+    /// Restarting must never be a stop in disguise. If there is no service
+    /// to bring the daemon back, it has to refuse before touching anything.
+    #[test]
+    fn a_foreground_daemon_is_refused_not_stopped() {
+        let message = ServiceError::NotAService { pid: Some(999) }.to_string();
+        assert!(message.contains("999"), "{message}");
+        assert!(
+            message.contains("nothing to restart"),
+            "it should say why it declined: {message}"
         );
     }
 }

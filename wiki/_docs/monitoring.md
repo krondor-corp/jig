@@ -134,7 +134,9 @@ jig daemon status          # the version should have moved
 
 `jig update` says so if a daemon is running.
 
-Do not use `jig daemon stop` for this on a machine where the daemon is an installed service. `stop` shuts the process down cleanly, the unit is `Restart=on-failure`, and a clean exit is not a failure — so the service stays down. `jig daemon start` would then run a foreground daemon owned by your shell, which dies with your session.
+**`jig daemon restart` needs no privileges.** It asks the daemon to exit and the service brings it straight back, so the user the daemon runs as can restart it after an update — no `sudo`, no `systemctl`. That matters for `--as <user>`: the account the daemon was installed for can manage it without being able to touch the unit.
+
+`jig daemon stop` does need root for a system service, because it goes through the service manager. It has to: the unit restarts the daemon whenever it exits, so asking the process to quit would only bounce it, and "stopped" would be a lie. Stopped means stopped, and it stays down until `jig daemon restart`.
 
 `jig daemon logs` prints the daemon's own log; `-f` follows it (and moves to the new log when the daemon restarts), `-n` sets how many lines, `--path` prints the file path.
 
