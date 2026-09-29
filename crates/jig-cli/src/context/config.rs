@@ -155,14 +155,17 @@ impl AppConfig {
 
         fs::create_dir_all(config_dir)?;
 
+        // These four are top-level fields. They were written under
+        // `[health]` and `[spawn]`, which are not fields, so TOML put them in
+        // tables nothing reads and every one of them was silently ignored —
+        // a config file whose own documented settings did nothing.
+        // `shipped_config_is_actually_read` keeps them where the parser looks.
         let content = r#"# jig global configuration
 
-[health]
 silence_threshold_seconds = 300  # seconds of silence before worker is "stalled"
-
-[spawn]
 max_concurrent_workers = 3       # max auto-spawned workers per repo
 poll_interval = 120              # seconds between issue polls
+tick_interval = 30               # seconds between daemon ticks
 
 [git]
 timeout = 600                    # seconds a fetch or push may take, or "none"
@@ -215,5 +218,50 @@ mod tests {
     fn a_config_without_a_git_section_still_gets_the_defaults() {
         let cfg: AppConfig = toml::from_str("tick_interval = 5").unwrap();
         assert_eq!(cfg.git.timeout, GitConfig::default().timeout);
+    }
+
+    /// Every key the shipped config file sets must sit where `AppConfig`
+    /// reads it.
+    ///
+    /// It did not: `silence_threshold_seconds`, `max_concurrent_workers` and
+    /// `poll_interval` were written under `[health]` and `[spawn]` headers
+    /// while the struct reads them at the top level, so TOML filed them
+    /// under tables nothing reads. Editing any of them in the generated file
+    /// changed nothing, with no error to say so.
+    ///
+    /// Asserted on the document's shape, not on parsed values: the defaults
+    /// are the same numbers the file documents, so a config whose keys are
+    /// all ignored still parses into exactly the expected values. Comparing
+    /// those would pass whether or not the bug was there.
+    #[test]
+    fn shipped_config_is_actually_read() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let paths = AppPaths::under(dir.path(), dir.path());
+        paths.ensure().unwrap();
+        AppConfig::init(&paths, true).unwrap();
+
+        let written = std::fs::read_to_string(paths.config_file()).unwrap();
+        let doc: toml::Table = toml::from_str(&written).unwrap();
+
+        for key in [
+            "silence_threshold_seconds",
+            "max_concurrent_workers",
+            "poll_interval",
+            "tick_interval",
+        ] {
+            assert!(
+                doc.contains_key(key),
+                "`{key}` is not at the top level, where AppConfig reads it — \
+                 setting it in this file would do nothing"
+            );
+        }
+
+        // `git` is a real nested field, so this one belongs in a table.
+        assert!(
+            doc.get("git")
+                .and_then(toml::Value::as_table)
+                .is_some_and(|git| git.contains_key("timeout")),
+            "`[git] timeout` is not where AppConfig reads it"
+        );
     }
 }

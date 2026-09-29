@@ -74,7 +74,15 @@ impl Op for Status {
             ui::dim(&format!("(every {}s)", info.tick_interval))
         ));
         if let Some(log) = &info.log {
-            ui::detail(&format!("log {}", display_path(log)));
+            // Say when the file is gone. Printing the path bare sent people
+            // to `jig daemon logs`, which denied it existed and told them to
+            // start a daemon this very line reports as running.
+            let note = if log.exists() {
+                String::new()
+            } else {
+                format!(" {}", ui::warn_text("(missing)"))
+            };
+            ui::detail(&format!("log {}{note}", display_path(log)));
         }
 
         let width = info.actors.iter().map(|a| a.name.len()).max().unwrap_or(0);

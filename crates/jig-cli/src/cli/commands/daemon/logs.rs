@@ -34,6 +34,12 @@ pub struct Logs {
 pub enum LogsError {
     #[error("no daemon log found — start the daemon with `jig daemon start`")]
     NoLog,
+    #[error(
+        "the daemon reports its log is {0}, but there is no file there — it \
+         was most likely deleted while the daemon held it open. Restart with \
+         `jig daemon restart` to open a fresh one"
+    )]
+    Vanished(PathBuf),
     #[error("failed to read daemon log {0}: {1}")]
     Read(PathBuf, std::io::Error),
 }
@@ -58,7 +64,13 @@ impl Op for Logs {
     }
 
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
-        let path = current_daemon_log(&paths).ok_or(LogsError::NoLog)?;
+        let log = current_daemon_log(&paths).ok_or(LogsError::NoLog)?;
+        // Say which of the two it is. "Start the daemon" is the wrong advice
+        // for a running daemon whose log file went missing.
+        if !log.on_disk {
+            return Err(LogsError::Vanished(log.path));
+        }
+        let path = log.path;
         if self.path {
             return Ok(LogsOutput(path.display().to_string()));
         }
@@ -90,7 +102,10 @@ fn follow(paths: &AppPaths, path: PathBuf, backlog: Vec<String>) -> std::io::Res
         out.flush()?;
 
         // A restarted daemon writes a fresh log; move over to it.
-        if let Some(newer) = current_daemon_log(paths).filter(|p| is_newer(p, tailer.path())) {
+        if let Some(newer) = current_daemon_log(paths)
+            .filter(|log| log.on_disk && is_newer(&log.path, tailer.path()))
+            .map(|log| log.path)
+        {
             ui::progress(&format!(
                 "daemon restarted — following {}",
                 display_path(&newer)

@@ -68,11 +68,22 @@ impl Op for Daemon {
 
 /// The running daemon's log, else the one the last daemon run recorded in
 /// its `Started` event.
-fn current_daemon_log(paths: &AppPaths) -> Option<PathBuf> {
+fn current_daemon_log(paths: &AppPaths) -> Option<DaemonLog> {
     let running = ipc::ping(paths).ok().flatten().and_then(|info| info.log);
-    running
-        .or_else(|| crate::daemon::events::global(paths).reduce().ok()?.log)
-        .filter(|p| p.exists())
+    let path = running.or_else(|| crate::daemon::events::global(paths).reduce().ok()?.log)?;
+    let on_disk = path.exists();
+    Some(DaemonLog { path, on_disk })
+}
+
+/// Where the daemon says its log is, and whether that file is actually there.
+///
+/// One type for both answers because `status` and `logs` have to agree.
+/// `status` printed the reported path unchecked while `logs` silently
+/// dropped a path that was missing and reported "no daemon log found — start
+/// the daemon", about a daemon that was running and named in the line above.
+pub(super) struct DaemonLog {
+    pub path: PathBuf,
+    pub on_disk: bool,
 }
 
 /// Display a path with the home directory collapsed to `~`.
