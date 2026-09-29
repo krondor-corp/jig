@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 
+use flume::TrySendError;
 use serde::{Deserialize, Serialize};
 
 /// The actor struct IS the state. Define your struct, implement this trait,
@@ -86,6 +87,9 @@ impl<A: Actor> ActorHandle<A> {
     pub fn new() -> Self {
         let (req_tx, req_rx) = flume::bounded::<A::Request>(A::QUEUE_SIZE);
         let (resp_tx, resp_rx) = flume::bounded::<A::Response>(A::QUEUE_SIZE);
+        // The worker keeps a receiver so it can make room in the response
+        // channel rather than block on it — see the send below.
+        let bg_resp_rx = resp_rx.clone();
         let inner = Arc::new(A::default());
         let bg = Arc::clone(&inner);
         let pending = Arc::new(AtomicBool::new(false));
@@ -109,8 +113,22 @@ impl<A: Actor> ActorHandle<A> {
                     bg_pending.store(false, Ordering::Release);
                     match result {
                         Ok(resp) => {
-                            if resp_tx.send(resp).is_err() {
-                                break;
+                            // Never block the worker here. The response
+                            // channel is bounded, and only `monitor` is
+                            // drained by the tick loop — so `sync`, `spawn`,
+                            // `triage` and `prune` would fill it, park on the
+                            // next send, and never take another request.
+                            //
+                            // They looked idle while parked, because
+                            // `busy_since` and `pending` are cleared above,
+                            // so a daemon that had silently stopped syncing
+                            // reported every actor healthy.
+                            //
+                            // On a full channel the unread response is the
+                            // stale one; drop it and keep the new one.
+                            if let Err(TrySendError::Full(resp)) = resp_tx.try_send(resp) {
+                                let _ = bg_resp_rx.try_recv();
+                                let _ = resp_tx.try_send(resp);
                             }
                         }
                         Err(panic) => tracing::error!(
@@ -284,5 +302,41 @@ mod tests {
             responses = handle.drain();
         }
         assert_eq!(responses, vec![1]);
+    }
+
+    /// Counts every request it handles.
+    #[derive(Default)]
+    struct Counting {
+        calls: std::sync::atomic::AtomicU32,
+    }
+
+    impl Actor for Counting {
+        type Request = ();
+        type Response = u32;
+
+        const NAME: &'static str = "test-counting";
+        const QUEUE_SIZE: usize = 1;
+
+        fn handle(&self, _: ()) -> u32 {
+            self.calls.fetch_add(1, Ordering::SeqCst)
+        }
+    }
+
+    /// An actor whose responses nobody reads must keep taking requests.
+    ///
+    /// Only `monitor` is drained by the tick loop. `sync`, `spawn`, `triage`
+    /// and `prune` are not, so if a full response channel can park the worker
+    /// thread they each run exactly once and then stop — while still
+    /// reporting themselves idle, because `busy_since` and `pending` are
+    /// cleared before the response is sent.
+    #[test]
+    fn an_actor_nobody_drains_keeps_working() {
+        let handle = ActorHandle::<Counting>::new();
+        for i in 0..10 {
+            assert!(handle.send(()), "request {i} refused — the actor wedged");
+            wait_idle(&handle);
+        }
+        let calls = handle.actor().calls.load(Ordering::SeqCst);
+        assert_eq!(calls, 10, "only {calls} of 10 requests were handled");
     }
 }
