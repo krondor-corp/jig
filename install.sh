@@ -6,7 +6,29 @@ set -e
 
 REPO="krondor-corp/jig"
 BINARY="jig"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+# Where this script lives, for telling the user how to re-run it. `$0` is
+# "bash" when piped from curl, so it cannot be derived.
+SCRIPT_URL="https://raw.githubusercontent.com/$REPO/main/install.sh"
+
+# Where to install.
+#
+# An explicit INSTALL_DIR wins. Otherwise, if jig is already on PATH, replace
+# it where it stands — installing a second copy somewhere else and letting
+# PATH order decide which one runs is worse than either outcome. Only a fresh
+# install falls back to ~/.local/bin.
+default_install_dir() {
+    local existing
+    if existing=$(command -v "$BINARY" 2>/dev/null) && [ -n "$existing" ]; then
+        # Resolve symlinks so we replace the real file, not a link to it.
+        if command -v readlink >/dev/null 2>&1; then
+            existing=$(readlink -f "$existing" 2>/dev/null || echo "$existing")
+        fi
+        dirname "$existing"
+        return
+    fi
+    echo "$HOME/.local/bin"
+}
+INSTALL_DIR="${INSTALL_DIR:-$(default_install_dir)}"
 
 # Colors
 RED='\033[0;31m'
@@ -62,9 +84,30 @@ download() {
     fi
 }
 
+# Fail before downloading anything, rather than after.
+check_writable() {
+    if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+        error "cannot create $INSTALL_DIR
+Re-run as root:
+  curl -fsSL $SCRIPT_URL | sudo INSTALL_DIR='$INSTALL_DIR' bash"
+    fi
+    local probe="$INSTALL_DIR/.jig-install-probe.$$"
+    if ! touch "$probe" 2>/dev/null; then
+        error "$INSTALL_DIR is not writable by $(id -un)
+Re-run as root:
+  curl -fsSL $SCRIPT_URL | sudo INSTALL_DIR='$INSTALL_DIR' bash
+or install somewhere you own:
+  curl -fsSL $SCRIPT_URL | INSTALL_DIR=\"\$HOME/.local/bin\" bash"
+    fi
+    rm -f "$probe"
+}
+
 main() {
     info "Installing jig..."
     echo
+
+    info "Installing to: $INSTALL_DIR"
+    check_writable
 
     # Detect platform
     local platform
@@ -107,7 +150,6 @@ main() {
     fi
 
     # Install
-    mkdir -p "$INSTALL_DIR"
     mv "$binary_path" "$INSTALL_DIR/$BINARY"
     chmod +x "$INSTALL_DIR/$BINARY"
     success "Installed $BINARY to $INSTALL_DIR/$BINARY"
