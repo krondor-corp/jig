@@ -209,6 +209,18 @@ impl MonitorActor {
             {
                 Some(branch) => {
                     let report = checks::check_pr(gh, &branch);
+                    // Persist the count. `PrReviewFeedback` was defined and
+                    // reduced but never written, so every `log.reduce()`
+                    // returned 0 — and the change detector below compared a
+                    // fresh count against that 0 and fired on every poll.
+                    // One worker with 14 review comments sent a
+                    // `feedback_received` alert every 60s, indefinitely.
+                    if state.review_feedback_count != report.review_feedback_count {
+                        let _ = log.append(&Event::now(EventKind::PrReviewFeedback {
+                            comment_count: report.review_comment_count,
+                            changes_requested: report.changes_requested_count,
+                        }));
+                    }
                     state.review_feedback_count = report.review_feedback_count;
                     process_pr_report(&report, &log, &state, &mut pr_health, &mut is_draft);
 
@@ -891,6 +903,83 @@ mod tests {
         assert_eq!(actions.len(), 1);
         assert!(
             matches!(&actions[0], DispatchAction::Nudge { nudge_key, .. } if nudge_key == "idle")
+        );
+    }
+
+    fn with_feedback(count: u32) -> WorkerState {
+        WorkerState {
+            status: WorkerStatus::Running,
+            is_draft: true,
+            review_feedback_count: count,
+            pr_health: crate::daemon::checks::PrHealth {
+                has_pr: true,
+                pr_checks: crate::daemon::checks::PrChecks {
+                    reviews: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn feedback_notifications(old: &WorkerState, new: &WorkerState) -> usize {
+        let actor = MonitorActor::default();
+        let mut actions = vec![];
+        actor.dispatch_pr_actions(
+            "repo/w",
+            "repo",
+            "w",
+            std::path::Path::new("/nonexistent"),
+            old,
+            new,
+            &AppConfig::default(),
+            &mut actions,
+        );
+        actions
+            .iter()
+            .filter(|a| {
+                matches!(
+                    a,
+                    DispatchAction::Notify {
+                        event: NotificationEvent::FeedbackReceived { .. }
+                    }
+                )
+            })
+            .count()
+    }
+
+    /// An unchanged count must say nothing.
+    ///
+    /// It did not, because the count it was compared against came from a
+    /// `log.reduce()` that always produced 0 — nothing ever wrote the
+    /// `PrReviewFeedback` event the reducer reads. One draft PR with 14
+    /// review comments alerted every 60 seconds, forever, and the comments
+    /// had already been addressed.
+    #[test]
+    fn unchanged_feedback_does_not_notify_again() {
+        assert_eq!(
+            feedback_notifications(&with_feedback(14), &with_feedback(14)),
+            0
+        );
+    }
+
+    /// The shape the bug actually took: the new count is real, the old one
+    /// is the 0 a reduce produced.
+    #[test]
+    fn feedback_against_a_reset_count_is_the_bug() {
+        assert_eq!(
+            feedback_notifications(&with_feedback(0), &with_feedback(14)),
+            1
+        );
+    }
+
+    /// A genuine increase still notifies, once.
+    #[test]
+    fn new_feedback_notifies_once() {
+        assert_eq!(
+            feedback_notifications(&with_feedback(14), &with_feedback(15)),
+            1
         );
     }
 }

@@ -450,4 +450,29 @@ mod tests {
         assert_eq!(state.status, WorkerStatus::Merged);
         assert!(state.status.is_pr_outcome());
     }
+
+    /// The count has to survive a reduce, or the daemon's change detector
+    /// compares a fresh count against a zero it just produced and reports
+    /// new feedback on every poll.
+    ///
+    /// `PrReviewFeedback` was in the schema and handled here from the start,
+    /// but nothing ever wrote one — so this branch was dead and
+    /// `review_feedback_count` reduced to 0 forever. One draft PR with 14
+    /// review comments sent a `feedback_received` alert every 60 seconds.
+    #[test]
+    fn review_feedback_survives_a_reduce() {
+        let mut state = WorkerState::default();
+        EventKind::apply(
+            &mut state,
+            0,
+            &EventKind::PrReviewFeedback {
+                comment_count: 14,
+                changes_requested: 1,
+            },
+        );
+
+        assert_eq!(state.review_feedback_count, 15);
+        assert_eq!(state.pr_review_comment_count, 14);
+        assert_eq!(state.pr_changes_requested, 1);
+    }
 }
