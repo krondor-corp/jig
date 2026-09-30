@@ -177,8 +177,16 @@ impl MonitorActor {
         let mut is_draft = old_state.is_draft;
 
         // A merged or failed worker is not polled: the call is spent on a
-        // worker nothing acts on any more.
-        let gh_client = if !state.status.is_terminal() && self.should_poll_github(key) {
+        // worker nothing acts on any more. Neither is a `Created` one — a bare
+        // `jig create` worktree, one whose log `jig kill` just wiped, or one
+        // whose on-create hook is still running. Polling it finds the branch's
+        // open PR, writes `PrOpened`, lifts it to `WaitingReview`, and the
+        // resume below then launches `claude -c` in a worktree the daemon
+        // never spawned — every kill re-arming it.
+        let gh_client = if !state.status.is_terminal()
+            && state.status != WorkerStatus::Created
+            && self.should_poll_github(key)
+        {
             // Mark before the attempt, not after it succeeds: a `gh` that is
             // missing or logged out must back off like a working one, or
             // every tick re-runs `gh repo view` for every worker.
