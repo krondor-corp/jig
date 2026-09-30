@@ -68,6 +68,10 @@ impl Op for Status {
             )),
         }
 
+        if let Some(drift) = version_drift(&info.version) {
+            ui::warning(&drift);
+        }
+
         ui::detail(&format!(
             "last tick {} ago {}",
             ago(info.ticked_at),
@@ -130,6 +134,25 @@ fn report_not_running(paths: &AppPaths) {
     }
 }
 
+/// A warning when the daemon is running a different build than this CLI.
+///
+/// The daemon keeps running whatever binary its service points at, so an
+/// update that replaces a *different* jig leaves the two out of step and
+/// nothing says so. On one machine the daemon reported v0.12.0 for a day
+/// while the same user's `jig update` insisted it was already on v0.12.1 —
+/// both true, two binaries. Every number needed to spot that was already on
+/// screen and nothing compared them.
+fn version_drift(daemon: &str) -> Option<String> {
+    let mine = env!("CARGO_PKG_VERSION");
+    (daemon != mine).then(|| {
+        format!(
+            "your jig is v{mine} — the daemon is running v{daemon}. Restart it with {}, \
+             and if it comes back on v{daemon} the service is pointed at a different binary",
+            ui::highlight("jig daemon restart")
+        )
+    })
+}
+
 fn describe(actor: &ActorActivity, now: i64, ago: &dyn Fn(i64) -> String) -> String {
     let last = actor
         .last_finished
@@ -161,4 +184,26 @@ fn last_stop(paths: &AppPaths) -> Option<String> {
         ui::format_duration_short(ago),
         state.stop_reason.as_deref().unwrap_or("unknown")
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The exact case from the VPS: `jig update` said "already up to date"
+    /// at v0.12.1 while the daemon answered v0.12.0, because the service
+    /// pointed at a binary that update never touched.
+    #[test]
+    fn a_daemon_on_an_older_build_is_called_out() {
+        let warning = version_drift("0.12.0").expect("drift should be reported");
+        assert!(warning.contains("0.12.0"), "{warning}");
+        assert!(warning.contains(env!("CARGO_PKG_VERSION")), "{warning}");
+        assert!(warning.contains("jig daemon restart"), "{warning}");
+    }
+
+    /// And says nothing when they agree, which is almost always.
+    #[test]
+    fn a_matching_daemon_is_quiet() {
+        assert!(version_drift(env!("CARGO_PKG_VERSION")).is_none());
+    }
 }
