@@ -12,6 +12,10 @@ use jig_core::github::{GitHub, PrState, ReviewState};
 pub struct PrReport {
     pub status: PrStatus,
     pub review_feedback_count: u32,
+    /// The two halves of `review_feedback_count`, kept apart so the count can
+    /// be written to the event log and survive the next reduce.
+    pub review_comment_count: u32,
+    pub changes_requested_count: u32,
 }
 
 /// Overall PR status from the worker's perspective.
@@ -33,6 +37,8 @@ pub enum PrStatus {
         is_draft: bool,
         checks: PrChecks,
         review_feedback_count: u32,
+        review_comment_count: u32,
+        changes_requested_count: u32,
     },
 }
 
@@ -161,6 +167,8 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str) -> PrReport {
                         error: format!("invalid PR URL: {}", pr_info.url),
                     },
                     review_feedback_count: 0,
+                    review_comment_count: 0,
+                    changes_requested_count: 0,
                 };
             }
         },
@@ -168,6 +176,8 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str) -> PrReport {
             return PrReport {
                 status: PrStatus::NoPr,
                 review_feedback_count: 0,
+                review_comment_count: 0,
+                changes_requested_count: 0,
             }
         }
         // The error is returned, not logged here: the monitor warns once per
@@ -180,6 +190,8 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str) -> PrReport {
                     error: e.to_string(),
                 },
                 review_feedback_count: 0,
+                review_comment_count: 0,
+                changes_requested_count: 0,
             };
         }
     };
@@ -197,6 +209,8 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str) -> PrReport {
                     error: "could not parse PR number from URL".to_string(),
                 },
                 review_feedback_count: 0,
+                review_comment_count: 0,
+                changes_requested_count: 0,
             };
         }
     };
@@ -210,6 +224,8 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str) -> PrReport {
                     error: e.to_string(),
                 },
                 review_feedback_count: 0,
+                review_comment_count: 0,
+                changes_requested_count: 0,
             };
         }
     };
@@ -220,6 +236,8 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str) -> PrReport {
         PrState::Open => {
             let mut checks = PrChecks::default();
             let mut review_feedback_count: u32 = 0;
+            let mut review_comments: u32 = 0;
+            let mut changes_requested: u32 = 0;
 
             match check_ci(gh, branch) {
                 Ok(has_problem) => checks.ci = Some(has_problem),
@@ -232,6 +250,8 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str) -> PrReport {
             match check_reviews(gh, pr_number) {
                 Ok(r) => {
                     review_feedback_count = r.review_comment_count + r.changes_requested_count;
+                    review_comments = r.review_comment_count;
+                    changes_requested = r.changes_requested_count;
                     checks.reviews = Some(r.has_problem);
                 }
                 Err(e) => tracing::debug!(error = %e, "reviews check failed"),
@@ -246,20 +266,30 @@ pub fn check_pr(gh: &dyn GitHub, branch: &str) -> PrReport {
                 is_draft: pr_state_info.is_draft,
                 checks,
                 review_feedback_count,
+                review_comment_count: review_comments,
+                changes_requested_count: changes_requested,
             }
         }
     };
 
-    let review_feedback_count = match &status {
+    let (review_feedback_count, review_comment_count, changes_requested_count) = match &status {
         PrStatus::Open {
             review_feedback_count,
+            review_comment_count,
+            changes_requested_count,
             ..
-        } => *review_feedback_count,
-        _ => 0,
+        } => (
+            *review_feedback_count,
+            *review_comment_count,
+            *changes_requested_count,
+        ),
+        _ => (0, 0, 0),
     };
 
     PrReport {
         status,
         review_feedback_count,
+        review_comment_count,
+        changes_requested_count,
     }
 }
