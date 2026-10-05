@@ -65,8 +65,6 @@ jig issues --label backend --label bug
 | `jig pr comments --pr 42` | Show review feedback for a specific PR |
 | `jig pr comments --between HEAD~3..HEAD` | Filter comments to files changed in a range |
 
-`jig pr` auto-detects parent issues and targets the parent branch instead of main. See [Parent-Child](/docs/parent-child/) for details.
-
 ## Configuration
 
 | Command | Description |

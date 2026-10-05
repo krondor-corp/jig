@@ -98,19 +98,9 @@ impl Op for Spawn {
         }
 
         // Resolve base branch
-        let parent_issue = issue
-            .as_ref()
-            .and_then(|i| i.parent())
-            .and_then(|parent_ref| {
-                let provider = repo.issue_provider(&ctx.config).ok()?;
-                provider.get(parent_ref).ok().flatten()
-            });
-        let base_branch = if let Some(b) = &self.base {
-            Branch::new(b)
-        } else if let Some(p) = &parent_issue {
-            Branch::new(format!("origin/{}", p.branch()))
-        } else {
-            repo.base_branch(&ctx.config)
+        let base_branch = match &self.base {
+            Some(b) => Branch::new(b),
+            None => repo.base_branch(&ctx.config),
         };
 
         // Track issue ID before consuming the issue

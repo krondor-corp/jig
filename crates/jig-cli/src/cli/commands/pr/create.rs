@@ -6,12 +6,9 @@ use clap::Args;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::AppPaths;
-use crate::context::{AppCtx, Ctx, RepoCtx};
-use crate::worker::events::{self, WorkerState};
-use jig_core::git::{Branch, Repo};
+use crate::context::{AppCtx, Ctx};
+use jig_core::git::Repo;
 use jig_core::github::GitHubClient;
-use jig_core::Worktree;
 
 /// Push current branch and create a draft PR
 #[derive(Args, Debug, Clone)]
@@ -42,8 +39,6 @@ pub enum CreateError {
     Git(#[from] jig_core::GitError),
     #[error(transparent)]
     GitHub(#[from] jig_core::github::GitHubError),
-    #[error(transparent)]
-    Linear(#[from] jig_core::issues::providers::linear::client::LinearError),
     #[error("could not determine current branch")]
     NoBranch,
 }
@@ -63,7 +58,7 @@ impl Op for Create {
             .current_branch()
             .map_err(|_| CreateError::NoBranch)?;
 
-        let base = resolve_base(&ctx.paths, ctx.repo()?, &ctx.config)?;
+        let base = ctx.repo()?.base_branch(&ctx.config);
         let base_str: &str = &base;
         let base_for_gh = base_str.strip_prefix("origin/").unwrap_or(base_str);
 
@@ -89,41 +84,4 @@ impl Op for Create {
 
         Ok(CreateOutput(url))
     }
-}
-
-fn resolve_base(
-    paths: &AppPaths,
-    repo: &RepoCtx,
-    global: &crate::context::AppConfig,
-) -> Result<Branch, CreateError> {
-    let worktree_name = match Worktree::current() {
-        Ok(wt) => wt.branch_name(),
-        Err(_) => return Ok(repo.base_branch(global)),
-    };
-
-    let repo_name = repo.name();
-
-    let log = events::event_log_for_worker(paths, &repo_name, &worktree_name);
-    let state: WorkerState = match log.reduce() {
-        Ok(s) => s,
-        Err(_) => return Ok(repo.base_branch(global)),
-    };
-    let issue_ref = match state.issue_ref {
-        Some(r) => r,
-        None => return Ok(repo.base_branch(global)),
-    };
-
-    let provider = repo.issue_provider(global)?;
-    let issue = match provider.get(&issue_ref)? {
-        Some(i) => i,
-        None => return Ok(repo.base_branch(global)),
-    };
-
-    if let Some(parent_ref) = &issue.parent() {
-        if let Ok(Some(parent_issue)) = provider.get(parent_ref) {
-            return Ok(parent_issue.branch().clone());
-        }
-    }
-
-    Ok(repo.base_branch(global))
 }
