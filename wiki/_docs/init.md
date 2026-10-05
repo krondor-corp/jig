@@ -144,6 +144,7 @@ copy = [".env", ".env.local"]  # Gitignored files to copy into new worktrees
 
 [agent]
 type = "claude"                # Agent framework (claude, codex, cursor)
+model = "opus"                 # Passed verbatim to --model; omit to use the agent's own default
 
 [issues]
 provider = "linear"            # Issue provider
@@ -154,7 +155,7 @@ projects = ["Backend"]         # Optional project filter
 
 [triage]
 enabled = true                 # Enable triage auto-spawn (default: false)
-model = "sonnet"               # Model for triage agents
+model = "sonnet"               # Model for triage agents (passed verbatim; omit for agent default)
 timeout_seconds = 600          # Max triage duration
 ```
 

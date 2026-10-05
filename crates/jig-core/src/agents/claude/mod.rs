@@ -1,9 +1,7 @@
 //! Claude Code agent backend.
 
-use std::fmt;
 use std::path::Path;
 use std::process::Command;
-use std::str::FromStr;
 
 use crate::exec::{Exec, Timeout};
 
@@ -11,55 +9,29 @@ use super::{AgentBackend, AgentKind, HookType, InstallResult, DEFAULT_DISALLOWED
 
 const COMMAND: &str = "claude";
 
-/// Models supported by Claude Code's `--model` flag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Model {
-    Sonnet,
-    Opus,
-    Haiku,
-}
-
-impl Model {
-    pub const ALL: &[Model] = &[Self::Sonnet, Self::Opus, Self::Haiku];
-    pub const DEFAULT: Model = Model::Opus;
-
-    pub fn as_cli_arg(&self) -> &str {
-        match self {
-            Self::Sonnet => "sonnet",
-            Self::Opus => "opus",
-            Self::Haiku => "haiku",
-        }
-    }
-}
-
-impl fmt::Display for Model {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_cli_arg())
-    }
-}
-
-impl FromStr for Model {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "sonnet" => Ok(Self::Sonnet),
-            "opus" => Ok(Self::Opus),
-            "haiku" => Ok(Self::Haiku),
-            _ => Err(format!(
-                "unknown claude model: {s} (expected sonnet, opus, or haiku)"
-            )),
-        }
-    }
-}
-
 pub struct ClaudeCode {
-    model: Model,
+    model: Option<String>,
 }
 
 impl ClaudeCode {
-    pub fn new(model: Model) -> Self {
+    /// `model` is passed verbatim to `--model`; `None` omits the flag so
+    /// claude uses whatever model its own settings select.
+    pub fn new(model: Option<String>) -> Self {
         Self { model }
+    }
+
+    fn model_args(&self) -> Vec<String> {
+        match &self.model {
+            Some(m) => vec!["--model".to_string(), m.clone()],
+            None => Vec::new(),
+        }
+    }
+
+    fn model_flag(&self) -> String {
+        match &self.model {
+            Some(m) => format!(" --model '{}'", m.replace('\'', "'\\''")),
+            None => String::new(),
+        }
     }
 }
 
@@ -70,8 +42,8 @@ impl AgentBackend for ClaudeCode {
     fn command(&self) -> &str {
         COMMAND
     }
-    fn model(&self) -> &str {
-        self.model.as_cli_arg()
+    fn model(&self) -> Option<&str> {
+        self.model.as_deref()
     }
     fn project_file(&self) -> &Path {
         Path::new("AGENTS.md")
@@ -99,9 +71,8 @@ impl AgentBackend for ClaudeCode {
 
     fn spawn(&self, prompt: &str, disallowed_tools: &[String]) -> String {
         let escaped = prompt.replace('\'', "'\\''");
-        let model = self.model.as_cli_arg();
-        let mut cmd =
-            format!("{COMMAND} '{escaped}' --dangerously-skip-permissions --model {model}");
+        let model = self.model_flag();
+        let mut cmd = format!("{COMMAND} '{escaped}' --dangerously-skip-permissions{model}");
 
         let mut all_tools: Vec<&str> = DEFAULT_DISALLOWED_TOOLS.to_vec();
         for tool in disallowed_tools {
@@ -118,9 +89,8 @@ impl AgentBackend for ClaudeCode {
 
     fn resume(&self, prompt: &str, disallowed_tools: &[String]) -> String {
         let escaped = prompt.replace('\'', "'\\''");
-        let model = self.model.as_cli_arg();
-        let mut cmd =
-            format!("{COMMAND} -c '{escaped}' --dangerously-skip-permissions --model {model}");
+        let model = self.model_flag();
+        let mut cmd = format!("{COMMAND} -c '{escaped}' --dangerously-skip-permissions{model}");
 
         let mut all_tools: Vec<&str> = DEFAULT_DISALLOWED_TOOLS.to_vec();
         for tool in disallowed_tools {
@@ -141,9 +111,8 @@ impl AgentBackend for ClaudeCode {
             "--print".to_string(),
             "--no-session-persistence".to_string(),
             "--dangerously-skip-permissions".to_string(),
-            "--model".to_string(),
-            self.model.as_cli_arg().to_string(),
         ];
+        argv.extend(self.model_args());
 
         if !allowed_tools.is_empty() {
             // --allowed-tools is variadic in the Claude CLI; using the
@@ -271,7 +240,6 @@ impl AgentBackend for ClaudeCode {
 #[cfg(test)]
 mod tests {
     use super::super::{Agent, HookType};
-    use super::Model;
     use crate::prompt::Prompt;
 
     fn agent() -> Agent {
@@ -279,11 +247,11 @@ mod tests {
     }
 
     #[test]
-    fn spawn_default_model() {
+    fn spawn_without_model_omits_flag() {
         let cmd = agent().spawn(Prompt::new("hello world")).unwrap();
         assert_eq!(
             cmd,
-            "claude 'hello world' --dangerously-skip-permissions --model opus \
+            "claude 'hello world' --dangerously-skip-permissions \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
         );
     }
@@ -294,7 +262,16 @@ mod tests {
             .unwrap()
             .spawn(Prompt::new("do work"))
             .unwrap();
-        assert!(cmd.contains("--model opus"));
+        assert!(cmd.contains("--model 'opus'"));
+    }
+
+    #[test]
+    fn spawn_passes_any_model_through() {
+        let cmd = Agent::from_config("claude", Some("claude-fable-5-1[1m]"), &[])
+            .unwrap()
+            .spawn(Prompt::new("do work"))
+            .unwrap();
+        assert!(cmd.contains("--model 'claude-fable-5-1[1m]'"));
     }
 
     #[test]
@@ -302,7 +279,7 @@ mod tests {
         let cmd = agent().spawn(Prompt::new("it's a test")).unwrap();
         assert_eq!(
             cmd,
-            "claude 'it'\\''s a test' --dangerously-skip-permissions --model opus \
+            "claude 'it'\\''s a test' --dangerously-skip-permissions \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
         );
     }
@@ -315,7 +292,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             cmd,
-            "claude 'do work' --dangerously-skip-permissions --model opus \
+            "claude 'do work' --dangerously-skip-permissions \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*),Bash(rm -rf:*)\""
         );
     }
@@ -328,7 +305,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             cmd,
-            "claude 'work' --dangerously-skip-permissions --model opus \
+            "claude 'work' --dangerously-skip-permissions \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
         );
     }
@@ -338,7 +315,7 @@ mod tests {
         let cmd = agent().resume(Prompt::new("continue working")).unwrap();
         assert!(cmd.contains("-c 'continue working'"));
         assert!(cmd.contains("--dangerously-skip-permissions"));
-        assert!(cmd.contains("--model opus"));
+        assert!(!cmd.contains("--model"));
         assert!(cmd.contains("--disallowedTools"));
     }
 
@@ -354,8 +331,6 @@ mod tests {
                 "--print",
                 "--no-session-persistence",
                 "--dangerously-skip-permissions",
-                "--model",
-                "opus",
                 "--allowed-tools=Read,Glob",
                 "review this"
             ]
@@ -364,7 +339,10 @@ mod tests {
 
     #[test]
     fn once_no_tools() {
-        let argv = agent().once(Prompt::new("hello"), &[]).unwrap();
+        let argv = Agent::from_config("claude", Some("opus"), &[])
+            .unwrap()
+            .once(Prompt::new("hello"), &[])
+            .unwrap();
         assert_eq!(
             argv,
             vec![
@@ -380,32 +358,16 @@ mod tests {
     }
 
     #[test]
-    fn from_config_validates_model() {
-        assert!(Agent::from_config("claude", Some("sonnet"), &[]).is_some());
-        assert!(Agent::from_config("claude", Some("opus"), &[]).is_some());
-        assert!(Agent::from_config("claude", Some("haiku"), &[]).is_some());
-        assert!(Agent::from_config("claude", Some("gpt-4"), &[]).is_none());
+    fn from_config_accepts_any_model() {
+        let a = Agent::from_config("claude", Some("claude-opus-5-5[1m]"), &[]).unwrap();
+        assert_eq!(a.model(), Some("claude-opus-5-5[1m]"));
         assert!(Agent::from_config("unknown", Some("sonnet"), &[]).is_none());
     }
 
     #[test]
     fn from_config_default_model() {
         let a = Agent::from_config("claude", None, &[]).unwrap();
-        assert_eq!(a.model(), "opus");
-    }
-
-    #[test]
-    fn model_stored_on_agent() {
-        let a = Agent::from_config("claude", Some("opus"), &[]).unwrap();
-        assert_eq!(a.model(), "opus");
-    }
-
-    #[test]
-    fn claude_model_enum() {
-        assert_eq!(Model::Sonnet.to_string(), "sonnet");
-        assert_eq!(Model::Opus.to_string(), "opus");
-        assert_eq!("haiku".parse::<Model>().unwrap(), Model::Haiku);
-        assert!("gpt-4".parse::<Model>().is_err());
+        assert_eq!(a.model(), None);
     }
 
     #[test]
