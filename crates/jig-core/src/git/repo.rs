@@ -156,13 +156,6 @@ impl Repo {
     // Branch operations
     // ------------------------------------------------------------------
 
-    /// Check if a branch exists (local or remote).
-    pub fn remote_branch_exists(&self, branch: &Branch) -> bool {
-        self.inner
-            .find_branch(&branch.remote_ref(), git2::BranchType::Remote)
-            .is_ok()
-    }
-
     pub fn branch_exists(&self, branch: &Branch) -> Result<bool> {
         let local = branch.local();
 
@@ -549,33 +542,6 @@ impl Repo {
         self.git(&["push", "origin", &refspec], timeout)
             .map(|_| ())
             .map_err(|e| GitError::PushFailed(format!("push origin {local} failed: {e}")))
-    }
-
-    /// Create a local branch from `origin/{base}` and push it to origin.
-    ///
-    /// Tolerates a pre-existing local branch (pushes the existing one).
-    pub fn create_and_push_branch(
-        &self,
-        branch: &Branch,
-        base: &Branch,
-        timeout: Timeout,
-    ) -> Result<()> {
-        let remote_ref = base.remote_ref();
-
-        let reference = self
-            .inner
-            .find_branch(&remote_ref, git2::BranchType::Remote)
-            .map_err(|e| GitError::BranchNotFound(format!("{}: {}", remote_ref, e)))?;
-        let commit = reference.get().peel_to_commit()?;
-
-        let branch_str: &str = branch;
-        match self.inner.branch(branch_str, &commit, false) {
-            Ok(_) => {}
-            Err(e) if e.code() == git2::ErrorCode::Exists => {}
-            Err(e) => return Err(e.into()),
-        }
-
-        self.push_branch(branch, timeout)
     }
 
     // ------------------------------------------------------------------

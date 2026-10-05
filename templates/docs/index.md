@@ -48,10 +48,6 @@ You are an autonomous coding agent working on a focused task.
 - Update documentation if behavior changes
 - If blocked, commit what you have and note the blocker
 
-### Working on sub-issues
-
-If your task is a sub-issue of a parent epic, `jig pr` automatically targets the parent's integration branch — not main. Don't override the base branch manually.
-
 ### When Complete
 
 Run `/review` to self-check, then `/draft` to push and open a draft PR. The daemon monitors draft PRs and will nudge you about CI failures or review comments.

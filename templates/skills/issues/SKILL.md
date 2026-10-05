@@ -42,7 +42,7 @@ jig issues create "Add JWT generation" --parent ENG-123 --priority high
 jig issues create "Add auth middleware" --parent ENG-123 --blocked-by ENG-124
 ```
 
-Sub-issues branch off the parent's integration branch and PR into it automatically.
+Parents are for grouping only. Sub-issues branch from and PR into the repo's base branch like any other issue; use `--blocked-by` to order them.
 
 ### Update issue
 

@@ -140,7 +140,7 @@ fn create_worktree_case1_local_and_remote_sets_auto_push_and_upstream() {
     let tmp = TempDir::new().unwrap();
     let git = init_repo(tmp.path());
 
-    // Simulate create_and_push_branch: local branch + push to self-remote.
+    // Local branch + push to self-remote.
     let head = git.head().unwrap().peel_to_commit().unwrap();
     git.branch("feature/integration", &head, false).unwrap();
     let remote_url = tmp.path().to_str().unwrap();

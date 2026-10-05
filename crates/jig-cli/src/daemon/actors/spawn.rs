@@ -1,5 +1,5 @@
-//! Spawn actor — polls for spawnable issues, creates parent integration
-//! branches, and launches workers in a background thread.
+//! Spawn actor — polls for spawnable issues and launches workers in a
+//! background thread.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -72,57 +72,6 @@ impl Actor for SpawnActor {
                 }
             };
 
-            // -- Parent integration branches --
-            let base = cfg.base_branch(global);
-            let parent_candidates: Vec<_> = [IssueStatus::Planned, IssueStatus::InProgress]
-                .into_iter()
-                .flat_map(|status| {
-                    provider
-                        .list(&IssueFilter {
-                            status: Some(status),
-                            ..Default::default()
-                        })
-                        .unwrap_or_default()
-                })
-                .filter(|i| !i.children().is_empty())
-                .collect();
-
-            for issue in parent_candidates {
-                let branch = issue.branch().clone();
-
-                if !repo.remote_branch_exists(&branch) {
-                    match repo.create_and_push_branch(&branch, &base, global.git.timeout) {
-                        Ok(()) => {
-                            tracing::info!(
-                                repo = %repo_name, issue = %issue.id(), branch = %branch,
-                                "created parent integration branch"
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                repo = %repo_name, issue = %issue.id(), branch = %branch,
-                                "failed to create parent integration branch: {}", e
-                            );
-                            continue;
-                        }
-                    }
-                }
-
-                if *issue.status() == IssueStatus::Planned {
-                    if let Err(e) = provider.update_status(issue.id(), &IssueStatus::InProgress) {
-                        tracing::warn!(
-                            repo = %repo_name, issue = %issue.id(),
-                            "failed to update parent status: {}", e
-                        );
-                    } else {
-                        tracing::info!(
-                            repo = %repo_name, issue = %issue.id(),
-                            "flipped parent issue to InProgress"
-                        );
-                    }
-                }
-            }
-
             // Branches that already have a worktree — an issue whose branch
             // is checked out somewhere is already being worked on.
             let existing_branches: Vec<Branch> = repo
@@ -153,18 +102,6 @@ impl Actor for SpawnActor {
                 }
                 if !provider.may_spawn(issue.id()) {
                     continue;
-                }
-                if let Some(parent_ref) = issue.parent() {
-                    let ready = match provider.get(parent_ref) {
-                        Ok(Some(parent)) => {
-                            *parent.status() == IssueStatus::InProgress
-                                && repo.remote_branch_exists(parent.branch())
-                        }
-                        _ => false,
-                    };
-                    if !ready {
-                        continue;
-                    }
                 }
                 if existing_branches.iter().any(|b| b == issue.branch()) {
                     continue;
@@ -208,13 +145,8 @@ fn spawn_worker_for_issue(
         return Ok(Worker::from_branch(repo_root, worker_name.into()));
     }
 
-    let parent = issue.parent().and_then(|r| provider.get(r).ok().flatten());
-
-    let base = match &parent {
-        Some(p) => Branch::new(format!("origin/{}", p.branch())),
-        None => context::resolve_base_branch_for(repo_root, &ctx.config)
-            .unwrap_or_else(|_| Branch::new(context::DEFAULT_BASE_BRANCH)),
-    };
+    let base = context::resolve_base_branch_for(repo_root, &ctx.config)
+        .unwrap_or_else(|_| Branch::new(context::DEFAULT_BASE_BRANCH));
 
     let repo = Repo::open(repo_root).map_err(|e| e.to_string())?;
     let branch = issue.branch().clone();

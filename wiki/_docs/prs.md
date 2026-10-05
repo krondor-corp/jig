@@ -14,7 +14,7 @@ From inside a worktree:
 jig pr
 ```
 
-This pushes the branch and creates a draft PR. `jig pr` auto-detects parent issue relationships and targets the correct base branch — the parent's integration branch for child issues, or the repo's base branch otherwise.
+This pushes the branch and creates a draft PR against the repo's configured base branch.
 
 ## The PR lifecycle
 
@@ -76,10 +76,4 @@ Once the PR is **ready for review**, the daemon stops nudging. Use `jig attach` 
 
 ## PR base resolution
 
-`jig pr` resolves the base branch automatically:
-
-1. Looks up the current worktree's linked issue
-2. If the issue has a parent with a `branch_name`, uses the parent branch as base
-3. Falls back to the repo's configured base branch (usually `origin/main`)
-
-This means child PRs always target the parent's integration branch — no `--base` flag needed. See [Parent-Child](/docs/parent-child/) for the full epic workflow.
+`jig pr` always targets the repo's configured base branch (usually `origin/main`), including for sub-issues. See [Parent-Child](/docs/parent-child/).
