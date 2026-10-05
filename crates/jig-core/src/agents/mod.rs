@@ -137,12 +137,12 @@ pub struct InstallResult {
 ///
 /// Accessor methods return static data (trait consts aren't dyn-compatible).
 ///
-/// Each backend owns its model as typed state. The model is set at
-/// construction time and cannot be changed.
+/// Each backend owns its model as an opaque string, set at construction
+/// time. jig never interprets it — it is handed to the agent CLI as-is.
 pub(crate) trait AgentBackend: Send + Sync {
     fn kind(&self) -> AgentKind;
     fn command(&self) -> &str;
-    fn model(&self) -> &str;
+    fn model(&self) -> Option<&str>;
     fn project_file(&self) -> &Path;
     fn skills_dir(&self) -> &Path;
     fn skill_file(&self) -> &Path;
@@ -167,7 +167,7 @@ pub(crate) trait AgentBackend: Send + Sync {
 
 /// A handle to an AI coding agent.
 ///
-/// Wraps a backend ([`AgentBackend`]) that owns its model as typed state,
+/// Wraps a backend ([`AgentBackend`]) that owns its model,
 /// plus a set of disallowed tools.
 ///
 /// See the [module docs](self) for the full contract an agent must satisfy.
@@ -179,11 +179,12 @@ pub struct Agent {
 impl Agent {
     /// Create an agent from config strings.
     ///
-    /// `model` is optional — if `None`, uses the backend's default.
-    /// `extra_disallowed_tools` are merged with [`DEFAULT_DISALLOWED_TOOLS`].
+    /// `model` is passed through to the agent CLI untouched — jig does not
+    /// validate model names. If `None`, the agent's own configured default
+    /// applies. `extra_disallowed_tools` are merged with
+    /// [`DEFAULT_DISALLOWED_TOOLS`].
     ///
-    /// Returns `None` if the kind is unknown or the model is not
-    /// supported by that backend.
+    /// Returns `None` if the kind is unknown.
     pub fn from_config(
         kind: &str,
         model: Option<&str>,
@@ -191,13 +192,7 @@ impl Agent {
     ) -> Option<Self> {
         let k = kind.parse::<AgentKind>().ok()?;
         let inner: Box<dyn AgentBackend> = match k {
-            AgentKind::Claude => {
-                let m = match model {
-                    Some(s) => s.parse::<claude::Model>().ok()?,
-                    None => claude::Model::DEFAULT,
-                };
-                Box::new(ClaudeCode::new(m))
-            }
+            AgentKind::Claude => Box::new(ClaudeCode::new(model.map(str::to_string))),
         };
         let mut disallowed: Vec<String> = DEFAULT_DISALLOWED_TOOLS
             .iter()
@@ -217,8 +212,8 @@ impl Agent {
     pub fn kind(&self) -> AgentKind {
         self.inner.kind()
     }
-    /// The model string (e.g. `"sonnet"`, `"opus"`).
-    pub fn model(&self) -> &str {
+    /// The configured model string, or `None` to use the agent's default.
+    pub fn model(&self) -> Option<&str> {
         self.inner.model()
     }
     pub fn name(&self) -> String {
