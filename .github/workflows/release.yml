@@ -70,7 +70,13 @@ jobs:
             zip -r "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
             echo "ASSET=${ARCHIVE_NAME}.zip" >> $GITHUB_ENV
           else
-            tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+            # Record root as owner, not the runner's uid 1001: older
+            # install.sh copies extract as root without --no-same-owner.
+            if [ "$RUNNER_OS" = "macOS" ]; then
+              tar --uid 0 --gid 0 -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+            else
+              tar --owner=0 --group=0 --numeric-owner -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+            fi
             echo "ASSET=${ARCHIVE_NAME}.tar.gz" >> $GITHUB_ENV
           fi
 

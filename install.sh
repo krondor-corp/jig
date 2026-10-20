@@ -140,7 +140,10 @@ main() {
 
     # Extract
     info "Extracting..."
-    tar -xzf "$tmpdir/$archive" -C "$tmpdir"
+    # As root, tar restores the owner stored in the archive — the CI build
+    # user, uid 1001, which is whoever holds that uid here. The binary would
+    # then be replaceable by that account. Extract as whoever is installing.
+    tar --no-same-owner -xzf "$tmpdir/$archive" -C "$tmpdir"
 
     # Find binary (it's in a subdirectory)
     local binary_path
