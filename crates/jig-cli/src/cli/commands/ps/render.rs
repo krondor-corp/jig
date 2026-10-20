@@ -494,6 +494,7 @@ mod tests {
         assert!(section.contains("JIG-1"));
         assert!(section.contains("JIG-2"));
     }
+
     #[test]
     fn grouping_is_first_seen_order_and_gathers_split_groups() {
         // Shared by the worker and triage grouped views, so it is worth

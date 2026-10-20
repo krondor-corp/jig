@@ -2,6 +2,7 @@
 
 use crate::common::Sandbox;
 use predicates::prelude::*;
+use std::fs;
 
 #[test]
 fn create_makes_a_linked_worktree() {
@@ -144,4 +145,55 @@ fn remove_accepts_a_glob() {
         .assert()
         .success()
         .stdout(predicate::str::contains("glob-test").not());
+}
+
+#[test]
+fn copy_brings_listed_files_into_the_new_worktree() {
+    // `[worktree] copy` carries files git does not track — the local config a
+    // worktree needs to be usable. All three bootstrap paths (create, spawn,
+    // and the daemon's spawn actor) share `WorktreeConfig::copy_paths`.
+    let repo = Sandbox::with_repo();
+    let root = repo.work_dir().to_path_buf();
+    fs::write(
+        root.join("jig.toml"),
+        "[worktree]\nbase = \"main\"\ncopy = [\"local.conf\", \"nested/inner.conf\"]\n",
+    )
+    .unwrap();
+    fs::write(root.join("local.conf"), "value = 1").unwrap();
+    fs::create_dir_all(root.join("nested")).unwrap();
+    fs::write(root.join("nested/inner.conf"), "value = 2").unwrap();
+
+    repo.jig().args(["create", "copy-test"]).assert().success();
+
+    let wt = repo.worktree("copy-test");
+    assert_eq!(
+        fs::read_to_string(wt.join("local.conf")).expect("local.conf copied"),
+        "value = 1"
+    );
+    assert_eq!(
+        fs::read_to_string(wt.join("nested/inner.conf")).expect("nested file copied"),
+        "value = 2",
+        "a copy entry with a directory component should keep its path"
+    );
+}
+
+#[test]
+fn copy_tolerates_a_missing_entry() {
+    // A `copy` list naming a file this checkout does not have must not fail
+    // the creation — the worktree is what was asked for.
+    let repo = Sandbox::with_repo();
+    let root = repo.work_dir().to_path_buf();
+    fs::write(
+        root.join("jig.toml"),
+        "[worktree]\nbase = \"main\"\ncopy = [\"absent.conf\"]\n",
+    )
+    .unwrap();
+
+    repo.jig()
+        .args(["create", "missing-copy"])
+        .assert()
+        .success();
+
+    assert!(repo.worktree("missing-copy").exists());
+    assert!(!repo.worktree("missing-copy").join("absent.conf").exists());
 }

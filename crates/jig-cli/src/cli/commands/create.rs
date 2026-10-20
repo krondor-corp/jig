@@ -85,7 +85,7 @@ impl Op for Create {
         let branch = Branch::new(&self.branch);
         let copy_files = repo.config.worktree.copy_paths();
         // `--no-hooks` suppresses the hook, but not the file copying: the
-        // copies are what makes the worktree usable, not a user extension point.
+        // copies are what make the worktree usable, not a user extension point.
         let on_create = if self.no_hooks {
             None
         } else {
