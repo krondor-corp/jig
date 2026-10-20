@@ -522,11 +522,15 @@ fn install_ctx(
 /// while the same user's CLI reported v0.12.1.
 ///
 /// So: if the target user can already write the installer's binary, use it.
-/// Otherwise the daemon runs their own `~/.local/bin/jig`, copied there if
-/// they have none, so `jig update && jig daemon restart` is enough for them.
+/// If root owns it, use it too — that is an admin-managed install, and the
+/// admin updates it for everyone. A copy in the user's home would be one the
+/// admin's tooling deletes as a shadow, leaving the unit restart-looping on a
+/// missing file. Otherwise the daemon runs their own `~/.local/bin/jig`,
+/// copied there if they have none, so `jig update && jig daemon restart` is
+/// enough for them.
 #[cfg(unix)]
 fn daemon_binary(installer_exe: &Path, target: &TargetUser) -> Result<PathBuf, ServiceError> {
-    if writable_by(installer_exe, target.uid) {
+    if writable_by(installer_exe, target.uid) || root_managed(installer_exe) {
         return Ok(installer_exe.to_path_buf());
     }
 
@@ -567,6 +571,24 @@ fn writable_by(path: &Path, uid: u32) -> bool {
     };
     let mode = meta.permissions().mode();
     (meta.uid() == uid && mode & 0o200 != 0) || mode & 0o002 != 0
+}
+
+/// Whether only root can replace the file at `path` — an install the admin
+/// manages, not one any user should shadow with their own copy.
+#[cfg(unix)]
+pub(crate) fn root_managed(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0
+}
+
+#[cfg(not(unix))]
+pub(crate) fn root_managed(_path: &Path) -> bool {
+    false
 }
 
 /// The systemd system unit: runs as `target`, with their groups, after the
@@ -892,6 +914,10 @@ mod tests {
     fn a_user_who_cannot_write_the_installers_binary_gets_their_own() {
         use std::os::unix::fs::PermissionsExt;
 
+        if nix::unistd::Uid::effective().is_root() {
+            return; // the file below would be root's, which is kept as-is
+        }
+
         let tmp = tempfile::TempDir::new().unwrap();
         let root_owned = tmp.path().join("usr-local-bin-jig");
         std::fs::write(&root_owned, b"#!/bin/sh\n").unwrap();
@@ -939,5 +965,44 @@ mod tests {
             !tmp.path().join("home/.local/bin/jig").exists(),
             "nothing should be copied when the binary is already writable"
         );
+    }
+
+    /// A root-owned binary is the admin's to update. The daemon runs it
+    /// where it stands — a per-user copy would be deleted as a shadow by
+    /// whatever manages the install, and the unit would loop on nothing.
+    #[test]
+    fn an_admin_managed_binary_is_kept_for_someone_else() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if !nix::unistd::Uid::effective().is_root() {
+            return; // only root can make a root-owned file to test with
+        }
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let admins = tmp.path().join("usr-local-bin-jig");
+        std::fs::write(&admins, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&admins, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let target = TargetUser {
+            name: "dev".into(),
+            uid: 4242,
+            home: tmp.path().join("home-dev"),
+        };
+
+        assert_eq!(daemon_binary(&admins, &target).unwrap(), admins);
+        assert!(!tmp.path().join("home-dev/.local/bin/jig").exists());
+    }
+
+    /// Only root's files count — a user's own binary is theirs to update.
+    #[test]
+    fn a_users_binary_is_not_root_managed() {
+        if nix::unistd::Uid::effective().is_root() {
+            return;
+        }
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mine = tmp.path().join("jig");
+        std::fs::write(&mine, b"#!/bin/sh\n").unwrap();
+        assert!(!root_managed(&mine));
+        assert!(!root_managed(&tmp.path().join("missing")));
     }
 }
