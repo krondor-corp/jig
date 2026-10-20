@@ -20,6 +20,43 @@ cd jig
 cargo install --path crates/jig-cli
 ```
 
+## Running the daemon as a service
+
+On Linux, `jig daemon install` writes a system unit, so it needs root. Who
+runs the install decides which binary the service runs and who can update it.
+
+**You have sudo, and the daemon is yours.** Install jig as yourself
+(`~/.local/bin`), then point sudo at that binary — sudo does not search
+your PATH:
+
+```bash
+sudo "$(command -v jig)" daemon install
+```
+
+The unit runs your own binary. To upgrade:
+
+```bash
+jig update && jig daemon restart
+```
+
+**An admin runs the daemon for a user without sudo.** The admin installs jig
+as root, into `/usr/local/bin`, and installs the daemon from that binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/krondor-corp/jig/main/install.sh | sudo INSTALL_DIR=/usr/local/bin bash
+sudo /usr/local/bin/jig daemon install --as dev
+```
+
+The unit runs the root-owned binary where it is. The user cannot update it,
+and `jig update` says so. The user should not install a copy of their own,
+because the daemon will never run it. To upgrade, the admin re-runs the
+installer and anyone runs `jig daemon restart`, which needs no root: it asks
+the daemon to exit and the service brings it back on the new binary.
+
+`jig daemon status` warns when the daemon's version differs from your CLI's,
+which usually means the service runs a different binary from the one on
+your PATH.
+
 ## Shell Integration
 
 ### Quick setup
