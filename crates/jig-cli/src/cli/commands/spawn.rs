@@ -130,12 +130,7 @@ impl Op for Spawn {
         );
         let prompt = crate::prompts::spawn_task_raw(task_context);
 
-        let copy_files: Vec<std::path::PathBuf> = jig_config
-            .worktree
-            .copy
-            .iter()
-            .map(std::path::PathBuf::from)
-            .collect();
+        let copy_files = jig_config.worktree.copy_paths();
         let on_create = jig_config.worktree.on_create();
 
         let issue_ref = self.issue.as_deref().map(jig_core::IssueRef::new);

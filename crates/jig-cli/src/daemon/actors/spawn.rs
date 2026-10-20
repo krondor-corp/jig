@@ -160,13 +160,7 @@ fn spawn_worker_for_issue(
 
     let prompt = crate::prompts::spawn_task(issue, provider);
 
-    let copy_files: Vec<std::path::PathBuf> = cfg
-        .config
-        .worktree
-        .copy
-        .iter()
-        .map(std::path::PathBuf::from)
-        .collect();
+    let copy_files = cfg.config.worktree.copy_paths();
     let on_create = cfg.config.worktree.on_create();
 
     let worker = Worker::spawn(

@@ -3,7 +3,7 @@
 use jig_core::exec::{Exec, Hook};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{JIG_LOCAL_TOML, JIG_TOML};
 
@@ -67,6 +67,13 @@ impl WorktreeConfig {
     /// The configured `on_create` command, ready to run.
     pub fn on_create(&self) -> Option<Exec> {
         Some(self.on_create.as_ref()?.exec("on_create hook"))
+    }
+
+    /// The `copy` entries as paths, for [`jig_core::Worktree::create`].
+    ///
+    /// Relative to the repo root; resolved by the copier, not here.
+    pub fn copy_paths(&self) -> Vec<PathBuf> {
+        self.copy.iter().map(PathBuf::from).collect()
     }
 }
 
