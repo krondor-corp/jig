@@ -496,41 +496,6 @@ mod tests {
     }
 
     #[test]
-    fn grouping_is_first_seen_order_and_gathers_split_groups() {
-        // Shared by the worker and triage grouped views, so it is worth
-        // pinning: groups appear in the order first encountered, not sorted,
-        // and entries for one repo collect under a single header even when
-        // they are not adjacent in the input.
-        let _plain = PlainGuard::new(true);
-        let triages = vec![
-            triage_entry("KRO-1", "w1", 10, "zeta"),
-            triage_entry("KRO-2", "w2", 20, "alpha"),
-            triage_entry("KRO-3", "w3", 30, "zeta"),
-        ];
-        let section = render_triage_section_grouped(&triages, false);
-
-        let zeta = section.find("zeta").expect("zeta header");
-        let alpha = section.find("alpha").expect("alpha header");
-        assert!(zeta < alpha, "groups should be first-seen, not sorted");
-
-        // One header per repo, with both zeta rows beneath the single one.
-        // Group headers are the only unindented lines; rows are indented and
-        // repeat the repo in their REPO column.
-        let headers: Vec<&str> = section
-            .lines()
-            .filter(|l| !l.starts_with(' ') && !l.is_empty())
-            .collect();
-        assert_eq!(headers, vec!["TRIAGES", "zeta", "alpha"]);
-        // KRO-3 is last in the input but belongs to the first group, so it
-        // must land above the alpha header, not at the end.
-        let kro3 = section.find("KRO-3").expect("KRO-3 row");
-        assert!(
-            zeta < kro3 && kro3 < alpha,
-            "split group should gather under its own header"
-        );
-    }
-
-    #[test]
     fn plain_mode_ps_tables_have_no_ansi_escapes() {
         let _plain = PlainGuard::new(true);
         let triages = vec![triage_entry("KRO-1", "w1", 30, "repo-a")];

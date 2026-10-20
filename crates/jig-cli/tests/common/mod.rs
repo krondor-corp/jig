@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
-use jig_cli::context::{AppPaths, JIG_DIR};
+use jig_cli::context::AppPaths;
 
 /// Temp roots and repos for one test. Everything is removed on drop.
 pub struct Sandbox {
@@ -56,21 +56,6 @@ impl Sandbox {
     /// One repo, which [`Self::jig`] runs in.
     pub fn with_repo() -> Self {
         Self::with_repos(1)
-    }
-
-    /// One repo, already configured to fork worktrees from its local `main`.
-    ///
-    /// The default base is `origin/main`, which sandbox repos do not have —
-    /// any test that creates a worktree wants this.
-    pub fn with_local_repo() -> Self {
-        let sandbox = Self::with_repo();
-        use_local_main(sandbox.work_dir());
-        sandbox
-    }
-
-    /// Where a worktree named `name` lands in the working-directory repo.
-    pub fn worktree(&self, name: &str) -> PathBuf {
-        self.work_dir().join(JIG_DIR).join(name)
     }
 
     /// Add a git repo on `main` with one empty commit, and return its path.
@@ -251,9 +236,4 @@ pub fn pid_in(path: &Path) -> u32 {
         .expect("pid file is not empty")
         .parse()
         .expect("pid file starts with a number")
-}
-
-/// Base worktrees on the local `main` — sandbox repos have no `origin`.
-pub fn use_local_main(repo: &Path) {
-    std::fs::write(repo.join("jig.toml"), "[worktree]\nbase = \"main\"\n").unwrap();
 }

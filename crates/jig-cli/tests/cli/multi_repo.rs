@@ -1,7 +1,12 @@
 //! Commands that span every tracked repo.
 
-use crate::common::{use_local_main, Sandbox};
+use crate::common::Sandbox;
 use predicates::prelude::*;
+
+/// Base worktrees on the local `main` — sandbox repos have no `origin`.
+fn use_local_main(repo: &std::path::Path) {
+    std::fs::write(repo.join("jig.toml"), "[worktree]\nbase = \"main\"\n").unwrap();
+}
 
 #[test]
 fn global_list_shows_worktrees_from_every_repo() {
