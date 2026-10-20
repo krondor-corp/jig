@@ -139,3 +139,55 @@ fn reduce_empty_log_returns_default() {
     let state = log.reduce().unwrap();
     assert_eq!(state, Counter::default());
 }
+
+#[test]
+fn unparseable_lines_are_skipped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("test.jsonl");
+    let log: EventLog<TestEvent> = EventLog::new(path.clone());
+
+    log.append(&TestEvent::Started { ts: 1 }).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    use std::io::Write;
+    // A line in another schema, invalid UTF-8, and a torn write.
+    file.write_all(b"{\"type\":\"started\",\"ts\":2}\n\xff\xfe\n{\"event\":\"Sto")
+        .unwrap();
+    file.write_all(b"\n").unwrap();
+    drop(file);
+    log.append(&TestEvent::Stopped { ts: 3 }).unwrap();
+
+    assert_eq!(
+        log.read_all().unwrap(),
+        vec![TestEvent::Started { ts: 1 }, TestEvent::Stopped { ts: 3 }]
+    );
+    assert_eq!(
+        log.reduce().unwrap(),
+        Counter {
+            started: 1,
+            stopped: 1
+        }
+    );
+}
+
+#[test]
+fn last_event_skips_a_trailing_bad_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("test.jsonl");
+    let log: EventLog<TestEvent> = EventLog::new(path.clone());
+
+    log.append(&TestEvent::Started { ts: 1 }).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    std::io::Write::write_all(&mut file, b"{\"event\":\"Sto").unwrap();
+    drop(file);
+
+    assert_eq!(
+        log.last_event().unwrap(),
+        Some(TestEvent::Started { ts: 1 })
+    );
+}

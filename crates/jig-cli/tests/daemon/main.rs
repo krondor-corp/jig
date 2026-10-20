@@ -4,5 +4,6 @@
 mod common;
 
 mod actors;
+mod events;
 mod ipc;
 mod pidfile;
