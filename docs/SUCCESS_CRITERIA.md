@@ -22,10 +22,21 @@ Build must complete without errors.
 ### Tests
 
 ```bash
-cargo test
+cargo test --workspace
 ```
 
-All tests must pass. Integration tests create isolated git repos using tempfile.
+All tests must pass. Integration tests live under `crates/*/tests/` and build
+isolated git repos in temp dirs — see the `Sandbox` fixture in
+`crates/jig-cli/tests/common/mod.rs`, which owns temp `XDG_CONFIG_HOME` and
+`XDG_RUNTIME_DIR` roots so tests never touch the developer's own state and can
+run in parallel.
+
+> **Put integration tests inside a crate, never at the workspace root.** The
+> root `Cargo.toml` is a virtual manifest (`[workspace]` with no `[package]`),
+> so a top-level `tests/` directory belongs to no package and cargo silently
+> never compiles it. A suite was orphaned that way once and rotted unnoticed.
+> `cargo test --workspace --no-run` lists every executable that actually
+> builds — check there if a test file seems not to run.
 
 ### Linting
 
