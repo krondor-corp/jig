@@ -33,24 +33,23 @@ Create a draft pull request for the current branch.
    - If no upstream: `git push -u origin <branch>`
    - If upstream exists: `git push`
 
-4. Determine the base branch. Check in order:
-   - `main` branch exists? Use `main`
-   - `master` branch exists? Use `master`
-   - Fall back to the repo's default branch: `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`
+4. Gather context — commits unique to this branch:
+   ```
+   git log main..HEAD --oneline
+   ```
+   (Use `master` if the repo has no `main`.)
 
-5. Gather context — commits unique to this branch:
+5. Create a draft PR:
    ```
-   git log <base>..HEAD --oneline
-   ```
-
-6. Create a draft PR:
-   ```
-   jig pr create --draft --base <base>
+   jig pr create --title "<title>" --body "<body>"
    ```
    - Title: descriptive of what the branch accomplishes
    - Body: summarize ALL changes based on the commits
+   - `jig pr` resolves the base branch itself, including the parent of a
+     stacked worktree. Do not pass a base, and do not use `gh pr create` —
+     it skips that resolution and targets the wrong base.
 
-7. Return the PR URL to the user.
+6. Return the PR URL to the user.
 
 ## Important
 
