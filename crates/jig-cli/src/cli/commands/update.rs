@@ -8,6 +8,7 @@ use clap::Args;
 
 use jig_core::exec::{Exec, Timeout};
 
+use crate::cli::commands::daemon::root_managed;
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
 use crate::context::{AppCtx, AppPaths};
@@ -108,12 +109,22 @@ impl Op for Update {
             InstallMethod::Protected(ref path) => {
                 let dir = path.parent().unwrap_or(Path::new("."));
                 eprintln!();
-                eprintln!(
-                    "{} is not writable by you.",
-                    ui::highlight(&dir.display().to_string())
-                );
-                eprintln!();
-                eprintln!("Re-run the installer as root:");
+                if root_managed(path) {
+                    // Installing a copy of our own would only shadow it: the
+                    // daemon runs root's binary, and admin tooling may delete
+                    // per-user copies.
+                    eprintln!(
+                        "jig is managed by root at {}. Ask an admin to update it:",
+                        ui::highlight(&path.display().to_string())
+                    );
+                } else {
+                    eprintln!(
+                        "{} is not writable by you.",
+                        ui::highlight(&dir.display().to_string())
+                    );
+                    eprintln!();
+                    eprintln!("Re-run the installer as root:");
+                }
                 ui::detail(&format!(
                     "curl -fsSL {} | sudo INSTALL_DIR={} bash",
                     INSTALL_SCRIPT_URL,

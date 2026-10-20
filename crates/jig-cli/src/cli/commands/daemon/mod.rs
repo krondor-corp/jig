@@ -9,6 +9,8 @@ mod start;
 mod status;
 mod stop;
 
+pub(crate) use service::root_managed;
+
 use std::path::PathBuf;
 
 use clap::Args;
