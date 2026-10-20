@@ -123,38 +123,48 @@ impl<E: DeserializeOwned + Reducible> EventLog<E> {
 }
 
 impl<E: DeserializeOwned> EventLog<E> {
+    /// Every event in the log, oldest first.
+    ///
+    /// Lines that don't deserialize as `E` — a torn write from a crash, or
+    /// a line in a shape some other build wrote — are skipped with a
+    /// `debug!`, so one bad line doesn't cost the rest of the history.
+    /// Only I/O errors fail the read.
     pub fn read_all(&self) -> Result<Vec<E>, EventLogError> {
-        if !self.path.exists() {
-            return Ok(Vec::new());
-        }
-        let file = fs::File::open(&self.path)?;
-        let reader = BufReader::new(file);
         let mut events = Vec::new();
-        for line in reader.lines() {
-            let line = line?;
-            if !line.is_empty() {
-                events.push(serde_json::from_str(&line)?);
-            }
-        }
+        self.for_each_parsed(|event| events.push(event))?;
         Ok(events)
     }
 
+    /// The last event in the log that deserializes, skipping bad lines
+    /// like [`Self::read_all`].
     pub fn last_event(&self) -> Result<Option<E>, EventLogError> {
+        let mut last = None;
+        self.for_each_parsed(|event| last = Some(event))?;
+        Ok(last)
+    }
+
+    fn for_each_parsed(&self, mut f: impl FnMut(E)) -> Result<(), EventLogError> {
         if !self.path.exists() {
-            return Ok(None);
+            return Ok(());
         }
         let file = fs::File::open(&self.path)?;
-        let reader = BufReader::new(file);
-        let mut last_line = None;
-        for line in reader.lines() {
+        // Split on raw bytes so a line of invalid UTF-8 is skipped like any
+        // other bad line rather than failing the read.
+        for (i, line) in BufReader::new(file).split(b'\n').enumerate() {
             let line = line?;
-            if !line.is_empty() {
-                last_line = Some(line);
+            if line.trim_ascii().is_empty() {
+                continue;
+            }
+            match serde_json::from_slice(&line) {
+                Ok(event) => f(event),
+                Err(e) => tracing::debug!(
+                    path = %self.path.display(),
+                    line = i + 1,
+                    error = %e,
+                    "skipping unparseable event log line"
+                ),
             }
         }
-        match last_line {
-            Some(line) => Ok(Some(serde_json::from_str(&line)?)),
-            None => Ok(None),
-        }
+        Ok(())
     }
 }

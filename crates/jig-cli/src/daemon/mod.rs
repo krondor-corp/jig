@@ -331,8 +331,10 @@ fn log_startup(paths: &AppPaths) {
                 );
             }
         }
+        // `reduce` skips lines it can't parse, so this is an unreadable
+        // file, not a bad line — the history is already lost.
         Err(e) => {
-            tracing::warn!("stale daemon event log, resetting: {}", e);
+            tracing::warn!("unreadable daemon event log, resetting: {}", e);
             let _ = log.reset();
         }
     }
