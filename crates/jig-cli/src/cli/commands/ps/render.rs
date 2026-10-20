@@ -51,6 +51,54 @@ fn indent_lines(block: &str) -> String {
         .join("\n")
 }
 
+/// One table of `items`, built from a header and a per-item row.
+fn render_table<T>(
+    items: &[T],
+    header: fn() -> Vec<Cell>,
+    row: fn(&T) -> Vec<Cell>,
+    borders: bool,
+) -> Table {
+    let mut table = ps_table(header(), borders);
+    for item in items {
+        table.add_row(row(item));
+    }
+    table
+}
+
+/// One indented table per group, under a bold group header, in the order the
+/// groups are first seen.
+///
+/// The worker and triage grouped views differ only in how the group key is
+/// read, what the header says, and how a row is built — grouping, ordering,
+/// indentation and the bold key line are the same for both, so they live here
+/// and the `--plain` policy in [`ps_table`] applies to both by construction.
+fn render_grouped<T>(
+    items: &[T],
+    key: fn(&T) -> String,
+    header: fn() -> Vec<Cell>,
+    row: fn(&T) -> Vec<Cell>,
+    borders: bool,
+) -> String {
+    let mut keys: Vec<String> = Vec::new();
+    for item in items {
+        let k = key(item);
+        if !keys.contains(&k) {
+            keys.push(k);
+        }
+    }
+
+    keys.iter()
+        .map(|k| {
+            let mut table = ps_table(header(), borders);
+            for item in items.iter().filter(|i| key(i) == *k) {
+                table.add_row(row(item));
+            }
+            format!("{}\n{}", ui::bold(k), indent_lines(&table.to_string()))
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// Single source of truth: WorkerStatus → comfy_table color.
 pub fn worker_state_color(status: &WorkerStatus) -> Color {
     match status {
@@ -237,47 +285,20 @@ fn table_header() -> Vec<Cell> {
 ///
 /// `borders`: true uses UTF8_BORDERS_ONLY (watch mode), false uses NOTHING (non-watch).
 pub fn render_worker_table(workers: &[WorkerState], borders: bool) -> Table {
-    let mut table = ps_table(table_header(), borders);
-
-    for w in workers {
-        table.add_row(worker_row(w));
-    }
-
-    table
+    render_table(workers, table_header, worker_row, borders)
 }
 
 /// Render workers grouped by repo, with bold repo headers.
 ///
 /// Returns a formatted string with separate tables per repo.
 pub fn render_worker_table_grouped(workers: &[WorkerState], borders: bool) -> String {
-    let mut repos: Vec<String> = Vec::new();
-    for w in workers {
-        let name = w.repo_name();
-        if !repos.contains(&name) {
-            repos.push(name);
-        }
-    }
-
-    let mut sections: Vec<String> = Vec::new();
-
-    for repo in &repos {
-        let repo_workers: Vec<&WorkerState> =
-            workers.iter().filter(|w| w.repo_name() == *repo).collect();
-
-        let mut table = ps_table(table_header(), borders);
-
-        for w in &repo_workers {
-            table.add_row(worker_row(w));
-        }
-
-        sections.push(format!(
-            "{}\n{}",
-            ui::bold(repo),
-            indent_lines(&table.to_string())
-        ));
-    }
-
-    sections.join("\n\n")
+    render_grouped(
+        workers,
+        WorkerState::repo_name,
+        table_header,
+        worker_row,
+        borders,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -312,13 +333,7 @@ fn triage_row(t: &TriageEntry) -> Vec<Cell> {
 ///
 /// `borders`: true uses UTF8_BORDERS_ONLY (watch mode), false uses NOTHING.
 pub fn render_triage_table(triages: &[TriageEntry], borders: bool) -> Table {
-    let mut table = ps_table(triage_header(), borders);
-
-    for t in triages {
-        table.add_row(triage_row(t));
-    }
-
-    table
+    render_table(triages, triage_header, triage_row, borders)
 }
 
 /// Render the full triage section with header. Returns empty string if no triages.
@@ -336,33 +351,14 @@ pub fn render_triage_section_grouped(triages: &[TriageEntry], borders: bool) -> 
         return String::new();
     }
 
-    let mut repos: Vec<String> = Vec::new();
-    for t in triages {
-        if !repos.contains(&t.repo_name) {
-            repos.push(t.repo_name.clone());
-        }
-    }
-
-    let mut sections: Vec<String> = Vec::new();
-
-    for repo in &repos {
-        let repo_triages: Vec<&TriageEntry> =
-            triages.iter().filter(|t| &t.repo_name == repo).collect();
-
-        let mut table = ps_table(triage_header(), borders);
-
-        for t in &repo_triages {
-            table.add_row(triage_row(t));
-        }
-
-        sections.push(format!(
-            "{}\n{}",
-            ui::bold(repo),
-            indent_lines(&table.to_string())
-        ));
-    }
-
-    format!("{}\n{}", ui::bold("TRIAGES"), sections.join("\n\n"))
+    let sections = render_grouped(
+        triages,
+        |t| t.repo_name.clone(),
+        triage_header,
+        triage_row,
+        borders,
+    );
+    format!("{}\n{}", ui::bold("TRIAGES"), sections)
 }
 
 #[cfg(test)]
@@ -498,6 +494,41 @@ mod tests {
         assert!(section.contains("JIG-1"));
         assert!(section.contains("JIG-2"));
     }
+    #[test]
+    fn grouping_is_first_seen_order_and_gathers_split_groups() {
+        // Shared by the worker and triage grouped views, so it is worth
+        // pinning: groups appear in the order first encountered, not sorted,
+        // and entries for one repo collect under a single header even when
+        // they are not adjacent in the input.
+        let _plain = PlainGuard::new(true);
+        let triages = vec![
+            triage_entry("KRO-1", "w1", 10, "zeta"),
+            triage_entry("KRO-2", "w2", 20, "alpha"),
+            triage_entry("KRO-3", "w3", 30, "zeta"),
+        ];
+        let section = render_triage_section_grouped(&triages, false);
+
+        let zeta = section.find("zeta").expect("zeta header");
+        let alpha = section.find("alpha").expect("alpha header");
+        assert!(zeta < alpha, "groups should be first-seen, not sorted");
+
+        // One header per repo, with both zeta rows beneath the single one.
+        // Group headers are the only unindented lines; rows are indented and
+        // repeat the repo in their REPO column.
+        let headers: Vec<&str> = section
+            .lines()
+            .filter(|l| !l.starts_with(' ') && !l.is_empty())
+            .collect();
+        assert_eq!(headers, vec!["TRIAGES", "zeta", "alpha"]);
+        // KRO-3 is last in the input but belongs to the first group, so it
+        // must land above the alpha header, not at the end.
+        let kro3 = section.find("KRO-3").expect("KRO-3 row");
+        assert!(
+            zeta < kro3 && kro3 < alpha,
+            "split group should gather under its own header"
+        );
+    }
+
     #[test]
     fn plain_mode_ps_tables_have_no_ansi_escapes() {
         let _plain = PlainGuard::new(true);
