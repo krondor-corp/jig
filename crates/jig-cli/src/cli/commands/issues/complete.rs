@@ -12,25 +12,16 @@ use crate::context::{AppCtx, Ctx, RepoCtx};
 pub struct Complete {
     /// Issue ID (e.g. "features/my-feature")
     pub id: String,
-
-    /// Delete the issue file after marking complete
-    #[arg(long)]
-    pub delete: bool,
 }
 
 #[derive(Debug)]
 pub struct CompleteOutput {
     pub id: String,
-    pub deleted: bool,
 }
 
 impl fmt::Display for CompleteOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.deleted {
-            write!(f, "Completed and deleted: {}", self.id)
-        } else {
-            write!(f, "Completed: {}", self.id)
-        }
+        write!(f, "Completed: {}", self.id)
     }
 }
 
@@ -50,10 +41,7 @@ fn run(
     let linear_provider = repo.linear_provider(global)?;
     linear_provider.update_status(&cmd.id, &IssueStatus::Complete)?;
 
-    Ok(CompleteOutput {
-        id: cmd.id.clone(),
-        deleted: cmd.delete,
-    })
+    Ok(CompleteOutput { id: cmd.id.clone() })
 }
 
 impl Op for Complete {

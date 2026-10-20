@@ -83,14 +83,14 @@ impl Op for Create {
 
         let git_repo = jig_core::Repo::open(&repo.paths.repo_root)?;
         let branch = Branch::new(&self.branch);
-        let copy_files: Vec<std::path::PathBuf> = repo
-            .config
-            .worktree
-            .copy
-            .iter()
-            .map(std::path::PathBuf::from)
-            .collect();
-        let on_create = repo.config.worktree.on_create();
+        let copy_files = repo.config.worktree.copy_paths();
+        // `--no-hooks` suppresses the hook, but not the file copying: the
+        // copies are what make the worktree usable, not a user extension point.
+        let on_create = if self.no_hooks {
+            None
+        } else {
+            repo.config.worktree.on_create()
+        };
         let wt = Worktree::create(&git_repo, &branch, &base_branch, &copy_files, on_create)?;
 
         let repo_name = repo.name();

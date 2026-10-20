@@ -10,14 +10,44 @@ pub trait Op {
     type Error: std::error::Error + Send + Sync + 'static;
     type Output: std::fmt::Display;
 
-    fn build_context(&self) -> Result<Self::Context, Self::Error>;
+    fn build_context(&self, app: AppCtx) -> Result<Self::Context, Self::Error>;
     fn run(&self, ctx: Self::Context) -> Result<Self::Output, Self::Error>;
+
+    /// Where this invocation's tracing goes. Override only when stderr
+    /// would be wrong — see `LogSink::File`.
+    fn log_sink(&self) -> LogSink { LogSink::Stderr }
 }
 ```
 
-**Ops never:** print, use color, or check terminal width.
+**Ops never write to stdout**, never use color directly, and never check
+terminal width.
 **Display impls own:** all color/styling, table layout, human-readable formatting.
-**The boundary (main.rs) owns:** arg parsing, calling build_context + run, printing, exit codes.
+**The boundary (main.rs) owns:** arg parsing, calling build_context + run,
+printing the `Output`, exit codes.
+
+### stdout is the contract; stderr is the conversation
+
+The invariant that matters is **stdout purity**. The shell wrapper `eval`s
+jig's stdout, so anything on it that is not the command's `Output` gets
+executed. stdout therefore carries exactly one thing: the `Display` of the
+`Output`, printed by `main`. Resolved values (`jig config base`, `jig home`,
+`jig list --plain`) go there; tables, prose and progress do not.
+
+stderr is not held to the same rule, and deliberately so. A long or
+multi-step op — `spawn`, `update`, `init`, `hooks`, `daemon install` —
+**may** stream progress from inside `run` using the `ui::` helpers
+(`ui::progress`, `ui::success`, `ui::warning`, `ui::detail`, `ui::header`).
+Deferring that to a `Display` impl would withhold every line until the work
+finished, making those commands look hung. Such a command returns `NoOutput`
+when it has no machine-readable result, which is a real answer, not a
+placeholder.
+
+Use the `ui::` helpers rather than bare `eprintln!` where one fits: they are
+the layer that honors `--plain`, so an op never decides about color itself.
+
+A command whose result is a *value* or a *table* should still build it into
+the `Output` type and let `Display` render it — streaming is for progress,
+not for results.
 
 ## Adding a New Command
 
@@ -27,10 +57,12 @@ pub trait Op {
 4. **`Op` impl** — declares `type Context`, builds it in `build_context`, does work in `run`
 5. **`Display` impl** — all presentation logic lives here
 
-Choose the right context type:
+Choose the right context type (see docs/PATTERNS.md for the full list):
 - `()` — no context needed (pure commands: `version`, `which`, `shell-init`)
-- `RepoCtx` — single repo from cwd (most commands)
-- `ScopedCtx` — commands with `--global` flag (`list`, `ps`, `kill`, `nuke`, `remove`)
+- `Ctx` — one repo (`Ctx::here`) or every tracked repo (`Ctx::everywhere`), and
+  `Ctx::scoped(app, self.global)` for commands with `-g` (`list`, `ps`, `kill`,
+  `nuke`, `remove`)
+- `AppPaths` — jig's files but no repo (`daemon`, `notify`, `config`)
 
 Example skeleton:
 
@@ -48,16 +80,16 @@ pub enum MyCmdError {
 pub struct MyCmdOutput { /* typed fields */ }
 
 impl Op for MyCmd {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = MyCmdError;
     type Output = MyCmdOutput;
 
-    fn build_context(&self) -> Result<RepoCtx, MyCmdError> {
-        Ok(RepoCtx::from_cwd()?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, MyCmdError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
-        // do work using ctx.repo and ctx.config
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        // do work using ctx.repo()? and ctx.config
     }
 }
 
@@ -68,12 +100,14 @@ impl fmt::Display for MyCmdOutput {
 }
 ```
 
-In `main.rs`, the dispatch is thin. The top-level `Command` enum uses `type Context = ()`, so context-building is separated from the run call to avoid a `clippy::let_unit_value` lint:
+In `main.rs`, the dispatch is thin. The top-level `Command` enum uses
+`type Context = AppCtx` and passes it down, so each variant builds its own
+context from the same resolved `AppCtx`:
 
 ```rust
 Some(ref command) => {
-    command.build_context()?;       // each variant builds its own ctx internally
-    let output = command.run(())?;
+    let app = command.build_context(app)?;  // each variant builds its own ctx internally
+    let output = command.run(app)?;
     // ...
 }
 ```

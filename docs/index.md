@@ -12,7 +12,7 @@ Find the right doc by what you're working on. The **Sources** column tells you w
 
 | Document | Summary | Sources |
 |----------|---------|---------|
-| [PATTERNS.md](./PATTERNS.md) | Error handling, Op trait, module layout, output conventions, actor pattern, naming | `crates/jig-cli/src/cli/op.rs`, `crates/jig-cli/src/cli/ui/`, `crates/jig-core/src/error.rs` |
+| [PATTERNS.md](./PATTERNS.md) | Error handling, Op trait, context types, module layout, output conventions, actor pattern, naming | `crates/jig-cli/src/cli/op.rs`, `crates/jig-cli/src/cli/ui/`, `crates/jig-cli/src/context/`, `crates/jig-core/src/error.rs` |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Commit format, PR workflow, agent constraints | — |
 | [SUCCESS_CRITERIA.md](./SUCCESS_CRITERIA.md) | CI gate: build, test, clippy, fmt commands | — |
 

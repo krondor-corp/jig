@@ -34,15 +34,15 @@ pub enum CreateError {
 }
 
 impl Op for Create {
-    type Context = RepoCtx;
+    type Context = Ctx;
     type Error = CreateError;
     type Output = CreateOutput;
 
-    fn build_context(&self, paths: &AppPaths) -> Result<RepoCtx, CreateError> {
-        Ok(RepoCtx::from_cwd(paths)?)
+    fn build_context(&self, app: AppCtx) -> Result<Ctx, CreateError> {
+        Ok(Ctx::here(app)?)
     }
 
-    fn run(&self, ctx: RepoCtx) -> Result<Self::Output, Self::Error> {
+    fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
         // ...
     }
 }
@@ -64,7 +64,7 @@ impl Op for Create {
 
 - **jig-cli modules**:
   - `cli/` — CLI framework: `op.rs` (Op trait + command_enum! macro), `ui/` (rendering primitives: `colors.rs`, `output.rs`), `commands/` (one file/dir per command)
-  - `config/` — Configuration loading and management
+  - `context/` — What a command runs against: `AppPaths`, `AppCtx`, `Ctx`, `RepoCtx`, config loading
   - `worker/` — Worker state, lifecycle, events
   - `daemon/` — Background daemon with actor threads
   - `hooks/` — Git and agent hook management
@@ -196,7 +196,7 @@ Key conventions:
   - `attach`/`attach_window` are default-method compositions of `focus`/`focus_window` (point the backend at a target) and `connect` (bring a client in front of the user) — implement the primitives, not the composed methods, when adding a backend
   - `agent_state(&self, name) -> Option<AgentState>` lets a backend report live `idle/working/blocked/done` classification; default `None` (tmux has no such signal)
 
-- **jig's own files**: `AppPaths` (`context/paths.rs`) is resolved from `XDG_CONFIG_HOME` / `XDG_RUNTIME_DIR` once, in `main`, and reaches commands through `Op::build_context(&self, paths)` and the context structs (`ctx.paths`). Anything that reads or writes jig state takes `&AppPaths` — don't read XDG variables anywhere else.
+- **jig's own files**: `AppPaths` (`context/paths.rs`) is resolved from `XDG_CONFIG_HOME` / `XDG_RUNTIME_DIR` once, in `main`, and reaches commands on the `AppCtx` passed to `Op::build_context(&self, app)`, then through the context structs (`ctx.paths`). Anything that reads or writes jig state takes `&AppPaths` — don't read XDG variables anywhere else.
 
 - **Path handling**: Use `PathBuf` for owned paths, `&Path` for references
   - Canonicalize paths before displaying to users
@@ -205,13 +205,22 @@ Key conventions:
 - **Config cascading**: Repo-specific > Global > Default
   - Check repo config first, fall back to global, then hardcoded default
 
-- **Context types**: Each command declares `type Context` in its `Op` impl
-  - `RepoCtx` — single repo from cwd (`RepoCtx::from_cwd(paths)`); fields: `paths`, `repo: RepoConfig`, `config: Config`, `jig_toml: JigToml`
-  - `GlobalCtx` — all tracked repos (`GlobalCtx::load(paths)`); fields: `paths`, `repos`, `config`, `registry`
-  - `ScopedCtx` — enum for commands with `--global`; use `ScopedCtx::from_global(paths, self.global)` in `build_context`
-  - `AppPaths` — for commands that need jig's files but no repo (`daemon`, `notify`, `attach`)
+- **Context types**: Each command declares `type Context` in its `Op` impl, and
+  `build_context(app: AppCtx)` turns what `main` resolved into it.
+  - `Ctx` — what most commands want. Carries `paths`, `config`, `flags`,
+    `registry`, and a set of repos. Build it with `Ctx::here(app)` for the repo
+    containing the cwd, `Ctx::everywhere(app)` for every tracked repo, or
+    `Ctx::scoped(app, self.global)` for a command with `-g`. Read the repos back
+    with `ctx.repo()?` (exactly one) or `ctx.repos()` (iterate). Commands that
+    iterate do not need to know which scope they were given.
+  - `RepoCtx` — one repo: `paths: RepoPaths`, `config: JigToml`. Reachable from a
+    `Ctx`; build directly with `RepoCtx::from_cwd()` or `RepoCtx::from_path(p)`
+    only outside a command.
+  - `AppPaths` — commands that need jig's files but no repo (`daemon`, `notify`,
+    `config`); get it from `app.paths`.
+  - `AppCtx` — pass it straight through when a command wants the global config
+    as well as the paths, but no repo.
   - `()` — no context needed (pure commands like `version`, `which`, `shell-init`)
-  - Both `RepoCtx` and `GlobalCtx` convert to `Context` via `From` impls for daemon/legacy code
 
 - **Agent adapters**: Use `Agent` struct for agent-specific behavior
   - Defined in `crates/jig-core/src/agents/`
