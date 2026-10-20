@@ -5,7 +5,7 @@ use jig_core::issues::Issue;
 use jig_core::issues::IssueProvider;
 use jig_core::prompt::Prompt;
 
-const SPAWN_PREAMBLE: &str = r#"AUTONOMOUS MODE: You have been spawned by jig as a parallel worker in auto mode (--dangerously-skip-permissions). Work independently without human interaction.
+const SPAWN_PREAMBLE: &str = r#"AUTONOMOUS MODE: You have been spawned by jig as a parallel worker in auto permission mode (--permission-mode auto). Work independently without human interaction.
 
 YOUR GOAL: Complete the task below and create a draft PR. Definition of done: code committed (conventional commits), draft PR created via `jig pr` or /draft, and issue marked complete (see completion instructions in the task). Call /review when ready.
 

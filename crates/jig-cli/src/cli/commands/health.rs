@@ -147,8 +147,8 @@ impl Op for Health {
 
                         match agent.health() {
                             Ok(ver) => check_ok(agent.command(), Some(&ver)),
-                            Err(_) => {
-                                check_fail(agent.command(), Some("(not found or broken)"));
+                            Err(e) => {
+                                check_fail(agent.command(), Some(&format!("({e})")));
                                 all_passed = false;
                             }
                         }

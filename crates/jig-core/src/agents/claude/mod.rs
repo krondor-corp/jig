@@ -9,6 +9,20 @@ use super::{AgentBackend, AgentKind, HookType, InstallResult, DEFAULT_DISALLOWED
 
 const COMMAND: &str = "claude";
 
+/// Oldest Claude Code jig supports. Workers launch with
+/// `--permission-mode auto`, which older releases do not accept.
+const MIN_VERSION: (u32, u32, u32) = (2, 1, 304);
+
+/// Parse the leading `X.Y.Z` out of `claude --version` output
+/// (e.g. `2.1.304 (Claude Code)`).
+fn parse_version(output: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = output.split_whitespace().next()?.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    Some((major, minor, patch))
+}
+
 pub struct ClaudeCode {
     model: Option<String>,
 }
@@ -72,7 +86,7 @@ impl AgentBackend for ClaudeCode {
     fn spawn(&self, prompt: &str, disallowed_tools: &[String]) -> String {
         let escaped = prompt.replace('\'', "'\\''");
         let model = self.model_flag();
-        let mut cmd = format!("{COMMAND} '{escaped}' --dangerously-skip-permissions{model}");
+        let mut cmd = format!("{COMMAND} '{escaped}' --permission-mode auto{model}");
 
         let mut all_tools: Vec<&str> = DEFAULT_DISALLOWED_TOOLS.to_vec();
         for tool in disallowed_tools {
@@ -90,7 +104,7 @@ impl AgentBackend for ClaudeCode {
     fn resume(&self, prompt: &str, disallowed_tools: &[String]) -> String {
         let escaped = prompt.replace('\'', "'\\''");
         let model = self.model_flag();
-        let mut cmd = format!("{COMMAND} -c '{escaped}' --dangerously-skip-permissions{model}");
+        let mut cmd = format!("{COMMAND} -c '{escaped}' --permission-mode auto{model}");
 
         let mut all_tools: Vec<&str> = DEFAULT_DISALLOWED_TOOLS.to_vec();
         for tool in disallowed_tools {
@@ -110,7 +124,8 @@ impl AgentBackend for ClaudeCode {
             COMMAND.to_string(),
             "--print".to_string(),
             "--no-session-persistence".to_string(),
-            "--dangerously-skip-permissions".to_string(),
+            "--permission-mode".to_string(),
+            "auto".to_string(),
         ];
         argv.extend(self.model_args());
 
@@ -136,6 +151,20 @@ impl AgentBackend for ClaudeCode {
             return Err(super::AgentError::Other(format!(
                 "claude --version failed: {}",
                 output.failure()
+            )));
+        }
+
+        let version = parse_version(&output.stdout).ok_or_else(|| {
+            super::AgentError::Other(format!(
+                "could not parse claude version from {:?}",
+                output.stdout.trim()
+            ))
+        })?;
+        if version < MIN_VERSION {
+            let (major, minor, patch) = MIN_VERSION;
+            return Err(super::AgentError::Other(format!(
+                "claude {} is too old; jig requires >= {major}.{minor}.{patch}",
+                output.stdout.trim()
             )));
         }
 
@@ -251,7 +280,7 @@ mod tests {
         let cmd = agent().spawn(Prompt::new("hello world")).unwrap();
         assert_eq!(
             cmd,
-            "claude 'hello world' --dangerously-skip-permissions \
+            "claude 'hello world' --permission-mode auto \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
         );
     }
@@ -279,7 +308,7 @@ mod tests {
         let cmd = agent().spawn(Prompt::new("it's a test")).unwrap();
         assert_eq!(
             cmd,
-            "claude 'it'\\''s a test' --dangerously-skip-permissions \
+            "claude 'it'\\''s a test' --permission-mode auto \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
         );
     }
@@ -292,7 +321,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             cmd,
-            "claude 'do work' --dangerously-skip-permissions \
+            "claude 'do work' --permission-mode auto \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*),Bash(rm -rf:*)\""
         );
     }
@@ -305,7 +334,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             cmd,
-            "claude 'work' --dangerously-skip-permissions \
+            "claude 'work' --permission-mode auto \
              --disallowedTools \"Bash(gh pr create:*),Bash(gh pr merge:*)\""
         );
     }
@@ -314,7 +343,7 @@ mod tests {
     fn resume() {
         let cmd = agent().resume(Prompt::new("continue working")).unwrap();
         assert!(cmd.contains("-c 'continue working'"));
-        assert!(cmd.contains("--dangerously-skip-permissions"));
+        assert!(cmd.contains("--permission-mode auto"));
         assert!(!cmd.contains("--model"));
         assert!(cmd.contains("--disallowedTools"));
     }
@@ -330,7 +359,8 @@ mod tests {
                 "claude",
                 "--print",
                 "--no-session-persistence",
-                "--dangerously-skip-permissions",
+                "--permission-mode",
+                "auto",
                 "--allowed-tools=Read,Glob",
                 "review this"
             ]
@@ -349,7 +379,8 @@ mod tests {
                 "claude",
                 "--print",
                 "--no-session-persistence",
-                "--dangerously-skip-permissions",
+                "--permission-mode",
+                "auto",
                 "--model",
                 "opus",
                 "hello"
@@ -368,6 +399,17 @@ mod tests {
     fn from_config_default_model() {
         let a = Agent::from_config("claude", None, &[]).unwrap();
         assert_eq!(a.model(), None);
+    }
+
+    #[test]
+    fn parses_claude_version_output() {
+        assert_eq!(
+            super::parse_version("2.1.304 (Claude Code)\n"),
+            Some((2, 1, 304))
+        );
+        assert_eq!(super::parse_version("garbage"), None);
+        assert!(Some(super::MIN_VERSION) <= super::parse_version("2.1.304"));
+        assert!(Some(super::MIN_VERSION) > super::parse_version("2.1.99"));
     }
 
     #[test]

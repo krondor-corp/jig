@@ -149,7 +149,7 @@ rm -rf ~/.config/jig
 
 **For `jig spawn` (optional):**
 - `tmux` - Terminal multiplexer
-- An AI coding assistant CLI (e.g. `claude`)
+- An AI coding assistant CLI (e.g. `claude` >= 2.1.304, which jig runs in `--permission-mode auto`)
 
 ## License
 
