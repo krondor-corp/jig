@@ -91,9 +91,14 @@ impl AppPaths {
         self.config.join("repos.json")
     }
 
-    /// `~/.config/jig/<repo>/<branch>/` — a worker's event log lives here.
-    pub fn worker_events_dir(&self, repo: &str, branch: &str) -> PathBuf {
+    /// `~/.config/jig/<repo>/<branch>/` — a worker's logs live here.
+    pub fn worker_dir(&self, repo: &str, branch: &str) -> PathBuf {
         self.config.join(repo).join(branch)
+    }
+
+    /// `~/.config/jig/<repo>/<branch>/events.jsonl` — a worker's event log.
+    pub fn worker_events_log(&self, repo: &str, branch: &str) -> PathBuf {
+        self.worker_dir(repo, branch).join("events.jsonl")
     }
 
     // ── state ────────────────────────────────────────────────────
@@ -108,7 +113,7 @@ impl AppPaths {
         self.state_dir().join("daemon.jsonl")
     }
 
-    /// `~/.config/jig/state/notifications.jsonl`
+    /// `~/.config/jig/state/notifications.jsonl` — the notification queue.
     pub fn notifications(&self) -> PathBuf {
         self.state_dir().join("notifications.jsonl")
     }
@@ -123,8 +128,8 @@ impl AppPaths {
         self.state_dir().join("logs")
     }
 
-    /// A new log file: `logs/<YYYYMMDDTHHMMSSZ>.log`. Only processes whose
-    /// `Op::log_sink` is `File` write one.
+    /// `~/.config/jig/state/logs/<YYYYMMDDTHHMMSSZ>.log` — a new session
+    /// (tracing) log. Only processes whose `Op::log_sink` is `File` write one.
     pub fn new_session_log(&self) -> PathBuf {
         let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
         self.logs_dir().join(format!("{ts}.log"))

@@ -23,10 +23,10 @@ fn init_tracing(sink: LogSink, paths: &context::AppPaths) {
     let file = match sink {
         LogSink::Stderr => None,
         LogSink::File => {
-            let path = paths.new_session_log();
-            let file = std::fs::File::create(&path).ok();
+            let log = context::log::Logs::new(paths).new_session();
+            let file = log.create().ok();
             if file.is_some() {
-                context::log::set_session_log(path);
+                context::log::set_session_log(log);
             }
             file
         }

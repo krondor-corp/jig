@@ -14,6 +14,7 @@ use crate::daemon::ipc::{self, IpcError, Liveness, STUCK_ACTOR_SECS};
 use crate::daemon::pidfile::PidFile;
 
 use super::display_path;
+use crate::context::log::Logs;
 use crate::context::AppCtx;
 use crate::context::AppPaths;
 
@@ -176,7 +177,7 @@ fn describe(actor: &ActorActivity, now: i64, ago: &dyn Fn(i64) -> String) -> Str
 
 /// "last stopped 3h ago (normal)", from the lifecycle log, when it is readable.
 fn last_stop(paths: &AppPaths) -> Option<String> {
-    let state = crate::daemon::events::global(paths).reduce().ok()?;
+    let state = Logs::new(paths).daemon_events().reduce().ok()?;
     let stopped_at = state.stopped_at?;
     let ago = (chrono::Utc::now().timestamp() - stopped_at).max(0) as u64;
     Some(format!(

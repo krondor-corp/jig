@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 
 use url::Url;
 
+use crate::context::log::Logs;
 use crate::context::{self, AppConfig, AppPaths, RepoConfig, RepoCtx, RepoEntry};
 use crate::daemon::checks::{self, PrHealth, PrStatus};
-use crate::notify::{NotificationEvent, NotificationQueue, Notifier};
+use crate::notify::{NotificationEvent, Notifier};
 use crate::worker::events::{self, Event, EventKind, TerminalKind, WorkerState};
 use crate::worker::{MuxStatus, WorkerStatus};
 use jig_core::git::{Branch, Worktree};
@@ -73,7 +74,7 @@ impl Actor for MonitorActor {
         let paths = &req.ctx.paths;
         let notifier = Notifier::new(
             global_config.notify.clone(),
-            NotificationQueue::global(paths),
+            Logs::new(paths).notifications(),
         );
 
         // Discover workers
@@ -301,7 +302,7 @@ impl MonitorActor {
                         attempts = failures,
                         "resume exhausted, marking failed"
                     );
-                    let event_log = events::event_log_for_worker(paths, &repo_name, &worker_name);
+                    let event_log = Logs::new(paths).worker_events(&repo_name, &worker_name);
                     let _ = event_log.append(&Event::now(EventKind::Terminal {
                         terminal: TerminalKind::Failed,
                         reason: Some(format!(
@@ -357,7 +358,7 @@ impl MonitorActor {
 
         // Execute actions
         let branch: Branch = state.branch.as_deref().unwrap_or(&worker_name).into();
-        let event_log = events::event_log_for_worker(paths, &repo_name, &worker_name);
+        let event_log = Logs::new(paths).worker_events(&repo_name, &worker_name);
         let prune_targets = self.execute_actions(
             paths,
             &actions,

@@ -294,10 +294,14 @@ impl Watch {
     /// restarted, or we took over hosting) starts a fresh tail.
     fn follow_log(&mut self, path: Option<PathBuf>) {
         let Some(path) = path else { return };
-        if self.log_tailer.as_ref().is_some_and(|t| t.path() == path) {
+        if self
+            .log_tailer
+            .as_ref()
+            .is_some_and(|t| t.log().path() == path)
+        {
             return;
         }
-        self.log_tailer = Some(crate::context::log::LogTailer::from_end(path));
+        self.log_tailer = Some(crate::context::log::LogFile::at(path).follow());
     }
 
     fn quitting(&self) -> bool {

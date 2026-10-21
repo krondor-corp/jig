@@ -9,14 +9,5 @@ mod worker_state;
 pub use schema::{Event, EventKind, EventType, TerminalKind};
 pub use worker_state::WorkerState;
 
-/// Worker event log — wraps the core `EventLog` with a `for_worker` constructor.
+/// A worker's event log. Opened by [`crate::context::log::Logs::worker_events`].
 pub type EventLog = jig_core::EventLog<Event>;
-
-/// A worker's event log: `~/.config/jig/<repo>/<branch>/events.jsonl`
-pub fn event_log_for_worker(
-    paths: &crate::context::AppPaths,
-    repo: &str,
-    branch: &str,
-) -> EventLog {
-    EventLog::new(paths.worker_events_dir(repo, branch).join("events.jsonl"))
-}
