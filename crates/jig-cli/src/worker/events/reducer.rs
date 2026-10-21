@@ -21,7 +21,8 @@ impl ReducibleKind for EventKind {
         state.last_event_at = Some(ts);
 
         // Terminal events are sticky
-        if let EventKind::Terminal { terminal, .. } = kind {
+        if let EventKind::Terminal { terminal, reason } = kind {
+            state.terminal_reason = reason.clone();
             state.status = match terminal {
                 TerminalKind::Merged => WorkerStatus::Merged,
                 TerminalKind::Approved => WorkerStatus::Approved,
@@ -275,6 +276,27 @@ mod tests {
         ];
         let state = reduce(&events, &default_config());
         assert_eq!(state.status, WorkerStatus::Failed);
+    }
+
+    #[test]
+    fn terminal_reason_is_kept() {
+        let events = vec![
+            Event::now(EventKind::Initializing {
+                branch: "main".into(),
+                base: "origin/main".into(),
+                auto: true,
+            }),
+            Event::now(EventKind::Terminal {
+                terminal: TerminalKind::Failed,
+                reason: Some("on_create hook exited with status 1".into()),
+            }),
+        ];
+        let state = reduce(&events, &default_config());
+        assert_eq!(state.status, WorkerStatus::Failed);
+        assert_eq!(
+            state.terminal_reason.as_deref(),
+            Some("on_create hook exited with status 1")
+        );
     }
 
     #[test]

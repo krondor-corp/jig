@@ -38,6 +38,9 @@ pub struct WorkerState {
     pub pr_changes_requested: u32,
     pub pr_bad_commits: Vec<String>,
     pub is_draft: bool,
+    /// Why the worker reached its terminal status, if its log said — for a
+    /// failed setup, the hook's status, output tail and log path.
+    pub terminal_reason: Option<String>,
 
     // ── Runtime (set by tick) ───────────────────────────────────
     pub repo: Option<RepoEntry>,
@@ -86,6 +89,7 @@ impl Default for WorkerState {
             pr_changes_requested: 0,
             pr_bad_commits: Vec::new(),
             is_draft: false,
+            terminal_reason: None,
 
             repo: None,
             name: String::new(),

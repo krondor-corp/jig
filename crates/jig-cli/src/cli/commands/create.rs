@@ -95,7 +95,7 @@ impl Op for Create {
             repo.config.worktree.on_create()
         };
         let wt = Worktree::create(&git_repo, &branch, &base_branch)?;
-        Worker::from(&wt).setup(&copy_files, on_create)?;
+        Worker::from(&wt).setup(&ctx.paths, &copy_files, on_create)?;
 
         let repo_name = repo.name();
         let event_log = ctx.logs().worker_events(&repo_name, &self.branch);

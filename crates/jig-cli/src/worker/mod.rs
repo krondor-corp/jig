@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
-use crate::context::log::Logs;
+use crate::context::log::{LogFile, Logs};
 use crate::context::AppPaths;
 use events::{Event, EventKind, TerminalKind, WorkerState};
 use jig_core::agents::Agent;
@@ -57,6 +57,9 @@ pub enum WorkerError {
     EventLog(#[from] jig_core::events::EventLogError),
 }
 
+/// How many lines of `setup.log` a setup failure quotes.
+const SETUP_EXCERPT_LINES: usize = 20;
+
 /// Why [`Worker::setup`] couldn't make a fresh worktree ready to work in.
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
@@ -67,12 +70,23 @@ pub enum SetupError {
         source: std::io::Error,
     },
 
-    /// `detail` is [`jig_core::exec::Output::failure`].
-    #[error("{label} failed: {detail}")]
-    Hook { label: String, detail: String },
+    #[error("failed to open {log}: {source}")]
+    Log {
+        log: LogFile,
+        #[source]
+        source: std::io::Error,
+    },
 
-    /// The hook couldn't be started, or outran its deadline. `exec` already
-    /// names it and says how long it had.
+    /// The hook ran and didn't succeed — exited non-zero, was killed, or
+    /// outran its deadline. `excerpt` is [`LogFile::excerpt`] of `setup.log`.
+    #[error("{label} {outcome}:\n{excerpt}")]
+    Hook {
+        label: String,
+        outcome: String,
+        excerpt: String,
+    },
+
+    /// The hook couldn't be started at all.
     #[error(transparent)]
     Exec(#[from] ExecError),
 }
@@ -167,6 +181,11 @@ impl Worker {
     }
 
     pub fn unregister(&self, paths: &AppPaths) -> Result<(), WorkerError> {
+        // First, so removing the event log can also remove the now-empty
+        // directory.
+        let _ = Logs::new(paths)
+            .setup(&self.repo_name(), &self.branch)
+            .remove();
         let _ = self.log(paths).remove();
         Ok(())
     }
@@ -267,7 +286,7 @@ impl Worker {
             issue_ref: issue_ref.clone(),
         };
         worker
-            .setup(copy_files, on_create)
+            .setup(paths, copy_files, on_create)
             .map_err(|e| failed(e.into()))?;
 
         let issue = issue_ref.unwrap_or_else(|| IssueRef::new(branch_name.clone()));
@@ -290,7 +309,15 @@ impl Worker {
     /// NOTE(canonical): this is the one place worktree setup happens — `jig
     /// spawn`, the daemon's auto-spawn and `jig create` all come through here.
     /// **Do not** copy files or run `on_create` anywhere else.
-    pub fn setup(&self, copy_files: &[PathBuf], on_create: Option<Exec>) -> Result<(), SetupError> {
+    ///
+    /// The hook's stdout and stderr go to the worker's `setup.log`; a failure
+    /// quotes the end of it and says where it is.
+    pub fn setup(
+        &self,
+        paths: &AppPaths,
+        copy_files: &[PathBuf],
+        on_create: Option<Exec>,
+    ) -> Result<(), SetupError> {
         let wt_path: &Path = &self.path;
         let repo_root = self.repo_root().unwrap_or(wt_path);
 
@@ -312,18 +339,35 @@ impl Worker {
             }
         }
 
-        if let Some(hook) = on_create {
-            let label = hook.label().to_string();
-            let output = hook.in_dir(wt_path).run()?;
-            if !output.success() {
-                return Err(SetupError::Hook {
-                    label,
-                    detail: output.failure(),
-                });
-            }
-        }
+        let log = Logs::new(paths).setup(&self.repo_name(), &self.branch);
+        let Some(hook) = on_create else {
+            // So a log from an earlier setup of this branch can't be
+            // mistaken for this one's.
+            let _ = log.remove();
+            return Ok(());
+        };
 
-        Ok(())
+        let label = hook.label().to_string();
+        let file = log.create().map_err(|source| SetupError::Log {
+            log: log.clone(),
+            source,
+        })?;
+        let outcome = match hook.in_dir(wt_path).output_to(file).run() {
+            Ok(output) if output.success() => return Ok(()),
+            Ok(output) => match output.status.code() {
+                Some(code) => format!("exited with status {code}"),
+                None => "was killed by a signal".to_string(),
+            },
+            Err(ExecError::TimedOut { timeout, .. }) => {
+                format!("timed out after {timeout} and was killed")
+            }
+            Err(e) => return Err(e.into()),
+        };
+        Err(SetupError::Hook {
+            label,
+            outcome,
+            excerpt: log.excerpt(SETUP_EXCERPT_LINES),
+        })
     }
 
     pub fn resume(

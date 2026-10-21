@@ -668,7 +668,10 @@ fn dispatch_actions(
             event: NotificationEvent::NeedsIntervention {
                 repo: repo_name.to_string(),
                 worker: worker_name.to_string(),
-                reason: "Worker failed".to_string(),
+                reason: new_state
+                    .terminal_reason
+                    .clone()
+                    .unwrap_or_else(|| "Worker failed".to_string()),
             },
         });
     }
@@ -884,7 +887,27 @@ mod tests {
         let actions = dispatch_actions("repo", "test", &old, &new, 300);
         assert_eq!(actions.len(), 1);
         assert!(
-            matches!(&actions[0], DispatchAction::Notify { event: NotificationEvent::NeedsIntervention { reason, .. } } if reason.contains("failed"))
+            matches!(&actions[0], DispatchAction::Notify { event: NotificationEvent::NeedsIntervention { reason, .. } } if reason == "Worker failed")
+        );
+    }
+
+    #[test]
+    fn failed_notify_carries_the_terminal_reason() {
+        let old = WorkerState {
+            status: WorkerStatus::Initializing,
+            ..Default::default()
+        };
+        let reason = "on_create hook exited with status 1:\n  ERR_PNPM_OUTDATED_LOCKFILE\n  (full log: /x/setup.log)";
+        let new = WorkerState {
+            status: WorkerStatus::Failed,
+            terminal_reason: Some(reason.to_string()),
+            ..Default::default()
+        };
+
+        let actions = dispatch_actions("repo", "test", &old, &new, 300);
+        assert_eq!(actions.len(), 1);
+        assert!(
+            matches!(&actions[0], DispatchAction::Notify { event: NotificationEvent::NeedsIntervention { reason: r, .. } } if r == reason)
         );
     }
 

@@ -12,6 +12,7 @@
 
 use std::ffi::OsStr;
 use std::fmt;
+use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -229,6 +230,7 @@ pub struct Output {
     pub status: ExitStatus,
     /// Empty unless the command was built with [`Exec::capturing`].
     pub stdout: String,
+    /// Empty if the command was built with [`Exec::output_to`].
     pub stderr: String,
 }
 
@@ -261,6 +263,7 @@ pub struct Exec {
     timeout: Timeout,
     stdin: Option<Vec<u8>>,
     capture_stdout: bool,
+    output: Option<File>,
 }
 
 impl Exec {
@@ -280,6 +283,7 @@ impl Exec {
             timeout: Timeout::default(),
             stdin: None,
             capture_stdout: false,
+            output: None,
         }
     }
 
@@ -322,20 +326,38 @@ impl Exec {
         self
     }
 
+    /// Send stdout and stderr, interleaved, to `file` instead — for output
+    /// someone may need to read after the fact. Overrides [`Exec::capturing`];
+    /// [`Output`] and [`ExecError::TimedOut`] then carry none of it.
+    pub fn output_to(mut self, file: File) -> Self {
+        self.output = Some(file);
+        self
+    }
+
     /// Run it, killing it if it outruns its deadline.
     pub fn run(mut self) -> Result<Output, ExecError> {
+        // Both streams share one file descriptor, so their lines interleave
+        // in the order they were written.
+        let (stdout, stderr) = match self.output.take() {
+            Some(file) => {
+                let dup = file.try_clone().map_err(|source| ExecError::Spawn {
+                    label: self.label.clone(),
+                    source,
+                })?;
+                (Stdio::from(dup), Stdio::from(file))
+            }
+            None if self.capture_stdout => (Stdio::piped(), Stdio::piped()),
+            None => (Stdio::null(), Stdio::piped()),
+        };
+
         self.command
             .stdin(if self.stdin.is_some() {
                 Stdio::piped()
             } else {
                 Stdio::null()
             })
-            .stdout(if self.capture_stdout {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stderr(Stdio::piped())
+            .stdout(stdout)
+            .stderr(stderr)
             // Its own process group, so a timeout can take the whole tree
             // down. See `kill_group`.
             .process_group(0);
@@ -646,6 +668,39 @@ timeout = "none"
             err.to_string().contains("definitely-not-a-real-binary-xyz"),
             "{err}"
         );
+    }
+
+    // ── Output to a file ──
+
+    #[test]
+    fn output_to_gets_both_streams_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.log");
+        let out = sh("echo one; echo two >&2; echo three; exit 1")
+            .output_to(File::create(&path).unwrap())
+            .capturing()
+            .run()
+            .unwrap();
+
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "one\ntwo\nthree\n");
+        assert_eq!((out.stdout.as_str(), out.stderr.as_str()), ("", ""));
+    }
+
+    #[test]
+    fn output_to_still_kills_at_the_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.log");
+        let start = Instant::now();
+        let err = Exec::shell("echo 'resolving...'; sleep 60 & wait")
+            .timeout(Timeout::secs(1))
+            .output_to(File::create(&path).unwrap())
+            .run()
+            .unwrap_err();
+
+        assert!(matches!(err, ExecError::TimedOut { .. }), "{err:?}");
+        assert!(start.elapsed() < Duration::from_secs(30));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "resolving...\n");
     }
 
     #[test]
