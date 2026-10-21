@@ -5,10 +5,11 @@ use std::fmt;
 use clap::{Args, Subcommand};
 
 use crate::context::{AppConfig, AppCtx, NotifyConfig};
-use crate::notify::{NotificationEvent, NotificationQueue, Notifier};
+use crate::notify::{NotificationEvent, Notifier};
 
 use crate::cli::op::Op;
 use crate::cli::ui;
+use crate::context::log::Logs;
 use crate::context::AppPaths;
 
 /// Manage and inspect notifications
@@ -224,7 +225,7 @@ fn run_doctor(paths: &AppPaths) -> Result<NotifyOutput, NotifyError> {
         Err(e) => (NotifyConfig::default(), Some(e.to_string())),
     };
 
-    let queue = NotificationQueue::global(paths);
+    let queue = Logs::new(paths).notifications();
     let queue_path_str = queue.path().display().to_string();
     let queue_exists = queue.exists();
 
@@ -298,7 +299,7 @@ fn run_doctor(paths: &AppPaths) -> Result<NotifyOutput, NotifyError> {
 
 fn run_test(paths: &AppPaths) -> Result<NotifyOutput, NotifyError> {
     let config = AppConfig::load(paths)?;
-    let queue = NotificationQueue::global(paths);
+    let queue = Logs::new(paths).notifications();
     let notifier = Notifier::new(config.notify, queue);
 
     let event = NotificationEvent::NeedsIntervention {
@@ -314,7 +315,7 @@ fn run_test(paths: &AppPaths) -> Result<NotifyOutput, NotifyError> {
 }
 
 fn run_tail(paths: &AppPaths, n: usize) -> Result<NotifyOutput, NotifyError> {
-    let queue = NotificationQueue::global(paths);
+    let queue = Logs::new(paths).notifications();
     let events = queue.tail(n)?;
 
     let lines: Vec<String> = events
@@ -331,7 +332,7 @@ fn run_tail(paths: &AppPaths, n: usize) -> Result<NotifyOutput, NotifyError> {
 
 fn run_send(paths: &AppPaths, kind: SendKind) -> Result<NotifyOutput, NotifyError> {
     let config = AppConfig::load(paths)?;
-    let queue = NotificationQueue::global(paths);
+    let queue = Logs::new(paths).notifications();
     let notifier = Notifier::new(config.notify, queue);
 
     let event = kind.into_event();

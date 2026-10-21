@@ -6,12 +6,13 @@ use clap::Args;
 use comfy_table::{Cell, CellAlignment, Color};
 
 use crate::context::{AppConfig, AppCtx, Ctx, RepoCtx};
-use crate::worker::events::{self, WorkerState};
+use crate::worker::events::WorkerState;
 use crate::worker::WorkerStatus;
 use jig_core::git::{Branch, Repo};
 
 use crate::cli::op::Op;
 use crate::cli::ui;
+use crate::context::log::Logs;
 use crate::context::AppPaths;
 
 /// List worktrees
@@ -213,7 +214,7 @@ fn worktree_event_status(
     repo_name: &str,
     name: &str,
 ) -> Option<WorkerStatus> {
-    let event_log = events::event_log_for_worker(paths, repo_name, name);
+    let event_log = Logs::new(paths).worker_events(repo_name, name);
     if !event_log.exists() {
         return None;
     }

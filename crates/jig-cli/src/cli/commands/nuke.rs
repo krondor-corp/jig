@@ -6,7 +6,6 @@ use jig_core::mux::Mux;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::log;
 use crate::context::AppPaths;
 
 /// Nuke all workers and state for this repo (keeps config)
@@ -45,7 +44,7 @@ impl Op for Nuke {
             nuke_repo(&paths, repo, ctx.config.mux)?;
         }
 
-        if log::clear(&paths) > 0 {
+        if ctx.logs().clear() > 0 {
             ui::success("Cleared daemon logs");
         }
 

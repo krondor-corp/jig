@@ -64,7 +64,7 @@ impl Op for Create {
 
 - **jig-cli modules**:
   - `cli/` — CLI framework: `op.rs` (Op trait + command_enum! macro), `ui/` (rendering primitives: `colors.rs`, `output.rs`), `commands/` (one file/dir per command)
-  - `context/` — What a command runs against: `AppPaths`, `AppCtx`, `Ctx`, `RepoCtx`, config loading
+  - `context/` — What a command runs against: `AppPaths`, `AppCtx`, `Ctx`, `RepoCtx`, config loading, `Logs`
   - `worker/` — Worker state, lifecycle, events
   - `daemon/` — Background daemon with actor threads
   - `hooks/` — Git and agent hook management
@@ -197,6 +197,8 @@ Key conventions:
   - `agent_state(&self, name) -> Option<AgentState>` lets a backend report live `idle/working/blocked/done` classification; default `None` (tmux has no such signal)
 
 - **jig's own files**: `AppPaths` (`context/paths.rs`) is resolved from `XDG_CONFIG_HOME` / `XDG_RUNTIME_DIR` once, in `main`, and reaches commands on the `AppCtx` passed to `Op::build_context(&self, app)`, then through the context structs (`ctx.paths`). Anything that reads or writes jig state takes `&AppPaths` — don't read XDG variables anywhere else.
+
+- **Logs**: every log jig keeps has its path on `AppPaths` and is opened through `context::log::Logs` — `ctx.logs()` / `app.logs()`, or `Logs::new(&paths)` in code that was only handed paths. Text logs (session logs, hook output) come back as a `LogFile` (`create`, `tail`, `follow`, `remove`); structured JSONL logs (worker events, daemon lifecycle, notifications) come back as their own types (`EventLog`, `NotificationQueue`). Don't build a log path or open a log file anywhere else — add a method to `Logs`.
 
 - **Path handling**: Use `PathBuf` for owned paths, `&Path` for references
   - Canonicalize paths before displaying to users

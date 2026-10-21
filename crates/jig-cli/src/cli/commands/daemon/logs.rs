@@ -1,14 +1,14 @@
 //! `jig daemon logs` — print (and follow) the daemon's tracing log.
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Args;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::log::{tail_lines, LogTailer};
+use crate::context::log::LogFile;
 
 use super::{current_daemon_log, display_path};
 use crate::context::AppCtx;
@@ -58,31 +58,33 @@ impl Op for Logs {
     }
 
     fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
-        let path = current_daemon_log(&paths).ok_or(LogsError::NoLog)?;
+        let log = current_daemon_log(&paths).ok_or(LogsError::NoLog)?;
         if self.path {
-            return Ok(LogsOutput(path.display().to_string()));
+            return Ok(LogsOutput(log.to_string()));
         }
 
-        let lines = tail_lines(&path, self.lines).map_err(|e| LogsError::Read(path.clone(), e))?;
+        let lines = log
+            .tail(self.lines)
+            .map_err(|e| LogsError::Read(log.path().to_path_buf(), e))?;
         if !self.follow {
             return Ok(LogsOutput(lines.join("\n")));
         }
 
-        ui::progress(&format!("following {}", display_path(&path)));
-        let _ = follow(&paths, path, lines);
+        ui::progress(&format!("following {}", display_path(log.path())));
+        let _ = follow(&paths, &log, lines);
         Ok(LogsOutput::default())
     }
 }
 
 /// Stream lines until interrupted or stdout closes (e.g. piped into `head`).
-fn follow(paths: &AppPaths, path: PathBuf, backlog: Vec<String>) -> std::io::Result<()> {
+fn follow(paths: &AppPaths, log: &LogFile, backlog: Vec<String>) -> std::io::Result<()> {
     let mut out = std::io::stdout().lock();
     for line in backlog {
         writeln!(out, "{line}")?;
     }
     out.flush()?;
 
-    let mut tailer = LogTailer::from_end(path);
+    let mut tailer = log.follow();
     loop {
         for line in tailer.poll(usize::MAX) {
             writeln!(out, "{line}")?;
@@ -90,12 +92,12 @@ fn follow(paths: &AppPaths, path: PathBuf, backlog: Vec<String>) -> std::io::Res
         out.flush()?;
 
         // A restarted daemon writes a fresh log; move over to it.
-        if let Some(newer) = current_daemon_log(paths).filter(|p| is_newer(p, tailer.path())) {
+        if let Some(newer) = current_daemon_log(paths).filter(|l| is_newer(l, tailer.log())) {
             ui::progress(&format!(
                 "daemon restarted — following {}",
-                display_path(&newer)
+                display_path(newer.path())
             ));
-            tailer = LogTailer::from_start(newer);
+            tailer = newer.follow_from_start();
             continue;
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -103,6 +105,6 @@ fn follow(paths: &AppPaths, path: PathBuf, backlog: Vec<String>) -> std::io::Res
 }
 
 /// Daemon log names start with a sortable timestamp.
-fn is_newer(candidate: &Path, current: &Path) -> bool {
-    candidate.file_name() > current.file_name()
+fn is_newer(candidate: &LogFile, current: &LogFile) -> bool {
+    candidate.path().file_name() > current.path().file_name()
 }

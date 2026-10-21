@@ -4,8 +4,6 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
-use crate::context::AppPaths;
-
 use super::{Notification, NotificationEvent};
 
 /// Append-only notification queue backed by a JSONL file.
@@ -14,12 +12,8 @@ pub struct NotificationQueue {
 }
 
 impl NotificationQueue {
-    /// Queue at the global state dir (`~/.config/jig/state/notifications.jsonl`).
-    pub fn global(paths: &AppPaths) -> Self {
-        Self::new(paths.notifications())
-    }
-
-    /// Queue at a specific path (useful for testing).
+    /// Queue at a specific path. jig's own queue comes from
+    /// [`crate::context::log::Logs::notifications`]; this is for tests.
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }

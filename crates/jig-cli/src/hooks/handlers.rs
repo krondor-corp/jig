@@ -5,8 +5,9 @@
 
 use std::path::Path;
 
+use crate::context::log::Logs;
 use crate::context::AppPaths;
-use crate::worker::events::{self, Event, EventKind};
+use crate::worker::events::{Event, EventKind};
 use jig_core::git::conventional::ValidationConfig;
 use jig_core::git::Worktree;
 
@@ -22,7 +23,7 @@ pub fn handle_post_commit(paths: &AppPaths, repo_path: &Path) -> Result<(), supe
     let worker_name = wt.branch_name().to_string();
     let sha = wt.head_sha().unwrap_or_default();
 
-    let log = events::event_log_for_worker(paths, &repo_name, &worker_name);
+    let log = Logs::new(paths).worker_events(&repo_name, &worker_name);
     log.append(&Event::now(EventKind::Commit {
         sha,
         repo: repo_name,
@@ -41,7 +42,7 @@ pub fn handle_post_merge(paths: &AppPaths, repo_path: &Path) -> Result<(), super
     let worker_name = wt.branch_name().to_string();
     let sha = wt.head_sha().unwrap_or_default();
 
-    let log = events::event_log_for_worker(paths, &repo_name, &worker_name);
+    let log = Logs::new(paths).worker_events(&repo_name, &worker_name);
     log.append(&Event::now(EventKind::Push {
         sha,
         repo: repo_name,

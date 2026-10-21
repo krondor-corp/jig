@@ -6,11 +6,7 @@ mod schema;
 pub use reducer::DaemonState;
 pub use schema::{started, stopped, Event, EventKind};
 
-use crate::context::AppPaths;
 use jig_core::EventLog;
 
+/// Opened by [`crate::context::log::Logs::daemon_events`].
 pub type DaemonLog = EventLog<Event>;
-
-pub fn global(paths: &AppPaths) -> DaemonLog {
-    EventLog::new(paths.daemon_lifecycle_log())
-}

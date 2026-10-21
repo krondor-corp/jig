@@ -3,7 +3,7 @@
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::worker::events::{self, Event, EventKind};
+use crate::worker::events::{Event, EventKind};
 use jig_core::git::Branch;
 use jig_core::Worktree;
 
@@ -94,7 +94,7 @@ impl Op for Create {
         let wt = Worktree::create(&git_repo, &branch, &base_branch, &copy_files, on_create)?;
 
         let repo_name = repo.name();
-        let event_log = events::event_log_for_worker(&ctx.paths, &repo_name, &self.branch);
+        let event_log = ctx.logs().worker_events(&repo_name, &self.branch);
         if let Err(e) = event_log.append(&Event::now(EventKind::Create {
             branch: branch.to_string(),
         })) {

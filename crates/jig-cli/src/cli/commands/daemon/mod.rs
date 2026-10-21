@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 use crate::cli::op::Op;
+use crate::context::log::{LogFile, Logs};
 use crate::context::AppCtx;
 use crate::context::AppPaths;
 use crate::daemon::ipc;
@@ -70,11 +71,12 @@ impl Op for Daemon {
 
 /// The running daemon's log, else the one the last daemon run recorded in
 /// its `Started` event.
-fn current_daemon_log(paths: &AppPaths) -> Option<PathBuf> {
+fn current_daemon_log(paths: &AppPaths) -> Option<LogFile> {
     let running = ipc::ping(paths).ok().flatten().and_then(|info| info.log);
     running
-        .or_else(|| crate::daemon::events::global(paths).reduce().ok()?.log)
-        .filter(|p| p.exists())
+        .or_else(|| Logs::new(paths).daemon_events().reduce().ok()?.log)
+        .map(LogFile::at)
+        .filter(LogFile::exists)
 }
 
 /// Display a path with the home directory collapsed to `~`.

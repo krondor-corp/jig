@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::context::log::Logs;
 use crate::context::{AppConfig, AppPaths, ContextError, Ctx, RepoConfig, RepoEntry, RepoRegistry};
 
 #[derive(Debug, thiserror::Error)]
@@ -152,7 +153,7 @@ impl Daemon {
             poll_deadline: Arc::new(AtomicI64::new(started_at)),
             started_at,
             tick_interval: cfg.config.tick_interval,
-            log: crate::context::log::session_log().map(Into::into),
+            log: crate::context::log::session_log().map(|l| l.path().to_path_buf()),
         };
 
         Ok(Self {
@@ -321,7 +322,7 @@ fn try_resume_worker(
 
 /// Log the Started lifecycle event, noting if the previous run crashed.
 fn log_startup(paths: &AppPaths) {
-    let log = events::global(paths);
+    let log = Logs::new(paths).daemon_events();
 
     match log.reduce() {
         Ok(state) => {
@@ -339,7 +340,7 @@ fn log_startup(paths: &AppPaths) {
         }
     }
 
-    let session_log = crate::context::log::session_log().map(Into::into);
+    let session_log = crate::context::log::session_log().map(|l| l.path().to_path_buf());
     if let Err(e) = log.append(&events::started(session_log)) {
         tracing::warn!("failed to write daemon Started event: {}", e);
     }
@@ -387,7 +388,10 @@ fn recover_orphans(paths: &AppPaths, global_config: &AppConfig, registry: &RepoR
 
 /// Log a graceful shutdown event.
 fn log_shutdown(paths: &AppPaths, reason: &str) {
-    if let Err(e) = events::global(paths).append(&events::stopped(reason)) {
+    if let Err(e) = Logs::new(paths)
+        .daemon_events()
+        .append(&events::stopped(reason))
+    {
         tracing::warn!("failed to write daemon Stopped event: {}", e);
     }
 }

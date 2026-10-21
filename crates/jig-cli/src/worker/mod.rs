@@ -13,6 +13,7 @@ use std::path::Path;
 
 use uuid::Uuid;
 
+use crate::context::log::Logs;
 use crate::context::AppPaths;
 use events::{Event, EventKind, TerminalKind, WorkerState};
 use jig_core::agents::Agent;
@@ -112,7 +113,7 @@ impl Worker {
 
     /// This worker's event log.
     pub fn log(&self, paths: &AppPaths) -> events::EventLog {
-        events::event_log_for_worker(paths, &self.repo_name(), &self.branch)
+        Logs::new(paths).worker_events(&self.repo_name(), &self.branch)
     }
 
     pub fn status(&self, paths: &AppPaths) -> Option<WorkerStatus> {
@@ -219,7 +220,7 @@ impl Worker {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        let event_log = events::event_log_for_worker(paths, &repo_name, &branch_name);
+        let event_log = Logs::new(paths).worker_events(&repo_name, &branch_name);
         event_log.reset()?;
 
         let _ = event_log.append(&Event::now(EventKind::Initializing {

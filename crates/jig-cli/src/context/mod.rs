@@ -246,6 +246,11 @@ impl AppCtx {
         }
     }
 
+    /// Every log jig keeps — see [`log::Logs`].
+    pub fn logs(&self) -> log::Logs<'_> {
+        log::Logs::new(&self.paths)
+    }
+
     /// Process-wide state, set once.
     ///
     /// Everything here writes a global — a C library's settings, or a static
@@ -276,6 +281,11 @@ pub struct Ctx {
 }
 
 impl Ctx {
+    /// Every log jig keeps — see [`log::Logs`].
+    pub fn logs(&self) -> log::Logs<'_> {
+        log::Logs::new(&self.paths)
+    }
+
     /// The repo containing the current directory.
     ///
     /// Records it in the global registry, so `-g` commands and the daemon

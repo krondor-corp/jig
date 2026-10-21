@@ -3,6 +3,7 @@
 use std::io::Write;
 
 use crate::common::Sandbox;
+use jig_cli::context::log::Logs;
 use jig_cli::daemon::events;
 
 /// A line in a shape this build doesn't write — seen on a real machine —
@@ -10,7 +11,8 @@ use jig_cli::daemon::events;
 #[test]
 fn a_foreign_line_mid_log_still_reduces() {
     let sandbox = Sandbox::new();
-    let log = events::global(&sandbox.paths());
+    let paths = sandbox.paths();
+    let log = Logs::new(&paths).daemon_events();
 
     log.append(&events::started(None)).unwrap();
     let mut file = std::fs::OpenOptions::new()
