@@ -290,6 +290,10 @@ impl Exec {
         self
     }
 
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
     pub fn timeout(mut self, timeout: Timeout) -> Self {
         self.timeout = timeout;
         self

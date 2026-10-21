@@ -8,4 +8,5 @@ mod commit;
 mod init;
 mod multi_repo;
 mod notify;
+mod setup;
 mod startup;

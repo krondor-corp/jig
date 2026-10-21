@@ -4,6 +4,7 @@ use clap::Args;
 use std::path::PathBuf;
 
 use crate::worker::events::{Event, EventKind};
+use crate::worker::{SetupError, Worker};
 use jig_core::git::Branch;
 use jig_core::Worktree;
 
@@ -62,6 +63,8 @@ pub enum CreateError {
     #[error(transparent)]
     Git(#[from] jig_core::GitError),
     #[error(transparent)]
+    Setup(#[from] SetupError),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
 }
 
@@ -91,7 +94,8 @@ impl Op for Create {
         } else {
             repo.config.worktree.on_create()
         };
-        let wt = Worktree::create(&git_repo, &branch, &base_branch, &copy_files, on_create)?;
+        let wt = Worktree::create(&git_repo, &branch, &base_branch)?;
+        Worker::from(&wt).setup(&copy_files, on_create)?;
 
         let repo_name = repo.name();
         let event_log = ctx.logs().worker_events(&repo_name, &self.branch);

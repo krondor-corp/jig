@@ -70,7 +70,7 @@ impl WorktreeConfig {
         Some(self.on_create.as_ref()?.exec("on_create hook"))
     }
 
-    /// The `copy` entries as paths, for [`jig_core::Worktree::create`].
+    /// The `copy` entries as paths, for [`crate::worker::Worker::setup`].
     ///
     /// Relative to the repo root; resolved by the copier, not here.
     pub fn copy_paths(&self) -> Vec<PathBuf> {

@@ -8,7 +8,6 @@ use super::branch::Branch;
 use super::diff::{Diff, Stats as DiffStats};
 use super::error::{GitError, Result};
 use super::Repo;
-use crate::exec::Exec;
 
 /// Lightweight serializable reference to a worktree on disk.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -81,39 +80,14 @@ impl Worktree {
         Ok(Self { repo, name })
     }
 
-    /// Create a git worktree on disk: ensures `.jig` is git-excluded,
-    /// creates the worktree, copies files, and runs the on-create hook.
-    pub fn create(
-        repo: &Repo,
-        branch: &Branch,
-        base: &Branch,
-        copy_files: &[PathBuf],
-        on_create: Option<Exec>,
-    ) -> Result<Self> {
+    /// Create a git worktree on disk, with `.jig` git-excluded.
+    ///
+    /// Git only. Making it ready to work in (copied files, the `on_create`
+    /// hook) is the worker's job — see `Worker::setup` in jig-cli.
+    pub fn create(repo: &Repo, branch: &Branch, base: &Branch) -> Result<Self> {
         crate::git::ensure_excluded(&repo.common_dir(), super::WORKTREES_DIR)?;
         let path = repo.create_worktree(branch, base)?;
-        let wt = Self::open(&path)?;
-
-        let repo_root = repo.clone_path();
-        for file in copy_files {
-            let src = repo_root.join(file);
-            let dst = wt.path().join(file);
-            if src.exists() {
-                if let Some(parent) = dst.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                std::fs::copy(&src, &dst)?;
-            }
-        }
-
-        if let Some(hook) = on_create {
-            let output = hook.in_dir(wt.path()).run()?;
-            if !output.success() {
-                return Err(GitError::HookFailed(output.failure()));
-            }
-        }
-
-        Ok(wt)
+        Self::open(&path)
     }
 
     pub fn as_ref(&self) -> WorktreeRef {

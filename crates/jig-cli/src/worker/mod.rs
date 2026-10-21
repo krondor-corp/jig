@@ -9,7 +9,7 @@ mod status;
 
 pub use status::{MuxStatus, WorkerStatus};
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
@@ -17,7 +17,7 @@ use crate::context::log::Logs;
 use crate::context::AppPaths;
 use events::{Event, EventKind, TerminalKind, WorkerState};
 use jig_core::agents::Agent;
-use jig_core::exec::Exec;
+use jig_core::exec::{Exec, ExecError};
 use jig_core::git::{Branch, Repo, Worktree, WorktreeRef};
 
 use jig_core::issues::issue::IssueRef;
@@ -36,6 +36,9 @@ pub enum WorkerError {
     SetupFailed { branch: String, reason: String },
 
     #[error(transparent)]
+    Setup(#[from] SetupError),
+
+    #[error(transparent)]
     Mux(#[from] jig_core::mux::MuxError),
 
     #[error(transparent)]
@@ -52,6 +55,26 @@ pub enum WorkerError {
 
     #[error(transparent)]
     EventLog(#[from] jig_core::events::EventLogError),
+}
+
+/// Why [`Worker::setup`] couldn't make a fresh worktree ready to work in.
+#[derive(Debug, thiserror::Error)]
+pub enum SetupError {
+    #[error("failed to copy {} into the worktree: {source}", .path.display())]
+    Copy {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// `detail` is [`jig_core::exec::Output::failure`].
+    #[error("{label} failed: {detail}")]
+    Hook { label: String, detail: String },
+
+    /// The hook couldn't be started, or outran its deadline. `exec` already
+    /// names it and says how long it had.
+    #[error(transparent)]
+    Exec(#[from] ExecError),
 }
 
 /// A Worker is a Claude Code session in an isolated git worktree.
@@ -160,22 +183,19 @@ impl Worker {
     }
 
     pub fn repo_name(&self) -> String {
+        self.repo_root()
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    /// The main checkout this worker's worktree hangs off: the parent of the
+    /// `.jig/` directory above it.
+    fn repo_root(&self) -> Option<&Path> {
         let path: &Path = &self.path;
-        for ancestor in path.ancestors() {
-            if ancestor
-                .file_name()
-                .map(|n| n == crate::context::JIG_DIR)
-                .unwrap_or(false)
-            {
-                if let Some(root) = ancestor.parent() {
-                    return root
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-                }
-            }
-        }
-        "unknown".to_string()
+        path.ancestors()
+            .find(|a| a.file_name().is_some_and(|n| n == crate::context::JIG_DIR))
+            .and_then(Path::parent)
     }
 
     // ── Mux operations ─────────────────────────────────────────────
@@ -208,7 +228,7 @@ impl Worker {
         prompt: Prompt,
         auto: bool,
         issue_ref: Option<IssueRef>,
-        copy_files: &[std::path::PathBuf],
+        copy_files: &[PathBuf],
         on_create: Option<Exec>,
         mux: &dyn Mux,
     ) -> Result<Self, WorkerError> {
@@ -229,38 +249,81 @@ impl Worker {
             auto,
         }));
 
-        let wt = match Worktree::create(repo, branch, base, copy_files, on_create) {
-            Ok(wt) => wt,
-            Err(e) => {
-                let _ = event_log.append(&Event::now(EventKind::Terminal {
-                    terminal: TerminalKind::Failed,
-                    reason: Some(e.to_string()),
-                }));
-                return Err(e.into());
-            }
+        // Recorded so `jig attach`, `jig list` and the daemon's
+        // needs_intervention alert can say why.
+        let failed = |e: WorkerError| {
+            let _ = event_log.append(&Event::now(EventKind::Terminal {
+                terminal: TerminalKind::Failed,
+                reason: Some(e.to_string()),
+            }));
+            e
         };
 
-        let issue = issue_ref
-            .clone()
-            .unwrap_or_else(|| IssueRef::new(branch_name.clone()));
+        let wt = Worktree::create(repo, branch, base).map_err(|e| failed(e.into()))?;
+        let worker = Self {
+            id: Uuid::new_v4(),
+            branch: wt.branch_name(),
+            path: wt.as_ref(),
+            issue_ref: issue_ref.clone(),
+        };
+        worker
+            .setup(copy_files, on_create)
+            .map_err(|e| failed(e.into()))?;
+
+        let issue = issue_ref.unwrap_or_else(|| IssueRef::new(branch_name.clone()));
         let _ = event_log.append(&Event::now(EventKind::Spawn {
             branch: branch_name,
             repo: repo_name,
             issue,
         }));
 
-        let worker = Self {
-            id: Uuid::new_v4(),
-            branch: wt.branch_name(),
-            path: wt.as_ref(),
-            issue_ref,
-        };
-
         mux.create_window(&worker.branch, &worker.path)?;
         let cmd = agent.spawn(prompt)?;
         mux.send_keys(&worker.branch, &[&cmd, "Enter"])?;
 
         Ok(worker)
+    }
+
+    /// Make a freshly created worktree ready to work in: copy the configured
+    /// files over from the main checkout, then run the `on_create` hook.
+    ///
+    /// NOTE(canonical): this is the one place worktree setup happens — `jig
+    /// spawn`, the daemon's auto-spawn and `jig create` all come through here.
+    /// **Do not** copy files or run `on_create` anywhere else.
+    pub fn setup(&self, copy_files: &[PathBuf], on_create: Option<Exec>) -> Result<(), SetupError> {
+        let wt_path: &Path = &self.path;
+        let repo_root = self.repo_root().unwrap_or(wt_path);
+
+        for file in copy_files {
+            let src = repo_root.join(file);
+            let dst = wt_path.join(file);
+            if src.exists() {
+                let copy = || -> std::io::Result<()> {
+                    if let Some(parent) = dst.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::copy(&src, &dst)?;
+                    Ok(())
+                };
+                copy().map_err(|source| SetupError::Copy {
+                    path: file.clone(),
+                    source,
+                })?;
+            }
+        }
+
+        if let Some(hook) = on_create {
+            let label = hook.label().to_string();
+            let output = hook.in_dir(wt_path).run()?;
+            if !output.success() {
+                return Err(SetupError::Hook {
+                    label,
+                    detail: output.failure(),
+                });
+            }
+        }
+
+        Ok(())
     }
 
     pub fn resume(
