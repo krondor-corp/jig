@@ -157,7 +157,7 @@ impl MonitorActor {
         let repo_name = worker.repo_name();
 
         // 1. Reduce event log
-        let log = worker.log(&app.paths);
+        let log = worker.event_log(&app.paths);
         let mut state: WorkerState = log.reduce()?;
         state.check_silence(global_config);
 
@@ -298,7 +298,7 @@ impl MonitorActor {
                         attempts = failures,
                         "resume exhausted, marking failed"
                     );
-                    let event_log = app.logs().worker_events(&repo_name, &worker_name);
+                    let event_log = worker.event_log(&app.paths);
                     let _ = event_log.append(&Event::now(EventKind::Terminal {
                         terminal: TerminalKind::Failed,
                         reason: Some(format!(
@@ -354,7 +354,7 @@ impl MonitorActor {
 
         // Execute actions
         let branch: Branch = state.branch.as_deref().unwrap_or(&worker_name).into();
-        let event_log = app.logs().worker_events(&repo_name, &worker_name);
+        let event_log = worker.event_log(&app.paths);
         let prune_targets = self.execute_actions(
             app,
             &actions,

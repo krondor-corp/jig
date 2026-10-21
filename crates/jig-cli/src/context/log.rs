@@ -121,14 +121,18 @@ impl<'a> Logs<'a> {
             .count()
     }
 
-    /// A worker's `on_create` output, from its last setup.
+    /// A worker's `on_create` output, from its last setup. Reach it through
+    /// [`Worker::setup_log`](crate::worker::Worker::setup_log), which knows
+    /// the worker's repo and branch.
     pub fn setup(&self, repo: &str, branch: &str) -> LogFile {
         LogFile::at(self.paths.worker_setup_log(repo, branch))
     }
 
     // ── structured ──
 
-    /// A worker's event log.
+    /// A worker's event log. Reach it through
+    /// [`Worker::event_log`](crate::worker::Worker::event_log), which knows
+    /// the worker's repo and branch.
     pub fn worker_events(&self, repo: &str, branch: &str) -> crate::worker::events::EventLog {
         jig_core::EventLog::new(self.paths.worker_events_log(repo, branch))
     }

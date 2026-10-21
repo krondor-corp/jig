@@ -63,20 +63,6 @@ const SETUP_EXCERPT_LINES: usize = 20;
 /// Why [`Worker::setup`] couldn't make a fresh worktree ready to work in.
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
-    #[error("failed to copy {} into the worktree: {source}", .path.display())]
-    Copy {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("failed to open {log}: {source}")]
-    Log {
-        log: LogFile,
-        #[source]
-        source: std::io::Error,
-    },
-
     /// The hook ran and didn't succeed — exited non-zero, was killed, or
     /// outran its deadline. `excerpt` is [`LogFile::excerpt`] of `setup.log`.
     #[error("{label} {outcome}:\n{excerpt}")]
@@ -89,6 +75,11 @@ pub enum SetupError {
     /// The hook couldn't be started at all.
     #[error(transparent)]
     Exec(#[from] ExecError),
+
+    /// Copying files or opening `setup.log` failed — nothing anyone handles
+    /// differently, so not told apart.
+    #[error("unexpected error setting up the worktree: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// A Worker is a Claude Code session in an isolated git worktree.
@@ -149,12 +140,17 @@ impl Worker {
     }
 
     /// This worker's event log.
-    pub fn log(&self, paths: &AppPaths) -> events::EventLog {
+    pub fn event_log(&self, paths: &AppPaths) -> events::EventLog {
         Logs::new(paths).worker_events(&self.repo_name(), &self.branch)
     }
 
+    /// This worker's `on_create` output, from its last [`Worker::setup`].
+    pub fn setup_log(&self, paths: &AppPaths) -> LogFile {
+        Logs::new(paths).setup(&self.repo_name(), &self.branch)
+    }
+
     pub fn status(&self, paths: &AppPaths) -> Option<WorkerStatus> {
-        let log = self.log(paths);
+        let log = self.event_log(paths);
         if !log.exists() {
             return None;
         }
@@ -163,7 +159,7 @@ impl Worker {
     }
 
     pub fn fail_reason(&self, paths: &AppPaths) -> Option<String> {
-        let events = self.log(paths).read_all().ok()?;
+        let events = self.event_log(paths).read_all().ok()?;
         events.iter().rev().find_map(|e| {
             if let EventKind::Terminal {
                 reason: Some(r), ..
@@ -183,10 +179,8 @@ impl Worker {
     pub fn unregister(&self, paths: &AppPaths) -> Result<(), WorkerError> {
         // First, so removing the event log can also remove the now-empty
         // directory.
-        let _ = Logs::new(paths)
-            .setup(&self.repo_name(), &self.branch)
-            .remove();
-        let _ = self.log(paths).remove();
+        let _ = self.setup_log(paths).remove();
+        let _ = self.event_log(paths).remove();
         Ok(())
     }
 
@@ -251,15 +245,15 @@ impl Worker {
         on_create: Option<Exec>,
         mux: &dyn Mux,
     ) -> Result<Self, WorkerError> {
-        let repo_root = repo.clone_path();
+        let worker = Self {
+            id: Uuid::new_v4(),
+            branch: branch.clone(),
+            path: WorktreeRef::new(crate::context::worktree_path(&repo.clone_path(), branch)),
+            issue_ref: issue_ref.clone(),
+        };
         let branch_name = branch.to_string();
 
-        let repo_name = repo_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let event_log = Logs::new(paths).worker_events(&repo_name, &branch_name);
+        let event_log = worker.event_log(paths);
         event_log.reset()?;
 
         let _ = event_log.append(&Event::now(EventKind::Initializing {
@@ -278,13 +272,7 @@ impl Worker {
             e
         };
 
-        let wt = Worktree::create(repo, branch, base).map_err(|e| failed(e.into()))?;
-        let worker = Self {
-            id: Uuid::new_v4(),
-            branch: wt.branch_name(),
-            path: wt.as_ref(),
-            issue_ref: issue_ref.clone(),
-        };
+        Worktree::create(repo, branch, base).map_err(|e| failed(e.into()))?;
         worker
             .setup(paths, copy_files, on_create)
             .map_err(|e| failed(e.into()))?;
@@ -292,7 +280,7 @@ impl Worker {
         let issue = issue_ref.unwrap_or_else(|| IssueRef::new(branch_name.clone()));
         let _ = event_log.append(&Event::now(EventKind::Spawn {
             branch: branch_name,
-            repo: repo_name,
+            repo: worker.repo_name(),
             issue,
         }));
 
@@ -325,21 +313,14 @@ impl Worker {
             let src = repo_root.join(file);
             let dst = wt_path.join(file);
             if src.exists() {
-                let copy = || -> std::io::Result<()> {
-                    if let Some(parent) = dst.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    std::fs::copy(&src, &dst)?;
-                    Ok(())
-                };
-                copy().map_err(|source| SetupError::Copy {
-                    path: file.clone(),
-                    source,
-                })?;
+                if let Some(parent) = dst.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&src, &dst)?;
             }
         }
 
-        let log = Logs::new(paths).setup(&self.repo_name(), &self.branch);
+        let log = self.setup_log(paths);
         let Some(hook) = on_create else {
             // So a log from an earlier setup of this branch can't be
             // mistaken for this one's.
@@ -348,11 +329,7 @@ impl Worker {
         };
 
         let label = hook.label().to_string();
-        let file = log.create().map_err(|source| SetupError::Log {
-            log: log.clone(),
-            source,
-        })?;
-        let outcome = match hook.in_dir(wt_path).output_to(file).run() {
+        let outcome = match hook.in_dir(wt_path).output_to(log.create()?).run() {
             Ok(output) if output.success() => return Ok(()),
             Ok(output) => match output.status.code() {
                 Some(code) => format!("exited with status {code}"),
@@ -384,7 +361,9 @@ impl Worker {
             issue_ref: None,
         };
 
-        let _ = worker.log(paths).append(&Event::now(EventKind::Resume));
+        let _ = worker
+            .event_log(paths)
+            .append(&Event::now(EventKind::Resume));
 
         mux.create_window(&worker.branch, &worker.path)?;
         let cmd = agent.resume(prompt)?;
@@ -404,7 +383,7 @@ impl Worker {
 
         mux.send_message(&self.branch, &message)?;
 
-        let _ = self.log(paths).append(&Event::now(EventKind::Nudge {
+        let _ = self.event_log(paths).append(&Event::now(EventKind::Nudge {
             nudge_type: nudge_type_key,
             message: message.clone(),
         }));

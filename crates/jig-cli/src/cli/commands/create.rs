@@ -95,13 +95,15 @@ impl Op for Create {
             repo.config.worktree.on_create()
         };
         let wt = Worktree::create(&git_repo, &branch, &base_branch)?;
-        Worker::from(&wt).setup(&ctx.paths, &copy_files, on_create)?;
+        let worker = Worker::from(&wt);
+        worker.setup(&ctx.paths, &copy_files, on_create)?;
 
-        let repo_name = repo.name();
-        let event_log = ctx.logs().worker_events(&repo_name, &self.branch);
-        if let Err(e) = event_log.append(&Event::now(EventKind::Create {
-            branch: branch.to_string(),
-        })) {
+        if let Err(e) = worker
+            .event_log(&ctx.paths)
+            .append(&Event::now(EventKind::Create {
+                branch: branch.to_string(),
+            }))
+        {
             tracing::warn!(branch = %self.branch, error = %e, "failed to emit Create event");
         }
 

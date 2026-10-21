@@ -125,7 +125,7 @@ impl Frame {
 
             for worker in Worker::discover(&repo) {
                 let name = worker.branch().to_string();
-                let Ok(mut state) = worker.log(&ctx.paths).reduce() else {
+                let Ok(mut state) = worker.event_log(&ctx.paths).reduce() else {
                     continue;
                 };
                 state.check_silence(&ctx.config);

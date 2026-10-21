@@ -7,12 +7,11 @@ use comfy_table::{Cell, CellAlignment, Color};
 
 use crate::context::{AppConfig, AppCtx, Ctx, RepoCtx};
 use crate::worker::events::WorkerState;
-use crate::worker::WorkerStatus;
+use crate::worker::{Worker, WorkerStatus};
 use jig_core::git::{Branch, Repo};
 
 use crate::cli::op::Op;
 use crate::cli::ui;
-use crate::context::log::Logs;
 use crate::context::AppPaths;
 
 /// List worktrees
@@ -96,7 +95,7 @@ impl Op for List {
             &names,
             &repo.paths.worktrees_path,
             &base_branch,
-            &repo.name(),
+            &repo.paths.repo_root,
         );
         eprintln!("{table}");
         note_foreign_worktrees(&git_repo, &repo.paths.repo_root);
@@ -172,7 +171,7 @@ impl List {
                 &worktrees,
                 &cfg.paths.worktrees_path,
                 &base_branch,
-                &cfg.name(),
+                &cfg.paths.repo_root,
             );
             eprintln!("{table}");
             note_foreign_worktrees(&git_repo, &cfg.paths.repo_root);
@@ -211,10 +210,9 @@ fn note_foreign_worktrees(repo: &Repo, repo_root: &Path) {
 fn worktree_event_status(
     paths: &AppPaths,
     config: &AppConfig,
-    repo_name: &str,
-    name: &str,
+    worker: &Worker,
 ) -> Option<WorkerStatus> {
-    let event_log = Logs::new(paths).worker_events(repo_name, name);
+    let event_log = worker.event_log(paths);
     if !event_log.exists() {
         return None;
     }
@@ -229,7 +227,7 @@ fn build_worktree_table(
     names: &[String],
     worktrees_path: &Path,
     base_branch: &Branch,
-    repo_name: &str,
+    repo_root: &Path,
 ) -> comfy_table::Table {
     let mut table = ui::new_table(&["NAME", "BRANCH", "COMMITS"]);
 
@@ -237,7 +235,8 @@ fn build_worktree_table(
         let wt_path = worktrees_path.join(name);
 
         // Check if worker is initializing or failed
-        let worker_status = worktree_event_status(paths, config, repo_name, name);
+        let worker = Worker::from_branch(repo_root, Branch::new(name));
+        let worker_status = worktree_event_status(paths, config, &worker);
 
         let branch = Repo::open(&wt_path)
             .and_then(|r| r.current_branch())
