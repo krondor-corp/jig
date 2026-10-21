@@ -102,13 +102,9 @@ impl Default for WorkerState {
 
 impl WorkerState {
     pub fn check_silence(&mut self, config: &AppConfig) {
-        if self.status.is_terminal() {
-            return;
-        }
-        if matches!(
-            self.status,
-            WorkerStatus::WaitingReview | WorkerStatus::Initializing | WorkerStatus::Created
-        ) {
+        // Silence only suggests a hung agent while it is supposed to be
+        // working. Idle, waiting and review states are quiet by design.
+        if !self.status.is_active() {
             return;
         }
         if let Some(last_ts) = self.last_event_at {
