@@ -131,6 +131,8 @@ my-project/
         └── issues/           # /issues — discover and manage work items
 ```
 
+Init also registers the repo in `~/.config/jig/repos.json`, the list of repos the daemon watches and `-g` commands span. Re-running `jig init` in an already-initialized repo refreshes its hooks and registers it if it isn't yet.
+
 If files already exist, init skips them. Use `--force` to overwrite, `--backup` to save existing files first:
 
 ```bash
