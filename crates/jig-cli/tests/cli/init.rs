@@ -2,7 +2,6 @@
 
 use crate::common::Sandbox;
 use jig_cli::context::RepoRegistry;
-use predicates::prelude::*;
 
 #[test]
 fn init_registers_the_repo_for_the_daemon() {
@@ -15,8 +14,7 @@ fn init_registers_the_repo_for_the_daemon() {
         .env("HOME", home.path())
         .args(["init", "claude"])
         .assert()
-        .success()
-        .stderr(predicate::str::contains("Registered repo"));
+        .success();
 
     let registry = RepoRegistry::load(&sandbox.paths()).unwrap();
     let repo = std::fs::canonicalize(sandbox.repo(0)).unwrap();

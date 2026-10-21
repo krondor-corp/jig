@@ -134,7 +134,7 @@ impl Op for Init {
         if RepoConfig::exists(&repo_root) && !self.force {
             ui::progress("Already initialized, ensuring hooks are set up...");
             install_hooks(&repo_root, &agent, false);
-            register(&paths, &repo_root);
+            crate::context::register_globally(&paths, &repo_root);
             eprintln!();
             ui::success("Hooks up to date");
             return Ok(NoOutput);
@@ -286,7 +286,7 @@ type = "{}"
         }
 
         install_hooks(&repo_root, &agent, self.force);
-        register(&paths, &repo_root);
+        crate::context::register_globally(&paths, &repo_root);
 
         eprintln!();
         ui::success(&ui::bold("Initialization complete"));
@@ -301,14 +301,6 @@ type = "{}"
         }
 
         Ok(NoOutput)
-    }
-}
-
-/// Add the repo to the global registry so the daemon watches it.
-fn register(paths: &AppPaths, repo_root: &Path) {
-    if crate::context::register_globally(paths, repo_root) {
-        eprintln!();
-        ui::success("Registered repo — the daemon will watch it");
     }
 }
 

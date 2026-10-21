@@ -400,12 +400,10 @@ pub fn update_local_toml(
 /// This is the single registration path — commands that resolve their repo
 /// without [`Ctx::here`] / [`Ctx::for_repo`] (e.g. `jig init`) call this
 /// directly rather than writing `repos.json` themselves.
-///
-/// Returns whether the repo was newly added and the registry saved.
-pub fn register_globally(paths: &AppPaths, repo_root: &Path) -> bool {
+pub fn register_globally(paths: &AppPaths, repo_root: &Path) {
     let mut global = RepoRegistry::load(paths).unwrap_or_default();
-    let added = global.register(repo_root.to_path_buf());
-    global.save(paths).is_ok() && added
+    global.register(repo_root.to_path_buf());
+    let _ = global.save(paths);
 }
 
 /// Resolve the effective base branch for an arbitrary repo path
