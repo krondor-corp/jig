@@ -4,7 +4,7 @@ use clap::Args;
 use std::fs;
 use std::path::Path;
 
-use crate::context::{AppConfig, AppCtx, RepoConfig, RepoCtx, JIG_DIR, JIG_LOCAL_TOML};
+use crate::context::{register_globally, AppConfig, AppCtx, RepoConfig, JIG_DIR, JIG_LOCAL_TOML};
 use jig_core::git::Repo;
 use jig_core::{agents, Prompt};
 
@@ -73,17 +73,17 @@ pub enum InitError {
 }
 
 impl Op for Init {
-    type Context = AppPaths;
+    type Context = AppCtx;
     type Error = InitError;
     type Output = NoOutput;
 
-    fn build_context(&self, app: AppCtx) -> Result<AppPaths, InitError> {
-        Ok(app.paths)
+    fn build_context(&self, app: AppCtx) -> Result<AppCtx, InitError> {
+        Ok(app)
     }
 
-    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
+    fn run(&self, app: AppCtx) -> Result<Self::Output, Self::Error> {
         if self.global {
-            return init_global(&paths, self.force);
+            return init_global(&app.paths, self.force);
         }
 
         let agent_name = self.agent.as_deref().ok_or_else(|| {
@@ -102,7 +102,7 @@ impl Op for Init {
 
         // Init discovers the repo root directly: jig.toml may not exist yet,
         // since init is often the first jig command run in a repo.
-        let repo_root = match RepoCtx::from_cwd(&paths) {
+        let repo_root = match app.repo_here() {
             Ok(repo) => repo.paths.repo_root,
             Err(_) => {
                 let git_repo = Repo::discover()?;
@@ -135,7 +135,7 @@ impl Op for Init {
         if RepoConfig::exists(&repo_root) && !self.force {
             ui::progress("Already initialized, ensuring hooks are set up...");
             install_hooks(&repo_root, &agent, false);
-            crate::context::register_globally(&paths, &repo_root);
+            register_globally(&app.paths, &repo_root);
             eprintln!();
             ui::success("Hooks up to date");
             return Ok(NoOutput);
@@ -287,7 +287,7 @@ type = "{}"
         }
 
         install_hooks(&repo_root, &agent, self.force);
-        crate::context::register_globally(&paths, &repo_root);
+        register_globally(&app.paths, &repo_root);
 
         eprintln!();
         ui::success(&ui::bold("Initialization complete"));

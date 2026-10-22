@@ -83,34 +83,33 @@ pub enum ConfigError {
 }
 
 impl Op for Config {
-    type Context = AppPaths;
+    type Context = AppCtx;
     type Error = ConfigError;
     type Output = ConfigOutput;
 
-    fn build_context(&self, app: AppCtx) -> Result<AppPaths, ConfigError> {
-        Ok(app.paths)
+    fn build_context(&self, app: AppCtx) -> Result<AppCtx, ConfigError> {
+        Ok(app)
     }
 
-    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
-        let paths = &paths;
+    fn run(&self, app: AppCtx) -> Result<Self::Output, Self::Error> {
         if self.list {
-            return show_list(paths);
+            return show_list(&app.paths);
         }
 
         match &self.subcommand {
-            None | Some(ConfigCommands::Show) => match RepoCtx::from_cwd(paths) {
-                Ok(repo) => show_config(paths, &repo),
-                Err(_) => show_global_config(paths),
+            None | Some(ConfigCommands::Show) => match app.repo_here() {
+                Ok(repo) => show_config(&app.paths, &repo),
+                Err(_) => show_global_config(&app.paths),
             },
             Some(ConfigCommands::Base {
                 branch,
                 global,
                 unset,
-            }) => handle_base(paths, branch.as_deref(), *global, *unset),
+            }) => handle_base(&app, branch.as_deref(), *global, *unset),
             Some(ConfigCommands::OnCreate { command, unset }) => {
-                handle_on_create(paths, command.as_deref(), *unset)
+                handle_on_create(&app, command.as_deref(), *unset)
             }
-            Some(ConfigCommands::Mux { backend }) => handle_mux(paths, *backend),
+            Some(ConfigCommands::Mux { backend }) => handle_mux(&app.paths, *backend),
         }
     }
 }
@@ -378,19 +377,19 @@ fn show_list(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
 }
 
 fn handle_base(
-    paths: &AppPaths,
+    app: &AppCtx,
     branch: Option<&str>,
     global: bool,
     unset: bool,
 ) -> Result<ConfigOutput, ConfigError> {
     if unset {
         if global {
-            let mut global_cfg = GlobalConfig::load(paths)?;
+            let mut global_cfg = GlobalConfig::load(&app.paths)?;
             global_cfg.default_base_branch = None;
-            global_cfg.save(paths)?;
+            global_cfg.save(&app.paths)?;
             ui::success("Unset global base branch");
         } else {
-            let repo = RepoCtx::from_cwd(paths)?;
+            let repo = app.repo_here()?;
             context::update_local_toml(&repo.paths.repo_root, "worktree", "base", None)?;
             ui::success("Unset repo base branch");
         }
@@ -400,12 +399,12 @@ fn handle_base(
     match branch {
         Some(b) => {
             if global {
-                let mut global_cfg = GlobalConfig::load(paths)?;
+                let mut global_cfg = GlobalConfig::load(&app.paths)?;
                 global_cfg.default_base_branch = Some(b.to_string());
-                global_cfg.save(paths)?;
+                global_cfg.save(&app.paths)?;
                 ui::success(&format!("Set global base branch to '{}'", ui::highlight(b)));
             } else {
-                let repo = RepoCtx::from_cwd(paths)?;
+                let repo = app.repo_here()?;
                 context::update_local_toml(&repo.paths.repo_root, "worktree", "base", Some(b))?;
                 ui::success(&format!("Set repo base branch to '{}'", ui::highlight(b)));
             }
@@ -413,7 +412,7 @@ fn handle_base(
         }
         None => {
             if global {
-                let global_cfg = GlobalConfig::load(paths)?;
+                let global_cfg = GlobalConfig::load(&app.paths)?;
                 match global_cfg.default_base_branch {
                     Some(b) => Ok(ConfigOutput(Some(b))),
                     None => {
@@ -422,20 +421,21 @@ fn handle_base(
                     }
                 }
             } else {
-                let repo = RepoCtx::from_cwd(paths)?;
-                let config = crate::context::AppConfig::load(paths)?;
-                Ok(ConfigOutput(Some(repo.base_branch(&config).to_string())))
+                let repo = app.repo_here()?;
+                Ok(ConfigOutput(Some(
+                    repo.base_branch(&app.config).to_string(),
+                )))
             }
         }
     }
 }
 
 fn handle_on_create(
-    paths: &AppPaths,
+    app: &AppCtx,
     command: Option<&str>,
     unset: bool,
 ) -> Result<ConfigOutput, ConfigError> {
-    let repo = RepoCtx::from_cwd(paths)?;
+    let repo = app.repo_here()?;
 
     if unset {
         context::update_local_toml(&repo.paths.repo_root, "worktree", "on_create", None)?;

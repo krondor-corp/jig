@@ -70,7 +70,9 @@ pub struct RepoPaths {
 ///
 /// Mirrors [`AppCtx`] one level down — paths plus the config that governs
 /// them. Carries jig's own [`AppPaths`] too, so anything scoped to a repo
-/// (its workers, their logs) needs nothing but this.
+/// (its workers, their logs) needs nothing but this. Built from the app
+/// context — [`AppCtx::repo_here`], [`AppCtx::repo_at`] — or handed out by
+/// [`Ctx::repo`].
 pub struct RepoCtx {
     pub paths: RepoPaths,
     pub config: RepoConfig,
@@ -78,7 +80,7 @@ pub struct RepoCtx {
 }
 
 impl RepoCtx {
-    pub fn from_cwd(app_paths: &AppPaths) -> Result<Self, ContextError> {
+    fn from_cwd(app_paths: &AppPaths) -> Result<Self, ContextError> {
         let git_repo = Repo::discover()?;
         let git_common_dir = git_repo.common_dir();
         let repo_root = git_common_dir
@@ -88,7 +90,7 @@ impl RepoCtx {
         Self::build(app_paths, repo_root, git_common_dir)
     }
 
-    pub fn from_path(app_paths: &AppPaths, path: &Path) -> Result<Self, ContextError> {
+    fn from_path(app_paths: &AppPaths, path: &Path) -> Result<Self, ContextError> {
         let git_repo = Repo::open(path)?;
         let git_common_dir = git_repo.common_dir();
         let repo_root = git_common_dir
@@ -264,6 +266,16 @@ impl AppCtx {
         log::Logs::new(&self.paths)
     }
 
+    /// The repo containing the current directory.
+    pub fn repo_here(&self) -> Result<RepoCtx, ContextError> {
+        RepoCtx::from_cwd(&self.paths)
+    }
+
+    /// The repo at `path` (its root, or anywhere inside it).
+    pub fn repo_at(&self, path: &Path) -> Result<RepoCtx, ContextError> {
+        RepoCtx::from_path(&self.paths, path)
+    }
+
     /// Process-wide state, set once.
     ///
     /// Everything here writes a global — a C library's settings, or a static
@@ -306,7 +318,7 @@ impl Ctx {
     /// wins, which is fine for a path list, and a filesystem problem must not
     /// fail an unrelated command.
     pub fn here(app: AppCtx) -> Result<Self, ContextError> {
-        let repo = RepoCtx::from_cwd(&app.paths)?;
+        let repo = app.repo_here()?;
         register_globally(&app.paths, &repo.paths.repo_root);
         let mut registry = RepoRegistry::default();
         registry.register(repo.paths.repo_root.clone());
@@ -326,7 +338,7 @@ impl Ctx {
             .repos()
             .iter()
             .filter(|e| e.path.exists())
-            .filter_map(|e| RepoCtx::from_path(&app.paths, &e.path).ok())
+            .filter_map(|e| app.repo_at(&e.path).ok())
             .collect();
         Ok(Self {
             paths: app.paths,

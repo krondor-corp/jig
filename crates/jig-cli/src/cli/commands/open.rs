@@ -5,8 +5,6 @@ use std::path::PathBuf;
 
 use crate::cli::op::Op;
 use crate::context::AppCtx;
-use crate::context::AppPaths;
-use crate::context::RepoCtx;
 use crate::context::RepoRegistry;
 
 /// Open/cd into a worktree
@@ -39,29 +37,29 @@ pub enum OpenError {
 }
 
 impl Op for Open {
-    type Context = AppPaths;
+    type Context = AppCtx;
     type Error = OpenError;
     type Output = OpenOutput;
 
-    fn build_context(&self, app: AppCtx) -> Result<AppPaths, OpenError> {
-        Ok(app.paths)
+    fn build_context(&self, app: AppCtx) -> Result<AppCtx, OpenError> {
+        Ok(app)
     }
 
-    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
+    fn run(&self, app: AppCtx) -> Result<Self::Output, Self::Error> {
         let name = self
             .branch
             .as_deref()
             .ok_or(OpenError::Usage("branch is required".into()))?;
 
-        let cfg = match RepoCtx::from_cwd(&paths) {
+        let cfg = match app.repo_here() {
             Ok(cfg) => cfg,
             Err(_) => {
-                let registry = RepoRegistry::load(&paths).unwrap_or_default();
+                let registry = RepoRegistry::load(&app.paths).unwrap_or_default();
                 let configs: Vec<_> = registry
                     .repos()
                     .iter()
                     .filter(|e| e.path.exists())
-                    .filter_map(|e| RepoCtx::from_path(&paths, &e.path).ok())
+                    .filter_map(|e| app.repo_at(&e.path).ok())
                     .collect();
                 configs
                     .into_iter()

@@ -10,8 +10,7 @@ use std::time::{Duration, Instant};
 
 use url::Url;
 
-use crate::context::log::Logs;
-use crate::context::{self, AppConfig, AppPaths, RepoConfig, RepoCtx, RepoEntry};
+use crate::context::{self, AppConfig, AppCtx, AppPaths, RepoConfig, RepoEntry};
 use crate::daemon::checks::{self, PrHealth, PrStatus};
 use crate::notify::{NotificationEvent, Notifier};
 use crate::worker::events::{self, Event, EventKind, TerminalKind, WorkerState};
@@ -70,12 +69,9 @@ impl Actor for MonitorActor {
     const QUEUE_SIZE: usize = 1;
 
     fn handle(&self, req: MonitorRequest) -> Vec<PruneTarget> {
-        let global_config = &req.ctx.config;
-        let paths = &req.ctx.paths;
-        let notifier = Notifier::new(
-            global_config.notify.clone(),
-            Logs::new(paths).notifications(),
-        );
+        let global_config = &req.ctx.app.config;
+        let app = &req.ctx.app;
+        let notifier = Notifier::new(global_config.notify.clone(), app.logs().notifications());
 
         // Discover workers
         let workers: Vec<(&RepoEntry, Worker)> = {
@@ -100,12 +96,12 @@ impl Actor for MonitorActor {
             let key = worker.worker_key();
             let repo_name = worker.repo_name();
             let mux = jig_core::mux::for_repo_with_prefix(
-                req.ctx.config.mux,
+                req.ctx.app.config.mux,
                 &req.ctx.session_prefix,
                 &repo_name,
             );
 
-            match self.process_worker(paths, &mux, entry, worker, &key, global_config, &notifier) {
+            match self.process_worker(app, &mux, entry, worker, &key, global_config, &notifier) {
                 Ok((state, targets)) => {
                     display_results.push(state.clone());
                     prune_targets.extend(targets);
@@ -149,7 +145,7 @@ impl MonitorActor {
     #[allow(clippy::too_many_arguments)]
     fn process_worker(
         &self,
-        paths: &AppPaths,
+        app: &AppCtx,
         mux: &dyn Mux,
         repo_entry: &RepoEntry,
         worker: &Worker,
@@ -161,7 +157,7 @@ impl MonitorActor {
         let repo_name = worker.repo_name();
 
         // 1. Reduce event log
-        let log = worker.log(paths);
+        let log = worker.log(&app.paths);
         let mut state: WorkerState = log.reduce()?;
         state.check_silence(global_config);
 
@@ -302,7 +298,7 @@ impl MonitorActor {
                         attempts = failures,
                         "resume exhausted, marking failed"
                     );
-                    let event_log = Logs::new(paths).worker_events(&repo_name, &worker_name);
+                    let event_log = app.logs().worker_events(&repo_name, &worker_name);
                     let _ = event_log.append(&Event::now(EventKind::Terminal {
                         terminal: TerminalKind::Failed,
                         reason: Some(format!(
@@ -314,7 +310,7 @@ impl MonitorActor {
                     state.check_silence(global_config);
                 } else {
                     actions.retain(|a| !matches!(a, DispatchAction::Nudge { .. }));
-                    match try_resume_worker(paths, &repo_entry.path, &worker_name, mux) {
+                    match try_resume_worker(&app.paths, &repo_entry.path, &worker_name, mux) {
                         Ok(true) => {
                             tracing::info!(worker = key, "worker resumed");
                             self.resume_failures.lock().unwrap().remove(key);
@@ -358,9 +354,9 @@ impl MonitorActor {
 
         // Execute actions
         let branch: Branch = state.branch.as_deref().unwrap_or(&worker_name).into();
-        let event_log = Logs::new(paths).worker_events(&repo_name, &worker_name);
+        let event_log = app.logs().worker_events(&repo_name, &worker_name);
         let prune_targets = self.execute_actions(
-            paths,
+            app,
             &actions,
             key,
             &repo_name,
@@ -479,7 +475,7 @@ impl MonitorActor {
     #[allow(clippy::too_many_arguments)]
     fn execute_actions(
         &self,
-        paths: &AppPaths,
+        app: &AppCtx,
         actions: &[DispatchAction],
         key: &str,
         repo_name: &str,
@@ -507,7 +503,7 @@ impl MonitorActor {
                             continue;
                         }
                         let prompt = jig_core::prompt::Prompt::new(message).named(nudge_key);
-                        match w.nudge(paths, prompt, mux) {
+                        match w.nudge(&app.paths, prompt, mux) {
                             Ok(()) => {
                                 tracing::info!(worker = key, nudge_key = %nudge_key, "nudge delivered")
                             }
@@ -541,14 +537,14 @@ impl MonitorActor {
                     });
                 }
                 DispatchAction::Restart => {
-                    match try_resume_worker(paths, repo_path, worker_name, mux) {
+                    match try_resume_worker(&app.paths, repo_path, worker_name, mux) {
                         Ok(true) => tracing::info!(worker = key, "worker resumed via restart"),
                         Ok(false) => {}
                         Err(e) => tracing::warn!(worker = key, "restart failed: {}", e),
                     }
                 }
                 DispatchAction::UpdateIssueStatus { issue_id } => {
-                    if let Ok(ctx) = RepoCtx::from_path(paths, repo_path) {
+                    if let Ok(ctx) = app.repo_at(repo_path) {
                         if let Ok(provider) = ctx.issue_provider(global_config) {
                             let should_update = match provider.get(issue_id) {
                                 Ok(Some(issue)) => !matches!(

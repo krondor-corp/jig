@@ -217,9 +217,9 @@ Key conventions:
     iterate do not need to know which scope they were given.
   - `RepoCtx` — one repo: `paths: RepoPaths`, `config: RepoConfig`, and jig's
     `app_paths`, so repo-scoped code (workers, their logs via `repo.logs()`)
-    needs nothing else. Reachable from a `Ctx`; build directly with
-    `RepoCtx::from_cwd(&paths)` or `RepoCtx::from_path(&paths, p)`
-    only outside a command.
+    needs nothing else. Reachable from a `Ctx` (`ctx.repo()?`); otherwise
+    built from the app context with `app.repo_here()` / `app.repo_at(p)` —
+    never from loose paths.
   - `AppPaths` — commands that need jig's files but no repo (`daemon`, `notify`,
     `config`); get it from `app.paths`.
   - `AppCtx` — pass it straight through when a command wants the global config

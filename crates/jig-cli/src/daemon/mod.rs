@@ -17,7 +17,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::context::log::Logs;
-use crate::context::{AppConfig, AppPaths, ContextError, Ctx, RepoConfig, RepoEntry, RepoRegistry};
+use crate::context::{
+    AppConfig, AppCtx, AppPaths, ContextError, Ctx, RepoConfig, RepoEntry, RepoRegistry,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
@@ -34,8 +36,7 @@ pub enum DaemonError {
 /// Shared context built once per daemon tick, passed to all actors.
 #[derive(Clone)]
 pub struct TickContext {
-    pub paths: AppPaths,
-    pub config: Arc<AppConfig>,
+    pub app: Arc<AppCtx>,
     pub repos: Arc<Vec<RepoEntry>>,
     pub session_prefix: String,
 }
@@ -111,8 +112,7 @@ pub struct Daemon {
     pub spawn: ActorHandle<SpawnActor>,
     pub triage: ActorHandle<TriageActor>,
 
-    paths: AppPaths,
-    config: AppConfig,
+    app: Arc<AppCtx>,
     registry: RepoRegistry,
     last_poll: Instant,
     shared: DaemonShared,
@@ -162,8 +162,11 @@ impl Daemon {
             prune,
             spawn,
             triage,
-            paths: cfg.paths,
-            config: cfg.config,
+            app: Arc::new(AppCtx {
+                paths: cfg.paths,
+                config: cfg.config,
+                flags: cfg.flags,
+            }),
             registry: cfg.registry,
             last_poll,
             shared,
@@ -171,7 +174,7 @@ impl Daemon {
     }
 
     pub fn config(&self) -> &AppConfig {
-        &self.config
+        &self.app.config
     }
 
     /// A handle the IPC listener can hold while the tick loop keeps running.
@@ -225,30 +228,31 @@ impl Daemon {
                     if quit.load(Ordering::Relaxed) {
                         break;
                     }
-                    std::thread::sleep(Duration::from_secs(self.config.tick_interval));
+                    std::thread::sleep(Duration::from_secs(self.app.config.tick_interval));
                 }
             }
         }
-        log_shutdown(&self.paths, "normal");
+        log_shutdown(&self.app.paths, "normal");
     }
 
     /// Whether the poll interval has elapsed.
     pub fn poll_is_due(&self) -> bool {
-        self.last_poll.elapsed().as_secs() >= self.config.poll_interval
+        self.last_poll.elapsed().as_secs() >= self.app.config.poll_interval
     }
 
     /// Mark that a poll tick just fired.
     fn mark_polled(&mut self) {
         self.last_poll = Instant::now();
         self.shared.poll_deadline.store(
-            chrono::Utc::now().timestamp() + self.config.poll_interval as i64,
+            chrono::Utc::now().timestamp() + self.app.config.poll_interval as i64,
             Ordering::Relaxed,
         );
     }
 
     /// Seconds until the next poll tick.
     pub fn poll_remaining_secs(&self) -> u64 {
-        self.config
+        self.app
+            .config
             .poll_interval
             .saturating_sub(self.last_poll.elapsed().as_secs())
     }
@@ -256,10 +260,9 @@ impl Daemon {
     /// Execute a single tick of the daemon.
     pub fn tick(&mut self) -> Result<(), DaemonError> {
         let ctx = TickContext {
-            paths: self.paths.clone(),
-            config: Arc::new(self.config.clone()),
+            app: Arc::clone(&self.app),
             repos: Arc::new(self.registry.repos().to_vec()),
-            session_prefix: self.config.session_prefix.clone(),
+            session_prefix: self.app.config.session_prefix.clone(),
         };
 
         // Send monitor request every tick
@@ -270,7 +273,7 @@ impl Daemon {
         let prune_targets: Vec<_> = self.monitor.drain().into_iter().flatten().collect();
         if !prune_targets.is_empty() {
             self.prune.send(actors::prune::PruneRequest {
-                paths: self.paths.clone(),
+                paths: self.app.paths.clone(),
                 targets: prune_targets,
             });
         }

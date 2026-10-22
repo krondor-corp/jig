@@ -38,7 +38,7 @@ impl Actor for SpawnActor {
 
     fn handle(&self, req: SpawnRequest) {
         let mut spawning = Vec::new();
-        let global = &req.ctx.config;
+        let global = &req.ctx.app.config;
 
         for entry in req.ctx.repos.iter() {
             let repo_root = entry.path.clone();
@@ -55,7 +55,7 @@ impl Actor for SpawnActor {
                 }
             };
 
-            let cfg = match RepoCtx::from_path(&req.ctx.paths, &repo_root) {
+            let cfg = match req.ctx.app.repo_at(&repo_root) {
                 Ok(cfg) => cfg,
                 Err(e) => {
                     tracing::debug!(repo = %repo_name, error = %e, "failed to load config");
@@ -144,7 +144,7 @@ fn spawn_worker_for_issue(
         return Ok(Worker::from_branch(repo_root, worker_name.into()));
     }
 
-    let base = context::resolve_base_branch_for(repo_root, &ctx.config)
+    let base = context::resolve_base_branch_for(repo_root, &ctx.app.config)
         .unwrap_or_else(|_| Branch::new(context::DEFAULT_BASE_BRANCH));
 
     let repo = Repo::open(repo_root).map_err(|e| e.to_string())?;
@@ -158,7 +158,7 @@ fn spawn_worker_for_issue(
     let on_create = cfg.config.worktree.on_create();
 
     let worker = Worker::spawn(
-        &ctx.paths,
+        &ctx.app.paths,
         &repo,
         &branch,
         &base,
