@@ -15,7 +15,8 @@ use jig_core::git::Worktree;
 
 /// Handle post-commit hook: emit a Commit event with the HEAD SHA.
 ///
-/// Silently does nothing if `dir` is not a jig-managed worktree.
+/// `dir` is where the hook fired. Silently does nothing if that is not a
+/// jig-managed worktree.
 pub fn handle_post_commit(repo: &RepoCtx, dir: &Path) -> Result<(), HookError> {
     let Some(wt) = worktree_at(dir) else {
         return Ok(());
@@ -93,7 +94,10 @@ pub fn handle_pre_commit(_repo_path: &Path) -> Result<(), HookError> {
     Ok(())
 }
 
-/// The jig worktree at `dir`, if there is one.
+/// The jig worktree at `dir` — where the hook fired — if there is one.
+///
+/// Git runs hooks from the worktree, which is not the repo's root: the
+/// `RepoCtx` handed to the handlers points at the main checkout.
 fn worktree_at(dir: &Path) -> Option<Worktree> {
     Worktree::open(dir).ok()
 }

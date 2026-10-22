@@ -1,5 +1,7 @@
 //! Hooks command — manage hook integrations
 
+use std::env;
+
 use clap::{Args, Subcommand};
 
 use crate::context::AppCtx;
@@ -67,6 +69,8 @@ pub enum HooksError {
     Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Hook(#[from] crate::hooks::HookError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 impl Op for Hooks {
@@ -181,13 +185,11 @@ impl Op for Hooks {
                 Ok(NoOutput)
             }
             HooksCommands::PostCommit { .. } => {
-                let repo = ctx.repo()?;
-                handle_post_commit(repo, &repo.paths.repo_root)?;
+                handle_post_commit(ctx.repo()?, &env::current_dir()?)?;
                 Ok(NoOutput)
             }
             HooksCommands::PostMerge { .. } => {
-                let repo = ctx.repo()?;
-                handle_post_merge(repo, &repo.paths.repo_root)?;
+                handle_post_merge(ctx.repo()?, &env::current_dir()?)?;
                 Ok(NoOutput)
             }
             HooksCommands::CommitMsg { file, .. } => {
