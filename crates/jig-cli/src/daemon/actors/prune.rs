@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use jig_core::git::{Repo, Worktree};
 
 use super::Actor;
+use crate::context::log::Logs;
 use crate::context::AppPaths;
 
 pub struct PruneTarget {
@@ -45,13 +46,30 @@ fn prune_single(paths: &AppPaths, target: &PruneTarget) -> std::result::Result<(
     if worktree_path.exists() {
         let wt = Worktree::open(&worktree_path)
             .map_err(|e| format!("failed to open worktree: {}", e))?;
-        wt.remove(false)
+        // The PR is merged or closed, so whatever is left in the tree is
+        // not work worth keeping — build output, scratch files, an edited
+        // lockfile. A non-forced remove refuses on any of it, and a fleet
+        // of agents leaves some behind in nearly every worktree, so the
+        // daemon would quietly stop pruning. Force, and say what went.
+        if wt.has_uncommitted_changes().unwrap_or(false) {
+            tracing::warn!(
+                worker = %target.worker_name,
+                "discarding uncommitted changes in pruned worktree"
+            );
+        }
+        wt.remove(true)
             .map_err(|e| format!("git worktree prune failed: {}", e))?;
     } else {
         let repo =
             Repo::open(&target.repo_path).map_err(|e| format!("failed to open repo: {}", e))?;
         repo.prune_stale_worktrees();
     }
+
+    // The worker's event log: left in place, a respawn of the same branch
+    // would wake up already `Merged`.
+    let _ = Logs::new(paths)
+        .worker_events(&target.repo_name, &target.worker_name)
+        .remove();
 
     {
         let events_dir = paths.events_dir();
