@@ -9,15 +9,15 @@ mod status;
 
 pub use status::{MuxStatus, WorkerStatus};
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use uuid::Uuid;
 
 use crate::context::log::{LogFile, Logs};
-use crate::context::AppPaths;
+use crate::context::{worktree_path, AppPaths, RepoCtx};
 use events::{Event, EventKind, TerminalKind, WorkerState};
 use jig_core::agents::Agent;
-use jig_core::exec::{Exec, ExecError};
+use jig_core::exec::ExecError;
 use jig_core::git::{Branch, Repo, Worktree, WorktreeRef};
 
 use jig_core::issues::issue::IssueRef;
@@ -59,6 +59,16 @@ pub enum WorkerError {
 
 /// How many lines of `setup.log` a setup failure quotes.
 const SETUP_EXCERPT_LINES: usize = 20;
+
+/// Whether [`Worker::setup`] runs the repo's `on_create` hook.
+///
+/// Skipping it (`jig create --no-hooks`) still copies the configured files:
+/// those are what make the worktree usable, not a user extension point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnCreate {
+    Run,
+    Skip,
+}
 
 /// Why [`Worker::setup`] couldn't make a fresh worktree ready to work in.
 #[derive(Debug, thiserror::Error)]
@@ -231,24 +241,23 @@ impl Worker {
         }
     }
 
+    /// Create the worktree, set it up, and start the repo's agent in it.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         paths: &AppPaths,
-        repo: &Repo,
+        repo: &RepoCtx,
         branch: &Branch,
         base: &Branch,
-        agent: &Agent,
         prompt: Prompt,
         auto: bool,
         issue_ref: Option<IssueRef>,
-        copy_files: &[PathBuf],
-        on_create: Option<Exec>,
         mux: &dyn Mux,
     ) -> Result<Self, WorkerError> {
+        let git = Repo::open(&repo.paths.repo_root)?;
         let worker = Self {
             id: Uuid::new_v4(),
             branch: branch.clone(),
-            path: WorktreeRef::new(crate::context::worktree_path(&repo.clone_path(), branch)),
+            path: WorktreeRef::new(worktree_path(&repo.paths.repo_root, branch)),
             issue_ref: issue_ref.clone(),
         };
         let branch_name = branch.to_string();
@@ -272,9 +281,9 @@ impl Worker {
             e
         };
 
-        Worktree::create(repo, branch, base).map_err(|e| failed(e.into()))?;
+        Worktree::create(&git, branch, base).map_err(|e| failed(e.into()))?;
         worker
-            .setup(paths, copy_files, on_create)
+            .setup(paths, repo, OnCreate::Run)
             .map_err(|e| failed(e.into()))?;
 
         let issue = issue_ref.unwrap_or_else(|| IssueRef::new(branch_name.clone()));
@@ -285,7 +294,7 @@ impl Worker {
         }));
 
         mux.create_window(&worker.branch, &worker.path)?;
-        let cmd = agent.spawn(prompt)?;
+        let cmd = repo.config.agent.agent().spawn(prompt)?;
         mux.send_keys(&worker.branch, &[&cmd, "Enter"])?;
 
         Ok(worker)
@@ -303,15 +312,15 @@ impl Worker {
     pub fn setup(
         &self,
         paths: &AppPaths,
-        copy_files: &[PathBuf],
-        on_create: Option<Exec>,
+        repo: &RepoCtx,
+        on_create: OnCreate,
     ) -> Result<(), SetupError> {
         let wt_path: &Path = &self.path;
-        let repo_root = self.repo_root().unwrap_or(wt_path);
+        let config = &repo.config.worktree;
 
-        for file in copy_files {
-            let src = repo_root.join(file);
-            let dst = wt_path.join(file);
+        for file in config.copy_paths() {
+            let src = repo.paths.repo_root.join(&file);
+            let dst = wt_path.join(&file);
             if src.exists() {
                 if let Some(parent) = dst.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -321,7 +330,11 @@ impl Worker {
         }
 
         let log = self.setup_log(paths);
-        let Some(hook) = on_create else {
+        let hook = match on_create {
+            OnCreate::Run => config.on_create(),
+            OnCreate::Skip => None,
+        };
+        let Some(hook) = hook else {
             // So a log from an earlier setup of this branch can't be
             // mistaken for this one's.
             let _ = log.remove();

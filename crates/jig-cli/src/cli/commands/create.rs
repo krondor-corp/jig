@@ -4,8 +4,8 @@ use clap::Args;
 use std::path::PathBuf;
 
 use crate::worker::events::{Event, EventKind};
-use crate::worker::{SetupError, Worker};
-use jig_core::git::Branch;
+use crate::worker::{OnCreate, SetupError, Worker};
+use jig_core::git::{Branch, Repo};
 use jig_core::Worktree;
 
 use crate::cli::op::Op;
@@ -84,19 +84,16 @@ impl Op for Create {
             None => repo.base_branch(&ctx.config),
         };
 
-        let git_repo = jig_core::Repo::open(&repo.paths.repo_root)?;
+        let git_repo = Repo::open(&repo.paths.repo_root)?;
         let branch = Branch::new(&self.branch);
-        let copy_files = repo.config.worktree.copy_paths();
-        // `--no-hooks` suppresses the hook, but not the file copying: the
-        // copies are what make the worktree usable, not a user extension point.
-        let on_create = if self.no_hooks {
-            None
-        } else {
-            repo.config.worktree.on_create()
-        };
         let wt = Worktree::create(&git_repo, &branch, &base_branch)?;
         let worker = Worker::from(&wt);
-        worker.setup(&ctx.paths, &copy_files, on_create)?;
+        let on_create = if self.no_hooks {
+            OnCreate::Skip
+        } else {
+            OnCreate::Run
+        };
+        worker.setup(&ctx.paths, repo, on_create)?;
 
         if let Err(e) = worker
             .event_log(&ctx.paths)
