@@ -5,45 +5,41 @@
 
 use std::path::Path;
 
-use crate::context::AppPaths;
+use crate::context::RepoCtx;
 use crate::worker::events::{Event, EventKind};
 use crate::worker::Worker;
+
+use super::HookError;
 use jig_core::git::conventional::ValidationConfig;
 use jig_core::git::Worktree;
 
 /// Handle post-commit hook: emit a Commit event with the HEAD SHA.
 ///
-/// Silently does nothing if not in a jig-managed worktree.
-pub fn handle_post_commit(paths: &AppPaths, repo_path: &Path) -> Result<(), super::HookError> {
-    let Some(wt) = open_worktree(repo_path) else {
+/// Silently does nothing if `dir` is not a jig-managed worktree.
+pub fn handle_post_commit(repo: &RepoCtx, dir: &Path) -> Result<(), HookError> {
+    let Some(wt) = worktree_at(dir) else {
         return Ok(());
     };
 
-    let repo_name = wt.repo_name();
-    let sha = wt.head_sha().unwrap_or_default();
-
-    let log = Worker::from(&wt).event_log(paths);
-    log.append(&Event::now(EventKind::Commit {
-        sha,
-        repo: repo_name,
+    let worker = Worker::open(repo, &wt.branch_name())?;
+    worker.event_log().append(&Event::now(EventKind::Commit {
+        sha: wt.head_sha().unwrap_or_default(),
+        repo: worker.repo_name(),
     }))?;
 
     Ok(())
 }
 
 /// Handle post-merge hook: emit a Push event.
-pub fn handle_post_merge(paths: &AppPaths, repo_path: &Path) -> Result<(), super::HookError> {
-    let Some(wt) = open_worktree(repo_path) else {
+pub fn handle_post_merge(repo: &RepoCtx, dir: &Path) -> Result<(), HookError> {
+    let Some(wt) = worktree_at(dir) else {
         return Ok(());
     };
 
-    let repo_name = wt.repo_name();
-    let sha = wt.head_sha().unwrap_or_default();
-
-    let log = Worker::from(&wt).event_log(paths);
-    log.append(&Event::now(EventKind::Push {
-        sha,
-        repo: repo_name,
+    let worker = Worker::open(repo, &wt.branch_name())?;
+    worker.event_log().append(&Event::now(EventKind::Push {
+        sha: wt.head_sha().unwrap_or_default(),
+        repo: worker.repo_name(),
     }))?;
 
     Ok(())
@@ -54,7 +50,7 @@ pub fn handle_post_merge(paths: &AppPaths, repo_path: &Path) -> Result<(), super
 /// Reads the commit message from the file path provided by git (the first argument).
 /// If a `[commits]` section exists in `jig.toml`, validates against those rules.
 /// Returns an error (blocking the commit) if validation fails.
-pub fn handle_commit_msg(_repo_path: &Path, commit_msg_file: &str) -> Result<(), super::HookError> {
+pub fn handle_commit_msg(_repo_path: &Path, commit_msg_file: &str) -> Result<(), HookError> {
     let message = std::fs::read_to_string(commit_msg_file)?;
 
     // Strip git comment lines (lines starting with #)
@@ -93,22 +89,11 @@ pub fn handle_commit_msg(_repo_path: &Path, commit_msg_file: &str) -> Result<(),
 }
 
 /// Handle pre-commit hook: currently a no-op.
-pub fn handle_pre_commit(_repo_path: &Path) -> Result<(), super::HookError> {
+pub fn handle_pre_commit(_repo_path: &Path) -> Result<(), HookError> {
     Ok(())
 }
 
-/// Try to open the path as a linked git worktree (jig-managed).
-fn open_worktree(repo_path: &Path) -> Option<Worktree> {
-    Worktree::open(repo_path).ok()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn open_worktree_not_in_worktree() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert!(open_worktree(tmp.path()).is_none());
-    }
+/// The jig worktree at `dir`, if there is one.
+fn worktree_at(dir: &Path) -> Option<Worktree> {
+    Worktree::open(dir).ok()
 }

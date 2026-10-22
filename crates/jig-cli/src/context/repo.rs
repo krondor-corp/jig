@@ -70,7 +70,8 @@ impl WorktreeConfig {
         Some(self.on_create.as_ref()?.exec("on_create hook"))
     }
 
-    /// The `copy` entries as paths, for [`crate::worker::Worker::setup`].
+    /// The `copy` entries as paths, copied into each new worktree by
+    /// [`Worker::create`](crate::worker::Worker::create).
     ///
     /// Relative to the repo root; resolved by the copier, not here.
     pub fn copy_paths(&self) -> Vec<PathBuf> {

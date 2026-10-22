@@ -3,6 +3,10 @@
 //! - Git hooks: wrapper scripts in `.git/hooks/` that call `jig hooks <name>`
 //! - Agent hooks: jig event scripts installed into an agent's hook system
 
+use jig_core::events::EventLogError;
+
+use crate::worker::WorkerError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum HookError {
     #[error(transparent)]
@@ -10,7 +14,9 @@ pub enum HookError {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
-    EventLog(#[from] jig_core::events::EventLogError),
+    EventLog(#[from] EventLogError),
+    #[error(transparent)]
+    Worker(#[from] WorkerError),
     #[error("{0}")]
     Validation(String),
 }

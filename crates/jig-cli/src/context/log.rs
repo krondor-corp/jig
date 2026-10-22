@@ -244,7 +244,7 @@ impl LogFile {
     /// with something on them, indented, then where to read the rest.
     ///
     /// Bounded however much was written — each line is cut to
-    /// [`EXCERPT_LINE_CHARS`]. A progress bar redraws with `\r`, so only what
+    /// `EXCERPT_LINE_CHARS`. A progress bar redraws with `\r`, so only what
     /// follows the last one on a line is kept: what a terminal would show.
     pub fn excerpt(&self, lines: usize) -> String {
         // Read past the blank lines that will be dropped.

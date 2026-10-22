@@ -124,16 +124,7 @@ impl Op for Spawn {
 
         let issue_ref = self.issue.as_deref().map(IssueRef::new);
         let mux = mux::for_repo(ctx.config.mux, &repo.name());
-        Worker::spawn(
-            &ctx.paths,
-            repo,
-            &branch,
-            &base_branch,
-            prompt,
-            false,
-            issue_ref,
-            &mux,
-        )?;
+        Worker::spawn(repo, &branch, &base_branch, prompt, false, issue_ref, &mux)?;
 
         if let Some(ref issue_id) = issue_id_for_status {
             if let Ok(provider) = repo.issue_provider(&ctx.config) {

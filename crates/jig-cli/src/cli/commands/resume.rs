@@ -2,8 +2,11 @@
 
 use clap::Args;
 
-use crate::worker::Worker;
-use jig_core::Worktree;
+use crate::context::ContextError;
+use crate::prompts::resume_task;
+use crate::worker::{Worker, WorkerError};
+use jig_core::git::Branch;
+use jig_core::mux;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
@@ -24,11 +27,9 @@ pub struct Resume {
 #[derive(Debug, thiserror::Error)]
 pub enum ResumeError {
     #[error(transparent)]
-    Ctx(#[from] crate::context::ContextError),
+    Ctx(#[from] ContextError),
     #[error(transparent)]
-    Worker(#[from] crate::worker::WorkerError),
-    #[error(transparent)]
-    Git(#[from] jig_core::GitError),
+    Worker(#[from] WorkerError),
     #[error("{0}")]
     Usage(String),
 }
@@ -43,23 +44,12 @@ impl Op for Resume {
     }
 
     fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
-        let repo_name = ctx.repo()?.name();
         let repo = ctx.repo()?;
-        let mux = jig_core::mux::for_repo(ctx.config.mux, &repo_name);
-
-        // Open existing worktree
-        let wt_path = repo.paths.worktrees_path.join(&self.branch);
-        if !wt_path.exists() {
-            return Err(ResumeError::Usage(format!(
-                "worktree '{}' not found",
-                self.branch
-            )));
-        }
-        let wt = Worktree::open(&wt_path)?;
+        let mux = mux::for_repo(ctx.config.mux, &repo.name());
+        let worker = Worker::open(repo, &Branch::new(&self.branch))?;
 
         // Error if mux window already exists
-        let pre = Worker::from(&wt);
-        if pre.has_mux_window(&mux) {
+        if worker.has_mux_window(&mux) {
             ui::failure(&format!(
                 "Worker '{}' already has a window. Use '{}' to attach.",
                 ui::highlight(&self.branch),
@@ -76,10 +66,7 @@ impl Op for Resume {
             .clone()
             .unwrap_or_else(|| "You were interrupted. Resume your previous task.".to_string());
 
-        let agent = repo.config.agent.agent();
-
-        let prompt = crate::prompts::resume_task(&effective_context);
-        Worker::resume(&ctx.paths, &wt, &agent, prompt, &mux)?;
+        worker.resume(repo, resume_task(&effective_context), &mux)?;
 
         ui::success(&format!("Resumed worker '{}'", ui::highlight(&self.branch)));
 

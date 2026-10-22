@@ -81,3 +81,40 @@ fn a_passing_setup_clears_an_old_log_when_there_is_no_hook() {
     sandbox.jig().args(["create", "feat"]).assert().success();
     assert!(!log.exists());
 }
+
+/// `jig create` goes through the same `Worker::create` as spawn, so a failed
+/// setup is recorded where `jig list` and `jig attach` look for it.
+#[test]
+fn a_failed_create_records_why_in_the_event_log() {
+    let sandbox = Sandbox::with_repo();
+    configure(&sandbox, "on_create = \"echo boom; exit 3\"\n");
+    let events = sandbox
+        .paths()
+        .worker_events_log(&repo_name(&sandbox), "feat");
+
+    sandbox.jig().args(["create", "feat"]).assert().failure();
+
+    let log = std::fs::read_to_string(&events).unwrap();
+    assert!(log.contains(r#""terminal":"failed""#), "{log}");
+    assert!(log.contains("exited with status 3"), "{log}");
+
+    sandbox
+        .jig()
+        .args(["ls"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("setup failed"));
+}
+
+#[test]
+fn resuming_a_worker_with_no_worktree_says_not_found() {
+    let sandbox = Sandbox::with_repo();
+    configure(&sandbox, "");
+
+    sandbox
+        .jig()
+        .args(["resume", "nope"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("worker 'nope' not found"));
+}

@@ -4,6 +4,7 @@ use clap::{Args, Subcommand};
 
 use crate::context::AppCtx;
 use crate::context::Ctx;
+use crate::hooks::{handle_post_commit, handle_post_merge};
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
@@ -180,11 +181,13 @@ impl Op for Hooks {
                 Ok(NoOutput)
             }
             HooksCommands::PostCommit { .. } => {
-                crate::hooks::handle_post_commit(&ctx.paths, &ctx.repo()?.paths.repo_root)?;
+                let repo = ctx.repo()?;
+                handle_post_commit(repo, &repo.paths.repo_root)?;
                 Ok(NoOutput)
             }
             HooksCommands::PostMerge { .. } => {
-                crate::hooks::handle_post_merge(&ctx.paths, &ctx.repo()?.paths.repo_root)?;
+                let repo = ctx.repo()?;
+                handle_post_merge(repo, &repo.paths.repo_root)?;
                 Ok(NoOutput)
             }
             HooksCommands::CommitMsg { file, .. } => {

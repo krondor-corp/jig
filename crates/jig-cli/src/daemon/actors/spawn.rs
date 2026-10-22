@@ -3,7 +3,7 @@
 
 use std::sync::Mutex;
 
-use crate::context::{worktree_path, RepoCtx};
+use crate::context::RepoCtx;
 use crate::prompts::spawn_task;
 use jig_core::git::{Branch, Repo};
 use jig_core::issues::issue::{IssueFilter, IssueStatus};
@@ -135,13 +135,12 @@ fn spawn_worker_for_issue(
     mux: &dyn Mux,
 ) -> std::result::Result<Worker, String> {
     let branch = issue.branch();
-    if worktree_path(&cfg.paths.repo_root, branch).exists() {
+    if let Ok(worker) = Worker::open(cfg, branch) {
         tracing::debug!(worker = %branch, "worktree already exists, skipping");
-        return Ok(Worker::from_branch(&cfg.paths.repo_root, branch.clone()));
+        return Ok(worker);
     }
 
     let worker = Worker::spawn(
-        &ctx.app.paths,
         cfg,
         branch,
         &cfg.base_branch(&ctx.app.config),

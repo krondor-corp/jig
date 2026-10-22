@@ -17,9 +17,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::context::log::Logs;
-use crate::context::{
-    AppConfig, AppCtx, AppPaths, ContextError, Ctx, RepoConfig, RepoEntry, RepoRegistry,
-};
+use crate::context::{AppConfig, AppCtx, AppPaths, ContextError, Ctx, RepoEntry, RepoRegistry};
+use jig_core::mux;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
@@ -126,10 +125,15 @@ impl Daemon {
     /// render a table — ticking, spawning and pruning as a side effect of
     /// being looked at. It reads state off disk instead.
     pub fn start(cfg: Ctx) -> Result<Self, DaemonError> {
-        log_startup(&cfg.paths);
-        recover_orphans(&cfg.paths, &cfg.config, &cfg.registry);
+        let app = Arc::new(AppCtx {
+            paths: cfg.paths,
+            config: cfg.config,
+            flags: cfg.flags,
+        });
+        log_startup(&app.paths);
+        recover_orphans(&app, &cfg.registry);
 
-        let last_poll = Instant::now() - Duration::from_secs(cfg.config.poll_interval + 1);
+        let last_poll = Instant::now() - Duration::from_secs(app.config.poll_interval + 1);
         let started_at = chrono::Utc::now().timestamp();
 
         let sync = ActorHandle::<SyncActor>::new();
@@ -152,7 +156,7 @@ impl Daemon {
             ticked_at: Arc::new(AtomicI64::new(started_at)),
             poll_deadline: Arc::new(AtomicI64::new(started_at)),
             started_at,
-            tick_interval: cfg.config.tick_interval,
+            tick_interval: app.config.tick_interval,
             log: crate::context::log::session_log().map(|l| l.path().to_path_buf()),
         };
 
@@ -162,11 +166,7 @@ impl Daemon {
             prune,
             spawn,
             triage,
-            app: Arc::new(AppCtx {
-                paths: cfg.paths,
-                config: cfg.config,
-                flags: cfg.flags,
-            }),
+            app,
             registry: cfg.registry,
             last_poll,
             shared,
@@ -299,25 +299,6 @@ impl Daemon {
     }
 }
 
-/// Try to resume a worker whose mux window is dead.
-fn try_resume_worker(
-    paths: &AppPaths,
-    repo_root: &std::path::Path,
-    worker_name: &str,
-    mux: &dyn jig_core::mux::Mux,
-) -> Result<bool, DaemonError> {
-    let worker = Worker::from_branch(repo_root, worker_name.into());
-    if worker.has_mux_window(mux) {
-        return Ok(false);
-    }
-    let wt = worker.worktree()?;
-    let jig_config = RepoConfig::load(repo_root)?.unwrap_or_default();
-    let agent = jig_config.agent.agent();
-    let prompt = crate::prompts::resume_task("You were interrupted. Resume your previous task.");
-    Worker::resume(paths, &wt, &agent, prompt, mux)?;
-    Ok(true)
-}
-
 /// Log the Started lifecycle event, noting if the previous run crashed.
 fn log_startup(paths: &AppPaths) {
     let log = Logs::new(paths).daemon_events();
@@ -345,24 +326,22 @@ fn log_startup(paths: &AppPaths) {
 }
 
 /// Resume workers whose mux window died, if `auto_recover` is on.
-fn recover_orphans(paths: &AppPaths, global_config: &AppConfig, registry: &RepoRegistry) {
-    if global_config.auto_recover {
+fn recover_orphans(app: &AppCtx, registry: &RepoRegistry) {
+    if app.config.auto_recover {
         let mut recovered = Vec::new();
         for entry in registry.repos() {
-            let repo_name = entry
-                .path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let repo = match jig_core::git::Repo::open(&entry.path) {
-                Ok(r) => r,
-                Err(_) => continue,
+            let Ok(repo) = app.repo_at(&entry.path) else {
+                continue;
             };
-            let mux = jig_core::mux::for_repo(global_config.mux, &repo_name);
-            for worker in Worker::discover(&repo) {
-                if worker.is_orphaned(paths, &mux) {
+            let Ok(workers) = Worker::discover(&repo) else {
+                continue;
+            };
+            let repo_name = repo.name();
+            let mux = mux::for_repo(app.config.mux, &repo_name);
+            for worker in workers {
+                if worker.is_orphaned(&mux) {
                     let branch = worker.branch().to_string();
-                    match try_resume_worker(paths, &entry.path, &branch, &mux) {
+                    match worker.recover(&repo, &mux) {
                         Ok(true) => {
                             tracing::info!(repo = %repo_name, worker = %branch, "recovered");
                             recovered.push((repo_name.clone(), branch));

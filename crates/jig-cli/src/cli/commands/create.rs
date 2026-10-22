@@ -3,14 +3,13 @@
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::worker::events::{Event, EventKind};
-use crate::worker::{OnCreate, SetupError, Worker};
-use jig_core::git::{Branch, Repo};
-use jig_core::Worktree;
+use crate::worker::{OnCreate, Worker, WorkerError};
+use jig_core::git::Branch;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::AppCtx;
+use crate::context::ContextError;
 use crate::context::Ctx;
 
 /// Create a new worktree.
@@ -59,11 +58,9 @@ impl std::fmt::Display for CreateOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum CreateError {
     #[error(transparent)]
-    Ctx(#[from] crate::context::ContextError),
+    Ctx(#[from] ContextError),
     #[error(transparent)]
-    Git(#[from] jig_core::GitError),
-    #[error(transparent)]
-    Setup(#[from] SetupError),
+    Worker(#[from] WorkerError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -84,25 +81,13 @@ impl Op for Create {
             None => repo.base_branch(&ctx.config),
         };
 
-        let git_repo = Repo::open(&repo.paths.repo_root)?;
         let branch = Branch::new(&self.branch);
-        let wt = Worktree::create(&git_repo, &branch, &base_branch)?;
-        let worker = Worker::from(&wt);
         let on_create = if self.no_hooks {
             OnCreate::Skip
         } else {
             OnCreate::Run
         };
-        worker.setup(&ctx.paths, repo, on_create)?;
-
-        if let Err(e) = worker
-            .event_log(&ctx.paths)
-            .append(&Event::now(EventKind::Create {
-                branch: branch.to_string(),
-            }))
-        {
-            tracing::warn!(branch = %self.branch, error = %e, "failed to emit Create event");
-        }
+        let worker = Worker::create(repo, &branch, &base_branch, on_create)?;
 
         ui::success(&format!(
             "Created worktree on branch '{}'",
@@ -111,7 +96,7 @@ impl Op for Create {
 
         // Output cd command if -o flag
         if self.open {
-            let canonical = wt.path().canonicalize()?;
+            let canonical = worker.path().canonicalize()?;
             Ok(CreateOutput::Cd(canonical))
         } else {
             Ok(CreateOutput::None)
