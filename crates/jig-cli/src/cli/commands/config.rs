@@ -124,10 +124,7 @@ fn handle_mux(
             let mut global_cfg = GlobalConfig::load(paths)?;
             global_cfg.mux = kind;
             global_cfg.save(paths)?;
-            ui::success(&format!(
-                "Set mux backend to '{}'",
-                ui::highlight(&kind.to_string())
-            ));
+            ui::success(&format!("Set mux backend to '{}'", ui::highlight(kind)));
             Ok(ConfigOutput(None))
         }
         None => {
@@ -163,7 +160,7 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
     eprintln!(
         "  {} {} {}",
         ui::dim("Poll interval:"),
-        ui::highlight(&format!("{}s", global.poll_interval)),
+        ui::highlight(format!("{}s", global.poll_interval)),
         src("global config")
     );
 
@@ -174,7 +171,7 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
     eprintln!(
         "  {} {} {}",
         ui::dim("Silence threshold:"),
-        ui::highlight(&format!("{}s", global.silence_threshold_seconds)),
+        ui::highlight(format!("{}s", global.silence_threshold_seconds)),
         src("global config")
     );
     // -- Notify --
@@ -192,7 +189,7 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
             eprintln!(
                 "  {} {}",
                 ui::dim("Events:"),
-                ui::highlight(&global.notify.events.join(", "))
+                ui::highlight(global.notify.events.join(", "))
             );
         }
     }
@@ -204,12 +201,12 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
     eprintln!(
         "  {} {}",
         ui::dim("Auto-recover:"),
-        ui::highlight(&global.auto_recover.to_string())
+        ui::highlight(global.auto_recover)
     );
     eprintln!(
         "  {} {}",
         ui::dim("Tick interval:"),
-        ui::highlight(&format!("{}s", global.tick_interval))
+        ui::highlight(format!("{}s", global.tick_interval))
     );
     eprintln!(
         "  {} {}",
@@ -219,7 +216,7 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
     eprintln!(
         "  {} {}",
         ui::dim("Mux backend:"),
-        ui::highlight(&global.mux.to_string())
+        ui::highlight(global.mux)
     );
 
     Ok(ConfigOutput(None))
@@ -276,7 +273,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
     eprintln!(
         "  {} {} {}",
         ui::dim("Type:"),
-        ui::highlight(&display.agent_type.to_string()),
+        ui::highlight(display.agent_type),
         src(&display.agent_source)
     );
 
@@ -309,7 +306,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
             eprintln!(
                 "  {} {} {}",
                 ui::dim("Projects:"),
-                ui::highlight(&linear.projects.join(", ")),
+                ui::highlight(linear.projects.join(", ")),
                 src(&display.issues_source)
             );
         }
@@ -325,7 +322,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
             eprintln!(
                 "  {} {} {}",
                 ui::dim("Labels:"),
-                ui::highlight(&linear.labels.join(", ")),
+                ui::highlight(linear.labels.join(", ")),
                 src(&display.issues_source)
             );
         }
@@ -346,7 +343,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
             eprintln!(
                 "  {} {} {}",
                 ui::dim("Auto-spawn:"),
-                ui::highlight(&labels.join(", ")),
+                ui::highlight(labels.join(", ")),
                 src(&display.issues_source)
             );
         }
@@ -359,7 +356,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
     eprintln!(
         "  {} {} {}",
         ui::dim("Poll interval:"),
-        ui::highlight(&format!("{}s", display.poll_interval)),
+        ui::highlight(format!("{}s", display.poll_interval)),
         src("global config")
     );
 
@@ -370,7 +367,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
     eprintln!(
         "  {} {}",
         ui::dim("Silence threshold:"),
-        ui::highlight(&format!("{}s", display.global.silence_threshold_seconds)),
+        ui::highlight(format!("{}s", display.global.silence_threshold_seconds)),
     );
 
     Ok(ConfigOutput(None))

@@ -63,7 +63,7 @@ impl Op for Resume {
             ui::failure(&format!(
                 "Worker '{}' already has a window. Use '{}' to attach.",
                 ui::highlight(&self.branch),
-                ui::highlight(&format!("jig attach {}", self.branch))
+                ui::highlight(format!("jig attach {}", self.branch))
             ));
             return Err(ResumeError::Usage(format!(
                 "Worker '{}' already running — use `jig attach` instead",
@@ -86,7 +86,7 @@ impl Op for Resume {
         eprintln!();
         eprintln!(
             "  Use '{}' to attach",
-            ui::highlight(&format!("jig attach {}", self.branch))
+            ui::highlight(format!("jig attach {}", self.branch))
         );
         eprintln!("  Use '{}' to check status", ui::highlight("jig ps"));
 

@@ -64,7 +64,7 @@ impl Op for Create {
 
         ui::detail(&format!(
             "Base: {} → {}",
-            ui::highlight(&branch.to_string()),
+            ui::highlight(&branch),
             ui::highlight(base_for_gh)
         ));
 

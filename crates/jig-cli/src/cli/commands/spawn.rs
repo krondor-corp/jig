@@ -158,7 +158,7 @@ impl Op for Spawn {
         eprintln!();
         eprintln!(
             "  Use '{}' to attach",
-            ui::highlight(&format!("jig attach {}", branch))
+            ui::highlight(format!("jig attach {}", branch))
         );
         eprintln!("  Use '{}' to check status", ui::highlight("jig ps"));
 
