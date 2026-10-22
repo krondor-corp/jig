@@ -1,5 +1,6 @@
 //! Generic append-only JSONL event log.
 
+use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -63,6 +64,22 @@ impl<K: ReducibleKind> Reducible for Event<K> {
 pub struct EventLog<E> {
     pub path: PathBuf,
     _phantom: std::marker::PhantomData<E>,
+}
+
+// By hand: deriving would demand `E: Clone + Debug`, and `E` is only a
+// marker for what the file holds.
+impl<E> Clone for EventLog<E> {
+    fn clone(&self) -> Self {
+        Self::new(self.path.clone())
+    }
+}
+
+impl<E> fmt::Debug for EventLog<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EventLog")
+            .field("path", &self.path)
+            .finish()
+    }
 }
 
 impl<E> EventLog<E> {

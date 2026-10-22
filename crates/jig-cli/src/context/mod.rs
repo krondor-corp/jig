@@ -65,40 +65,49 @@ pub struct RepoPaths {
     pub git_common_dir: PathBuf,
 }
 
-/// A repo jig knows about: where it is, and how it is configured.
+/// A repo jig knows about: where it is, how it is configured, and where jig
+/// keeps its state for it.
 ///
 /// Mirrors [`AppCtx`] one level down — paths plus the config that governs
-/// them.
+/// them. Carries jig's own [`AppPaths`] too, so anything scoped to a repo
+/// (its workers, their logs) needs nothing but this. Built from the app
+/// context — [`AppCtx::repo_here`], [`AppCtx::repo_at`] — or handed out by
+/// [`Ctx::repo`].
 pub struct RepoCtx {
     pub paths: RepoPaths,
     pub config: RepoConfig,
+    pub app_paths: AppPaths,
 }
 
 impl RepoCtx {
-    pub fn from_cwd() -> Result<Self, ContextError> {
+    fn from_cwd(app_paths: &AppPaths) -> Result<Self, ContextError> {
         let git_repo = Repo::discover()?;
         let git_common_dir = git_repo.common_dir();
         let repo_root = git_common_dir
             .parent()
             .unwrap_or(&git_common_dir)
             .to_path_buf();
-        Self::build(repo_root, git_common_dir)
+        Self::build(app_paths, repo_root, git_common_dir)
     }
 
-    pub fn from_path(path: &Path) -> Result<Self, ContextError> {
+    fn from_path(app_paths: &AppPaths, path: &Path) -> Result<Self, ContextError> {
         let git_repo = Repo::open(path)?;
         let git_common_dir = git_repo.common_dir();
         let repo_root = git_common_dir
             .parent()
             .unwrap_or(&git_common_dir)
             .to_path_buf();
-        Self::build(repo_root, git_common_dir)
+        Self::build(app_paths, repo_root, git_common_dir)
     }
 
     /// A missing `jig.toml` is fine and yields defaults. A malformed one is
     /// an error — silently falling back would drop the agent, issue provider
     /// and hooks the user thought they had configured.
-    fn build(repo_root: PathBuf, git_common_dir: PathBuf) -> Result<Self, ContextError> {
+    fn build(
+        app_paths: &AppPaths,
+        repo_root: PathBuf,
+        git_common_dir: PathBuf,
+    ) -> Result<Self, ContextError> {
         let worktrees_path = repo_root.join(JIG_DIR);
         let config = RepoConfig::load(&repo_root)?.unwrap_or_default();
         Ok(Self {
@@ -108,7 +117,13 @@ impl RepoCtx {
                 git_common_dir,
             },
             config,
+            app_paths: app_paths.clone(),
         })
+    }
+
+    /// Every log jig keeps — see [`log::Logs`].
+    pub fn logs(&self) -> log::Logs<'_> {
+        log::Logs::new(&self.app_paths)
     }
 
     /// Effective base branch: jig.toml > global config > "origin/main"
@@ -251,6 +266,16 @@ impl AppCtx {
         log::Logs::new(&self.paths)
     }
 
+    /// The repo containing the current directory.
+    pub fn repo_here(&self) -> Result<RepoCtx, ContextError> {
+        RepoCtx::from_cwd(&self.paths)
+    }
+
+    /// The repo at `path` (its root, or anywhere inside it).
+    pub fn repo_at(&self, path: &Path) -> Result<RepoCtx, ContextError> {
+        RepoCtx::from_path(&self.paths, path)
+    }
+
     /// Process-wide state, set once.
     ///
     /// Everything here writes a global — a C library's settings, or a static
@@ -293,7 +318,7 @@ impl Ctx {
     /// wins, which is fine for a path list, and a filesystem problem must not
     /// fail an unrelated command.
     pub fn here(app: AppCtx) -> Result<Self, ContextError> {
-        let repo = RepoCtx::from_cwd()?;
+        let repo = app.repo_here()?;
         register_globally(&app.paths, &repo.paths.repo_root);
         let mut registry = RepoRegistry::default();
         registry.register(repo.paths.repo_root.clone());
@@ -313,7 +338,7 @@ impl Ctx {
             .repos()
             .iter()
             .filter(|e| e.path.exists())
-            .filter_map(|e| RepoCtx::from_path(&e.path).ok())
+            .filter_map(|e| app.repo_at(&e.path).ok())
             .collect();
         Ok(Self {
             paths: app.paths,

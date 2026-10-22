@@ -119,7 +119,7 @@ fn report_not_running(paths: &AppPaths) {
             ));
             ui::detail(&format!(
                 "kill it with {}",
-                ui::highlight(&format!("kill {pid}"))
+                ui::highlight(format!("kill {pid}"))
             ));
         }
         _ => {

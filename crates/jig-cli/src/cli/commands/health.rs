@@ -8,7 +8,6 @@ use crate::terminal::check_dep;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
-use crate::context::RepoCtx;
 
 /// Show terminal and dependency status
 #[derive(Args, Debug, Clone)]
@@ -99,7 +98,7 @@ impl Op for Health {
         // Health reports on the repo you are standing in, if any — being
         // outside one is a finding, not a failure. A repo whose config won't
         // load is a failure, and says why.
-        match RepoCtx::from_cwd() {
+        match app.repo_here() {
             Ok(repo) => {
                 let repo_name = repo.name();
                 ui::header(&format!("Repository: {}", repo_name));

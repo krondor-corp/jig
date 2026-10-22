@@ -247,6 +247,9 @@ impl WorkerSnapshot {
             pr_changes_requested: self.pr_changes_requested,
             pr_bad_commits: self.pr_bad_commits.clone(),
             is_draft: self.is_draft,
+            // Not on the wire: `ps` doesn't render it, and failed workers
+            // aren't in the frame anyway.
+            terminal_reason: None,
 
             repo: self.repo.clone(),
             name: self.name.clone(),

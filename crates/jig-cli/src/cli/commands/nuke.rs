@@ -100,7 +100,7 @@ fn nuke_repo(
         }
         ui::success(&format!(
             "Removed worktree '{}'",
-            ui::highlight(&wt.branch_name())
+            ui::highlight(wt.branch_name())
         ));
     }
 

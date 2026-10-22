@@ -17,7 +17,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::context::log::Logs;
-use crate::context::{AppConfig, AppPaths, ContextError, Ctx, RepoConfig, RepoEntry, RepoRegistry};
+use crate::context::{AppConfig, AppCtx, AppPaths, ContextError, Ctx, RepoEntry, RepoRegistry};
+use jig_core::mux;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
@@ -34,8 +35,7 @@ pub enum DaemonError {
 /// Shared context built once per daemon tick, passed to all actors.
 #[derive(Clone)]
 pub struct TickContext {
-    pub paths: AppPaths,
-    pub config: Arc<AppConfig>,
+    pub app: Arc<AppCtx>,
     pub repos: Arc<Vec<RepoEntry>>,
     pub session_prefix: String,
 }
@@ -111,8 +111,7 @@ pub struct Daemon {
     pub spawn: ActorHandle<SpawnActor>,
     pub triage: ActorHandle<TriageActor>,
 
-    paths: AppPaths,
-    config: AppConfig,
+    app: Arc<AppCtx>,
     registry: RepoRegistry,
     last_poll: Instant,
     shared: DaemonShared,
@@ -126,10 +125,15 @@ impl Daemon {
     /// render a table — ticking, spawning and pruning as a side effect of
     /// being looked at. It reads state off disk instead.
     pub fn start(cfg: Ctx) -> Result<Self, DaemonError> {
-        log_startup(&cfg.paths);
-        recover_orphans(&cfg.paths, &cfg.config, &cfg.registry);
+        let app = Arc::new(AppCtx {
+            paths: cfg.paths,
+            config: cfg.config,
+            flags: cfg.flags,
+        });
+        log_startup(&app.paths);
+        recover_orphans(&app, &cfg.registry);
 
-        let last_poll = Instant::now() - Duration::from_secs(cfg.config.poll_interval + 1);
+        let last_poll = Instant::now() - Duration::from_secs(app.config.poll_interval + 1);
         let started_at = chrono::Utc::now().timestamp();
 
         let sync = ActorHandle::<SyncActor>::new();
@@ -152,7 +156,7 @@ impl Daemon {
             ticked_at: Arc::new(AtomicI64::new(started_at)),
             poll_deadline: Arc::new(AtomicI64::new(started_at)),
             started_at,
-            tick_interval: cfg.config.tick_interval,
+            tick_interval: app.config.tick_interval,
             log: crate::context::log::session_log().map(|l| l.path().to_path_buf()),
         };
 
@@ -162,8 +166,7 @@ impl Daemon {
             prune,
             spawn,
             triage,
-            paths: cfg.paths,
-            config: cfg.config,
+            app,
             registry: cfg.registry,
             last_poll,
             shared,
@@ -171,7 +174,7 @@ impl Daemon {
     }
 
     pub fn config(&self) -> &AppConfig {
-        &self.config
+        &self.app.config
     }
 
     /// A handle the IPC listener can hold while the tick loop keeps running.
@@ -225,30 +228,31 @@ impl Daemon {
                     if quit.load(Ordering::Relaxed) {
                         break;
                     }
-                    std::thread::sleep(Duration::from_secs(self.config.tick_interval));
+                    std::thread::sleep(Duration::from_secs(self.app.config.tick_interval));
                 }
             }
         }
-        log_shutdown(&self.paths, "normal");
+        log_shutdown(&self.app.paths, "normal");
     }
 
     /// Whether the poll interval has elapsed.
     pub fn poll_is_due(&self) -> bool {
-        self.last_poll.elapsed().as_secs() >= self.config.poll_interval
+        self.last_poll.elapsed().as_secs() >= self.app.config.poll_interval
     }
 
     /// Mark that a poll tick just fired.
     fn mark_polled(&mut self) {
         self.last_poll = Instant::now();
         self.shared.poll_deadline.store(
-            chrono::Utc::now().timestamp() + self.config.poll_interval as i64,
+            chrono::Utc::now().timestamp() + self.app.config.poll_interval as i64,
             Ordering::Relaxed,
         );
     }
 
     /// Seconds until the next poll tick.
     pub fn poll_remaining_secs(&self) -> u64 {
-        self.config
+        self.app
+            .config
             .poll_interval
             .saturating_sub(self.last_poll.elapsed().as_secs())
     }
@@ -256,10 +260,9 @@ impl Daemon {
     /// Execute a single tick of the daemon.
     pub fn tick(&mut self) -> Result<(), DaemonError> {
         let ctx = TickContext {
-            paths: self.paths.clone(),
-            config: Arc::new(self.config.clone()),
+            app: Arc::clone(&self.app),
             repos: Arc::new(self.registry.repos().to_vec()),
-            session_prefix: self.config.session_prefix.clone(),
+            session_prefix: self.app.config.session_prefix.clone(),
         };
 
         // Send monitor request every tick
@@ -270,7 +273,7 @@ impl Daemon {
         let prune_targets: Vec<_> = self.monitor.drain().into_iter().flatten().collect();
         if !prune_targets.is_empty() {
             self.prune.send(actors::prune::PruneRequest {
-                paths: self.paths.clone(),
+                paths: self.app.paths.clone(),
                 targets: prune_targets,
             });
         }
@@ -294,25 +297,6 @@ impl Daemon {
 
         Ok(())
     }
-}
-
-/// Try to resume a worker whose mux window is dead.
-fn try_resume_worker(
-    paths: &AppPaths,
-    repo_root: &std::path::Path,
-    worker_name: &str,
-    mux: &dyn jig_core::mux::Mux,
-) -> Result<bool, DaemonError> {
-    let worker = Worker::from_branch(repo_root, worker_name.into());
-    if worker.has_mux_window(mux) {
-        return Ok(false);
-    }
-    let wt = worker.worktree()?;
-    let jig_config = RepoConfig::load(repo_root)?.unwrap_or_default();
-    let agent = jig_config.agent.agent();
-    let prompt = crate::prompts::resume_task("You were interrupted. Resume your previous task.");
-    Worker::resume(paths, &wt, &agent, prompt, mux)?;
-    Ok(true)
 }
 
 /// Log the Started lifecycle event, noting if the previous run crashed.
@@ -342,24 +326,22 @@ fn log_startup(paths: &AppPaths) {
 }
 
 /// Resume workers whose mux window died, if `auto_recover` is on.
-fn recover_orphans(paths: &AppPaths, global_config: &AppConfig, registry: &RepoRegistry) {
-    if global_config.auto_recover {
+fn recover_orphans(app: &AppCtx, registry: &RepoRegistry) {
+    if app.config.auto_recover {
         let mut recovered = Vec::new();
         for entry in registry.repos() {
-            let repo_name = entry
-                .path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let repo = match jig_core::git::Repo::open(&entry.path) {
-                Ok(r) => r,
-                Err(_) => continue,
+            let Ok(repo) = app.repo_at(&entry.path) else {
+                continue;
             };
-            let mux = jig_core::mux::for_repo(global_config.mux, &repo_name);
-            for worker in Worker::discover(&repo) {
-                if worker.is_orphaned(paths, &mux) {
+            let Ok(workers) = Worker::discover(&repo) else {
+                continue;
+            };
+            let repo_name = repo.name();
+            let mux = mux::for_repo(app.config.mux, &repo_name);
+            for worker in workers {
+                if worker.is_orphaned(&mux) {
                     let branch = worker.branch().to_string();
-                    match try_resume_worker(paths, &entry.path, &branch, &mux) {
+                    match worker.recover(&repo, &mux) {
                         Ok(true) => {
                             tracing::info!(repo = %repo_name, worker = %branch, "recovered");
                             recovered.push((repo_name.clone(), branch));

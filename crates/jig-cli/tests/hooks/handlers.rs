@@ -1,5 +1,6 @@
 //! The git hook handlers that `jig hooks <name>` runs.
 
+use jig_cli::context::{AppCtx, Flags};
 use jig_cli::hooks::handlers::*;
 
 use crate::common::Sandbox;
@@ -48,14 +49,20 @@ fn commit_msg_empty_after_stripping_comments() {
 
 #[test]
 fn post_commit_outside_worktree_is_noop() {
-    let sandbox = Sandbox::new();
+    let sandbox = Sandbox::with_repo();
+    let repo = AppCtx::load(sandbox.paths(), Flags::default())
+        .repo_at(sandbox.work_dir())
+        .unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    assert!(handle_post_commit(&sandbox.paths(), tmp.path()).is_ok());
+    assert!(handle_post_commit(&repo, tmp.path()).is_ok());
 }
 
 #[test]
 fn post_merge_outside_worktree_is_noop() {
-    let sandbox = Sandbox::new();
+    let sandbox = Sandbox::with_repo();
+    let repo = AppCtx::load(sandbox.paths(), Flags::default())
+        .repo_at(sandbox.work_dir())
+        .unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    assert!(handle_post_merge(&sandbox.paths(), tmp.path()).is_ok());
+    assert!(handle_post_merge(&repo, tmp.path()).is_ok());
 }

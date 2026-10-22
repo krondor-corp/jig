@@ -113,9 +113,6 @@ impl Frame {
             if scope.is_some_and(|root| entry.repo_root != root) {
                 continue;
             }
-            let Ok(repo) = jig_core::git::Repo::open(&entry.repo_root) else {
-                continue;
-            };
             let repo_name = repo_ctx.name();
             let mux = jig_core::mux::for_repo_with_prefix(
                 ctx.config.mux,
@@ -123,9 +120,12 @@ impl Frame {
                 &repo_name,
             );
 
-            for worker in Worker::discover(&repo) {
+            let Ok(discovered) = Worker::discover(repo_ctx) else {
+                continue;
+            };
+            for worker in discovered {
                 let name = worker.branch().to_string();
-                let Ok(mut state) = worker.log(&ctx.paths).reduce() else {
+                let Ok(mut state) = worker.event_log().reduce() else {
                     continue;
                 };
                 state.check_silence(&ctx.config);

@@ -83,34 +83,33 @@ pub enum ConfigError {
 }
 
 impl Op for Config {
-    type Context = AppPaths;
+    type Context = AppCtx;
     type Error = ConfigError;
     type Output = ConfigOutput;
 
-    fn build_context(&self, app: AppCtx) -> Result<AppPaths, ConfigError> {
-        Ok(app.paths)
+    fn build_context(&self, app: AppCtx) -> Result<AppCtx, ConfigError> {
+        Ok(app)
     }
 
-    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
-        let paths = &paths;
+    fn run(&self, app: AppCtx) -> Result<Self::Output, Self::Error> {
         if self.list {
-            return show_list(paths);
+            return show_list(&app.paths);
         }
 
         match &self.subcommand {
-            None | Some(ConfigCommands::Show) => match RepoCtx::from_cwd() {
-                Ok(repo) => show_config(paths, &repo),
-                Err(_) => show_global_config(paths),
+            None | Some(ConfigCommands::Show) => match app.repo_here() {
+                Ok(repo) => show_config(&app.paths, &repo),
+                Err(_) => show_global_config(&app.paths),
             },
             Some(ConfigCommands::Base {
                 branch,
                 global,
                 unset,
-            }) => handle_base(paths, branch.as_deref(), *global, *unset),
+            }) => handle_base(&app, branch.as_deref(), *global, *unset),
             Some(ConfigCommands::OnCreate { command, unset }) => {
-                handle_on_create(command.as_deref(), *unset)
+                handle_on_create(&app, command.as_deref(), *unset)
             }
-            Some(ConfigCommands::Mux { backend }) => handle_mux(paths, *backend),
+            Some(ConfigCommands::Mux { backend }) => handle_mux(&app.paths, *backend),
         }
     }
 }
@@ -124,10 +123,7 @@ fn handle_mux(
             let mut global_cfg = GlobalConfig::load(paths)?;
             global_cfg.mux = kind;
             global_cfg.save(paths)?;
-            ui::success(&format!(
-                "Set mux backend to '{}'",
-                ui::highlight(&kind.to_string())
-            ));
+            ui::success(&format!("Set mux backend to '{}'", ui::highlight(kind)));
             Ok(ConfigOutput(None))
         }
         None => {
@@ -163,7 +159,7 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
     eprintln!(
         "  {} {} {}",
         ui::dim("Poll interval:"),
-        ui::highlight(&format!("{}s", global.poll_interval)),
+        ui::highlight(format!("{}s", global.poll_interval)),
         src("global config")
     );
 
@@ -174,7 +170,7 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
     eprintln!(
         "  {} {} {}",
         ui::dim("Silence threshold:"),
-        ui::highlight(&format!("{}s", global.silence_threshold_seconds)),
+        ui::highlight(format!("{}s", global.silence_threshold_seconds)),
         src("global config")
     );
     // -- Notify --
@@ -192,7 +188,7 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
             eprintln!(
                 "  {} {}",
                 ui::dim("Events:"),
-                ui::highlight(&global.notify.events.join(", "))
+                ui::highlight(global.notify.events.join(", "))
             );
         }
     }
@@ -204,12 +200,12 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
     eprintln!(
         "  {} {}",
         ui::dim("Auto-recover:"),
-        ui::highlight(&global.auto_recover.to_string())
+        ui::highlight(global.auto_recover)
     );
     eprintln!(
         "  {} {}",
         ui::dim("Tick interval:"),
-        ui::highlight(&format!("{}s", global.tick_interval))
+        ui::highlight(format!("{}s", global.tick_interval))
     );
     eprintln!(
         "  {} {}",
@@ -219,7 +215,7 @@ fn show_global_config(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
     eprintln!(
         "  {} {}",
         ui::dim("Mux backend:"),
-        ui::highlight(&global.mux.to_string())
+        ui::highlight(global.mux)
     );
 
     Ok(ConfigOutput(None))
@@ -276,7 +272,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
     eprintln!(
         "  {} {} {}",
         ui::dim("Type:"),
-        ui::highlight(&display.agent_type.to_string()),
+        ui::highlight(display.agent_type),
         src(&display.agent_source)
     );
 
@@ -309,7 +305,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
             eprintln!(
                 "  {} {} {}",
                 ui::dim("Projects:"),
-                ui::highlight(&linear.projects.join(", ")),
+                ui::highlight(linear.projects.join(", ")),
                 src(&display.issues_source)
             );
         }
@@ -325,7 +321,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
             eprintln!(
                 "  {} {} {}",
                 ui::dim("Labels:"),
-                ui::highlight(&linear.labels.join(", ")),
+                ui::highlight(linear.labels.join(", ")),
                 src(&display.issues_source)
             );
         }
@@ -346,7 +342,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
             eprintln!(
                 "  {} {} {}",
                 ui::dim("Auto-spawn:"),
-                ui::highlight(&labels.join(", ")),
+                ui::highlight(labels.join(", ")),
                 src(&display.issues_source)
             );
         }
@@ -359,7 +355,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
     eprintln!(
         "  {} {} {}",
         ui::dim("Poll interval:"),
-        ui::highlight(&format!("{}s", display.poll_interval)),
+        ui::highlight(format!("{}s", display.poll_interval)),
         src("global config")
     );
 
@@ -370,7 +366,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
     eprintln!(
         "  {} {}",
         ui::dim("Silence threshold:"),
-        ui::highlight(&format!("{}s", display.global.silence_threshold_seconds)),
+        ui::highlight(format!("{}s", display.global.silence_threshold_seconds)),
     );
 
     Ok(ConfigOutput(None))
@@ -381,19 +377,19 @@ fn show_list(paths: &AppPaths) -> Result<ConfigOutput, ConfigError> {
 }
 
 fn handle_base(
-    paths: &AppPaths,
+    app: &AppCtx,
     branch: Option<&str>,
     global: bool,
     unset: bool,
 ) -> Result<ConfigOutput, ConfigError> {
     if unset {
         if global {
-            let mut global_cfg = GlobalConfig::load(paths)?;
+            let mut global_cfg = GlobalConfig::load(&app.paths)?;
             global_cfg.default_base_branch = None;
-            global_cfg.save(paths)?;
+            global_cfg.save(&app.paths)?;
             ui::success("Unset global base branch");
         } else {
-            let repo = RepoCtx::from_cwd()?;
+            let repo = app.repo_here()?;
             context::update_local_toml(&repo.paths.repo_root, "worktree", "base", None)?;
             ui::success("Unset repo base branch");
         }
@@ -403,12 +399,12 @@ fn handle_base(
     match branch {
         Some(b) => {
             if global {
-                let mut global_cfg = GlobalConfig::load(paths)?;
+                let mut global_cfg = GlobalConfig::load(&app.paths)?;
                 global_cfg.default_base_branch = Some(b.to_string());
-                global_cfg.save(paths)?;
+                global_cfg.save(&app.paths)?;
                 ui::success(&format!("Set global base branch to '{}'", ui::highlight(b)));
             } else {
-                let repo = RepoCtx::from_cwd()?;
+                let repo = app.repo_here()?;
                 context::update_local_toml(&repo.paths.repo_root, "worktree", "base", Some(b))?;
                 ui::success(&format!("Set repo base branch to '{}'", ui::highlight(b)));
             }
@@ -416,7 +412,7 @@ fn handle_base(
         }
         None => {
             if global {
-                let global_cfg = GlobalConfig::load(paths)?;
+                let global_cfg = GlobalConfig::load(&app.paths)?;
                 match global_cfg.default_base_branch {
                     Some(b) => Ok(ConfigOutput(Some(b))),
                     None => {
@@ -425,16 +421,21 @@ fn handle_base(
                     }
                 }
             } else {
-                let repo = RepoCtx::from_cwd()?;
-                let config = crate::context::AppConfig::load(paths)?;
-                Ok(ConfigOutput(Some(repo.base_branch(&config).to_string())))
+                let repo = app.repo_here()?;
+                Ok(ConfigOutput(Some(
+                    repo.base_branch(&app.config).to_string(),
+                )))
             }
         }
     }
 }
 
-fn handle_on_create(command: Option<&str>, unset: bool) -> Result<ConfigOutput, ConfigError> {
-    let repo = RepoCtx::from_cwd()?;
+fn handle_on_create(
+    app: &AppCtx,
+    command: Option<&str>,
+    unset: bool,
+) -> Result<ConfigOutput, ConfigError> {
+    let repo = app.repo_here()?;
 
     if unset {
         context::update_local_toml(&repo.paths.repo_root, "worktree", "on_create", None)?;

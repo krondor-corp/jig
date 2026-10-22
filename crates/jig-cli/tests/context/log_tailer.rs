@@ -106,3 +106,51 @@ fn removing_a_missing_log_is_fine() {
     log.remove().unwrap();
     assert!(!log.exists());
 }
+
+#[test]
+fn an_excerpt_quotes_the_end_and_says_where_the_rest_is() {
+    let tmp = tempfile::tempdir().unwrap();
+    let log = LogFile::at(tmp.path().join("setup.log"));
+    std::fs::write(log.path(), "resolving\n\nERR_PNPM_OUTDATED_LOCKFILE\n").unwrap();
+
+    assert_eq!(
+        log.excerpt(5),
+        format!(
+            "  resolving\n  ERR_PNPM_OUTDATED_LOCKFILE\n  (full log: {})",
+            log.path().display()
+        )
+    );
+}
+
+#[test]
+fn an_excerpt_is_bounded_however_much_was_written() {
+    let tmp = tempfile::tempdir().unwrap();
+    let log = LogFile::at(tmp.path().join("setup.log"));
+    let body: String = (0..5000)
+        .map(|i| format!("line {i} {}\n", "x".repeat(1000)))
+        .collect();
+    std::fs::write(log.path(), body).unwrap();
+
+    let excerpt = log.excerpt(20);
+    let lines: Vec<&str> = excerpt.lines().collect();
+    assert_eq!(lines.len(), 21, "20 quoted lines and the path");
+    assert!(lines[19].starts_with("  line 4999 "), "{}", lines[19]);
+    assert!(lines[0].ends_with('…'));
+    assert!(excerpt.len() < 8 * 1024, "{}", excerpt.len());
+}
+
+#[test]
+fn an_excerpt_keeps_only_the_last_redraw_of_a_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let log = LogFile::at(tmp.path().join("setup.log"));
+    std::fs::write(log.path(), "10%\r50%\r100%\n   \ndone\n").unwrap();
+    assert!(log.excerpt(5).starts_with("  100%\n  done\n"));
+}
+
+#[test]
+fn an_excerpt_of_nothing_says_so() {
+    let tmp = tempfile::tempdir().unwrap();
+    let log = LogFile::at(tmp.path().join("setup.log"));
+    log.create().unwrap();
+    assert!(log.excerpt(5).starts_with("  (no output)\n"));
+}

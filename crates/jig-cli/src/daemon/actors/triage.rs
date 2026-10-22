@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::context::{self, RepoCtx};
+use crate::context;
 use jig_core::agents::Agent;
 use jig_core::exec::{Exec, Timeout};
 use jig_core::git::Repo;
@@ -76,7 +76,7 @@ impl Actor for TriageActor {
         // `jig ps` display, so there is no stuck-entry sweep to do here.
 
         // Poll for new triageable issues
-        let global = &req.ctx.config;
+        let global = &req.ctx.app.config;
         for entry in req.ctx.repos.iter() {
             let repo_root = entry.path.clone();
             let repo_name = repo_root
@@ -90,7 +90,7 @@ impl Actor for TriageActor {
                 continue;
             }
 
-            let cfg = match RepoCtx::from_path(&repo_root) {
+            let cfg = match req.ctx.app.repo_at(&repo_root) {
                 Ok(cfg) => cfg,
                 Err(e) => {
                     tracing::debug!(repo = %repo_name, error = %e, "failed to load config");

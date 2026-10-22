@@ -2,13 +2,15 @@
 
 use clap::Args;
 
-use crate::context;
 use crate::context::AppCtx;
 use crate::context::ContextError;
 use crate::context::Ctx;
+use crate::prompts::spawn_task_raw;
 use crate::terminal;
 use crate::worker::Worker;
 use jig_core::git::Branch;
+use jig_core::issues::issue::IssueRef;
+use jig_core::mux;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
@@ -113,36 +115,16 @@ impl Op for Spawn {
             (None, None) => None,
         };
 
-        let jig_config = context::RepoConfig::load(&repo.paths.repo_root)?.unwrap_or_default();
-        let agent = jig_config.agent.agent();
-
-        let git_repo = jig_core::Repo::open(&repo.paths.repo_root)?;
         let branch = Branch::new(&branch_name);
 
         let task_context = effective_context.as_deref().unwrap_or(
             "No specific task provided. Check CLAUDE.md and the issue tracker for context.",
         );
-        let prompt = crate::prompts::spawn_task_raw(task_context);
+        let prompt = spawn_task_raw(task_context);
 
-        let copy_files = jig_config.worktree.copy_paths();
-        let on_create = jig_config.worktree.on_create();
-
-        let issue_ref = self.issue.as_deref().map(jig_core::IssueRef::new);
-        let repo_name = repo.name();
-        let mux = jig_core::mux::for_repo(ctx.config.mux, &repo_name);
-        let _worker = Worker::spawn(
-            &ctx.paths,
-            &git_repo,
-            &branch,
-            &base_branch,
-            &agent,
-            prompt,
-            false,
-            issue_ref,
-            &copy_files,
-            on_create,
-            &mux,
-        )?;
+        let issue_ref = self.issue.as_deref().map(IssueRef::new);
+        let mux = mux::for_repo(ctx.config.mux, &repo.name());
+        Worker::spawn(repo, &branch, &base_branch, prompt, false, issue_ref, &mux)?;
 
         if let Some(ref issue_id) = issue_id_for_status {
             if let Ok(provider) = repo.issue_provider(&ctx.config) {
@@ -158,7 +140,7 @@ impl Op for Spawn {
         eprintln!();
         eprintln!(
             "  Use '{}' to attach",
-            ui::highlight(&format!("jig attach {}", branch))
+            ui::highlight(format!("jig attach {}", branch))
         );
         eprintln!("  Use '{}' to check status", ui::highlight("jig ps"));
 

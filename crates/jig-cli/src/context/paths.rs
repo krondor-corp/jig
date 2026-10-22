@@ -101,6 +101,12 @@ impl AppPaths {
         self.worker_dir(repo, branch).join("events.jsonl")
     }
 
+    /// `~/.config/jig/<repo>/<branch>/setup.log` — the `on_create` hook's
+    /// stdout and stderr from the worker's last setup.
+    pub fn worker_setup_log(&self, repo: &str, branch: &str) -> PathBuf {
+        self.worker_dir(repo, branch).join("setup.log")
+    }
+
     // ── state ────────────────────────────────────────────────────
 
     /// `~/.config/jig/state/`

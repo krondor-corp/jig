@@ -14,10 +14,9 @@ use crate::context::RepoCtx;
 use crate::context::RepoRegistry;
 use crate::worker::Worker;
 use jig_core::git::Branch;
-use jig_core::mux::Mux;
+use jig_core::mux::{self, Mux, MuxKind};
 
 use crate::cli::op::{NoOutput, Op};
-use crate::context::AppPaths;
 
 /// Attach to a worker session
 #[derive(Args, Debug, Clone)]
@@ -47,38 +46,38 @@ pub enum AttachError {
 }
 
 impl Op for Attach {
-    type Context = AppPaths;
+    type Context = AppCtx;
     type Error = AttachError;
     type Output = NoOutput;
 
-    fn build_context(&self, app: AppCtx) -> Result<AppPaths, AttachError> {
-        Ok(app.paths)
+    fn build_context(&self, app: AppCtx) -> Result<AppCtx, AttachError> {
+        Ok(app)
     }
 
-    fn run(&self, paths: AppPaths) -> Result<Self::Output, Self::Error> {
-        let kind = mux_kind(&paths);
+    fn run(&self, app: AppCtx) -> Result<Self::Output, Self::Error> {
+        let kind = app.config.mux;
         let branch = self.branch.as_deref();
 
         if let Some(repo_name) = self.repo.as_deref() {
-            let cfg = find_repo_by_name(&paths, repo_name)?;
-            attach(&paths, &cfg, kind, branch.map(Branch::new).as_ref())?;
+            let cfg = find_repo_by_name(&app, repo_name)?;
+            attach(&cfg, kind, branch.map(Branch::new).as_ref())?;
             return Ok(NoOutput);
         }
 
         let local = if self.global {
             None
         } else {
-            RepoCtx::from_cwd().ok()
+            app.repo_here().ok()
         };
 
         match (&local, branch) {
-            (Some(cfg), None) => attach(&paths, cfg, kind, None)?,
+            (Some(cfg), None) => attach(cfg, kind, None)?,
             (Some(cfg), Some(b)) if cfg.paths.worktrees_path.join(b).exists() => {
-                attach(&paths, cfg, kind, Some(&Branch::new(b)))?
+                attach(cfg, kind, Some(&Branch::new(b)))?
             }
             (_, Some(b)) => {
-                let cfg = find_repo_by_branch(&paths, b)?;
-                attach(&paths, &cfg, kind, Some(&Branch::new(b)))?
+                let cfg = find_repo_by_branch(&app, b)?;
+                attach(&cfg, kind, Some(&Branch::new(b)))?
             }
             (None, None) => {
                 return Err(AttachError::Usage(
@@ -90,26 +89,18 @@ impl Op for Attach {
     }
 }
 
-/// Attach has no Op context (it resolves the repo itself), so the mux
-/// choice comes straight from global config.
-fn mux_kind(paths: &AppPaths) -> jig_core::mux::MuxKind {
-    crate::context::AppConfig::load(paths)
-        .unwrap_or_default()
-        .mux
-}
-
-fn registered_repos(paths: &AppPaths) -> Vec<RepoCtx> {
-    let registry = RepoRegistry::load(paths).unwrap_or_default();
+fn registered_repos(app: &AppCtx) -> Vec<RepoCtx> {
+    let registry = RepoRegistry::load(&app.paths).unwrap_or_default();
     registry
         .repos()
         .iter()
         .filter(|e| e.path.exists())
-        .filter_map(|e| RepoCtx::from_path(&e.path).ok())
+        .filter_map(|e| app.repo_at(&e.path).ok())
         .collect()
 }
 
-fn find_repo_by_name(paths: &AppPaths, name: &str) -> Result<RepoCtx, AttachError> {
-    registered_repos(paths)
+fn find_repo_by_name(app: &AppCtx, name: &str) -> Result<RepoCtx, AttachError> {
+    registered_repos(app)
         .into_iter()
         .find(|c| c.name() == name)
         .ok_or_else(|| AttachError::Usage(format!("no registered repo named '{name}'")))
@@ -117,8 +108,8 @@ fn find_repo_by_name(paths: &AppPaths, name: &str) -> Result<RepoCtx, AttachErro
 
 /// Registry-wide search for the repo holding a worker branch.
 /// Ambiguity is an error: the same branch name in two repos needs `--repo`.
-fn find_repo_by_branch(paths: &AppPaths, branch: &str) -> Result<RepoCtx, AttachError> {
-    let mut matches: Vec<RepoCtx> = registered_repos(paths)
+fn find_repo_by_branch(app: &AppCtx, branch: &str) -> Result<RepoCtx, AttachError> {
+    let mut matches: Vec<RepoCtx> = registered_repos(app)
         .into_iter()
         .filter(|c| c.paths.worktrees_path.join(branch).exists())
         .collect();
@@ -138,24 +129,11 @@ fn find_repo_by_branch(paths: &AppPaths, branch: &str) -> Result<RepoCtx, Attach
     }
 }
 
-fn attach(
-    paths: &AppPaths,
-    cfg: &RepoCtx,
-    kind: jig_core::mux::MuxKind,
-    branch: Option<&Branch>,
-) -> Result<(), AttachError> {
-    let mux = jig_core::mux::from_group_name(kind, cfg.session_name());
+fn attach(cfg: &RepoCtx, kind: MuxKind, branch: Option<&Branch>) -> Result<(), AttachError> {
+    let mux = mux::from_group_name(kind, cfg.session_name());
     match branch {
         Some(branch) => {
-            let workers =
-                Worker::discover(&jig_core::git::Repo::open(&cfg.paths.repo_root).unwrap());
-            let worker = workers
-                .iter()
-                .find(|w| w.branch() == branch)
-                .ok_or_else(|| {
-                    AttachError::Worker(crate::worker::WorkerError::NotFound(branch.to_string()))
-                })?;
-            worker.attach(paths, &mux)?;
+            Worker::open(cfg, branch)?.attach(&mux)?;
             Ok(())
         }
         None => {

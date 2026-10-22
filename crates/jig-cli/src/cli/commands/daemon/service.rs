@@ -174,7 +174,7 @@ impl Op for Install {
         if exe != installer_exe {
             ui::detail(&format!(
                 "runs {} so {} can update it without sudo",
-                ui::highlight(&exe.display().to_string()),
+                ui::highlight(exe.display().to_string()),
                 target.name
             ));
         }
@@ -392,7 +392,7 @@ fn ensure_privileged(level: Level, action: &str) -> Result<(), ServiceError> {
         ui::failure(&format!("{action} a system service needs root"));
         ui::detail(&format!(
             "run {}",
-            ui::highlight(&format!("sudo jig daemon {action}"))
+            ui::highlight(format!("sudo jig daemon {action}"))
         ));
         return Err(ServiceError::NeedsRoot);
     }

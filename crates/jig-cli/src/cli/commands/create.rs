@@ -3,13 +3,13 @@
 use clap::Args;
 use std::path::PathBuf;
 
-use crate::worker::events::{Event, EventKind};
+use crate::worker::{OnCreate, Worker, WorkerError};
 use jig_core::git::Branch;
-use jig_core::Worktree;
 
 use crate::cli::op::Op;
 use crate::cli::ui;
 use crate::context::AppCtx;
+use crate::context::ContextError;
 use crate::context::Ctx;
 
 /// Create a new worktree.
@@ -58,9 +58,9 @@ impl std::fmt::Display for CreateOutput {
 #[derive(Debug, thiserror::Error)]
 pub enum CreateError {
     #[error(transparent)]
-    Ctx(#[from] crate::context::ContextError),
+    Ctx(#[from] ContextError),
     #[error(transparent)]
-    Git(#[from] jig_core::GitError),
+    Worker(#[from] WorkerError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -81,25 +81,13 @@ impl Op for Create {
             None => repo.base_branch(&ctx.config),
         };
 
-        let git_repo = jig_core::Repo::open(&repo.paths.repo_root)?;
         let branch = Branch::new(&self.branch);
-        let copy_files = repo.config.worktree.copy_paths();
-        // `--no-hooks` suppresses the hook, but not the file copying: the
-        // copies are what make the worktree usable, not a user extension point.
         let on_create = if self.no_hooks {
-            None
+            OnCreate::Skip
         } else {
-            repo.config.worktree.on_create()
+            OnCreate::Run
         };
-        let wt = Worktree::create(&git_repo, &branch, &base_branch, &copy_files, on_create)?;
-
-        let repo_name = repo.name();
-        let event_log = ctx.logs().worker_events(&repo_name, &self.branch);
-        if let Err(e) = event_log.append(&Event::now(EventKind::Create {
-            branch: branch.to_string(),
-        })) {
-            tracing::warn!(branch = %self.branch, error = %e, "failed to emit Create event");
-        }
+        let worker = Worker::create(repo, &branch, &base_branch, on_create)?;
 
         ui::success(&format!(
             "Created worktree on branch '{}'",
@@ -108,7 +96,7 @@ impl Op for Create {
 
         // Output cd command if -o flag
         if self.open {
-            let canonical = wt.path().canonicalize()?;
+            let canonical = worker.path().canonicalize()?;
             Ok(CreateOutput::Cd(canonical))
         } else {
             Ok(CreateOutput::None)

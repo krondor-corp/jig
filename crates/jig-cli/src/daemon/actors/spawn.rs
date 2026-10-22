@@ -1,13 +1,14 @@
 //! Spawn actor — polls for spawnable issues and launches workers in a
 //! background thread.
 
-use std::path::Path;
 use std::sync::Mutex;
 
-use crate::context::{self, RepoCtx};
+use crate::context::RepoCtx;
+use crate::prompts::spawn_task;
 use jig_core::git::{Branch, Repo};
 use jig_core::issues::issue::{IssueFilter, IssueStatus};
 use jig_core::issues::{Issue, IssueProvider};
+use jig_core::mux::{self, Mux};
 
 type Worker = crate::worker::Worker;
 
@@ -38,7 +39,7 @@ impl Actor for SpawnActor {
 
     fn handle(&self, req: SpawnRequest) {
         let mut spawning = Vec::new();
-        let global = &req.ctx.config;
+        let global = &req.ctx.app.config;
 
         for entry in req.ctx.repos.iter() {
             let repo_root = entry.path.clone();
@@ -55,7 +56,7 @@ impl Actor for SpawnActor {
                 }
             };
 
-            let cfg = match RepoCtx::from_path(&repo_root) {
+            let cfg = match req.ctx.app.repo_at(&repo_root) {
                 Ok(cfg) => cfg,
                 Err(e) => {
                     tracing::debug!(repo = %repo_name, error = %e, "failed to load config");
@@ -109,10 +110,8 @@ impl Actor for SpawnActor {
                 let branch = issue.branch().clone();
                 spawning.push(branch.clone());
 
-                let mux = jig_core::mux::for_repo(global.mux, &repo_name);
-                match spawn_worker_for_issue(
-                    &req.ctx, &repo_root, &issue, &branch, &cfg, &provider, &mux,
-                ) {
+                let mux = mux::for_repo(global.mux, &repo_name);
+                match spawn_worker_for_issue(&req.ctx, &issue, &cfg, &provider, &mux) {
                     Ok(_worker) => {
                         tracing::info!(worker = %branch, "auto-spawned worker");
                     }
@@ -130,44 +129,24 @@ impl Actor for SpawnActor {
 
 fn spawn_worker_for_issue(
     ctx: &TickContext,
-    repo_root: &Path,
     issue: &Issue,
-    worker_name: &str,
     cfg: &RepoCtx,
     provider: &IssueProvider,
-    mux: &dyn jig_core::mux::Mux,
+    mux: &dyn Mux,
 ) -> std::result::Result<Worker, String> {
-    let worktree_path = context::worktree_path(repo_root, worker_name);
-
-    if worktree_path.exists() {
-        tracing::debug!(worker = %worker_name, "worktree already exists, skipping");
-        return Ok(Worker::from_branch(repo_root, worker_name.into()));
+    let branch = issue.branch();
+    if let Ok(worker) = Worker::open(cfg, branch) {
+        tracing::debug!(worker = %branch, "worktree already exists, skipping");
+        return Ok(worker);
     }
 
-    let base = context::resolve_base_branch_for(repo_root, &ctx.config)
-        .unwrap_or_else(|_| Branch::new(context::DEFAULT_BASE_BRANCH));
-
-    let repo = Repo::open(repo_root).map_err(|e| e.to_string())?;
-    let branch = issue.branch().clone();
-
-    let agent = cfg.config.agent.agent();
-
-    let prompt = crate::prompts::spawn_task(issue, provider);
-
-    let copy_files = cfg.config.worktree.copy_paths();
-    let on_create = cfg.config.worktree.on_create();
-
     let worker = Worker::spawn(
-        &ctx.paths,
-        &repo,
-        &branch,
-        &base,
-        &agent,
-        prompt,
+        cfg,
+        branch,
+        &cfg.base_branch(&ctx.app.config),
+        spawn_task(issue, provider),
         true,
         Some(issue.id().clone()),
-        &copy_files,
-        on_create,
         mux,
     )
     .map_err(|e| e.to_string())?;

@@ -13,11 +13,11 @@ use std::path::Path;
 
 use uuid::Uuid;
 
-use crate::context::log::Logs;
-use crate::context::AppPaths;
+use crate::context::log::LogFile;
+use crate::context::{worktree_path, RepoCtx, JIG_DIR};
+use crate::prompts::resume_task;
 use events::{Event, EventKind, TerminalKind, WorkerState};
-use jig_core::agents::Agent;
-use jig_core::exec::Exec;
+use jig_core::exec::ExecError;
 use jig_core::git::{Branch, Repo, Worktree, WorktreeRef};
 
 use jig_core::issues::issue::IssueRef;
@@ -34,6 +34,9 @@ pub enum WorkerError {
 
     #[error("worker '{branch}' failed during setup: {reason}")]
     SetupFailed { branch: String, reason: String },
+
+    #[error(transparent)]
+    Setup(#[from] SetupError),
 
     #[error(transparent)]
     Mux(#[from] jig_core::mux::MuxError),
@@ -54,37 +57,180 @@ pub enum WorkerError {
     EventLog(#[from] jig_core::events::EventLogError),
 }
 
+/// How many lines of `setup.log` a setup failure quotes.
+const SETUP_EXCERPT_LINES: usize = 20;
+
+/// Whether [`Worker::create`] runs the repo's `on_create` hook.
+///
+/// Skipping it (`jig create --no-hooks`) still copies the configured files:
+/// those are what make the worktree usable, not a user extension point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnCreate {
+    Run,
+    Skip,
+}
+
+/// Why [`Worker::create`] or [`Worker::spawn`] couldn't make a fresh worktree
+/// ready to work in.
+#[derive(Debug, thiserror::Error)]
+pub enum SetupError {
+    /// The hook ran and didn't succeed — exited non-zero, was killed, or
+    /// outran its deadline. `excerpt` is [`LogFile::excerpt`] of `setup.log`.
+    #[error("{label} {outcome}:\n{excerpt}")]
+    Hook {
+        label: String,
+        outcome: String,
+        excerpt: String,
+    },
+
+    /// The hook couldn't be started at all.
+    #[error(transparent)]
+    Exec(#[from] ExecError),
+
+    /// Copying files or opening `setup.log` failed — nothing anyone handles
+    /// differently, so not told apart.
+    #[error("unexpected error setting up the worktree: {0}")]
+    Io(#[from] std::io::Error),
+}
+
 /// A Worker is a Claude Code session in an isolated git worktree.
 ///
-/// Everything is derived at runtime via the [`Worktree`] handle.
+/// Holds its own logs, resolved when it is opened or created. Get one with
+/// [`Worker::open`] for a worktree that exists, [`Worker::create`] or
+/// [`Worker::spawn`] to make one, or [`Worker::discover`] for all of a repo's.
 #[derive(Debug, Clone)]
 pub struct Worker {
     pub(crate) id: Uuid,
     pub(crate) branch: Branch,
     pub(crate) path: WorktreeRef,
     pub(crate) issue_ref: Option<IssueRef>,
-}
-
-impl From<&Worktree> for Worker {
-    fn from(wt: &Worktree) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            branch: wt.branch_name(),
-            path: wt.as_ref(),
-            issue_ref: None,
-        }
-    }
+    event_log: events::EventLog,
+    setup_log: LogFile,
 }
 
 impl Worker {
-    pub fn from_branch(repo_root: &Path, branch: Branch) -> Self {
-        let worktree_path = repo_root.join(crate::context::JIG_DIR).join(&*branch);
+    /// The worker for `branch`'s worktree in `repo`: [`WorkerError::NotFound`]
+    /// if there is no such worktree. No side effects — safe to call as often
+    /// as you like.
+    pub fn open(repo: &RepoCtx, branch: &Branch) -> Result<Self, WorkerError> {
+        let path = WorktreeRef::new(worktree_path(&repo.paths.repo_root, branch));
+        if !path.exists() {
+            return Err(WorkerError::NotFound(branch.to_string()));
+        }
+        path.open()?;
+        Ok(Self::at(repo, branch.clone(), path))
+    }
+
+    /// Every worker in `repo`, sorted by branch.
+    pub fn discover(repo: &RepoCtx) -> Result<Vec<Self>, WorkerError> {
+        let git = Repo::open(&repo.paths.repo_root)?;
+        let mut workers: Vec<Self> = git
+            .list_worktrees()?
+            .iter()
+            .map(|wt| Self::at(repo, wt.branch_name(), wt.as_ref()))
+            .collect();
+        workers.sort_by(|a, b| a.branch.cmp(&b.branch));
+        Ok(workers)
+    }
+
+    /// Create `branch`'s worktree from `base` and set it up. For a worktree
+    /// someone will work in by hand — [`Worker::spawn`] also starts an agent.
+    pub fn create(
+        repo: &RepoCtx,
+        branch: &Branch,
+        base: &Branch,
+        on_create: OnCreate,
+    ) -> Result<Self, WorkerError> {
+        let worker = Self::init(repo, branch, base, on_create, false)?;
+        let _ = worker.event_log.append(&Event::now(EventKind::Create {
+            branch: branch.to_string(),
+        }));
+        Ok(worker)
+    }
+
+    /// Create `branch`'s worktree from `base`, set it up, and start the
+    /// repo's agent in it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn(
+        repo: &RepoCtx,
+        branch: &Branch,
+        base: &Branch,
+        prompt: Prompt,
+        auto: bool,
+        issue_ref: Option<IssueRef>,
+        mux: &dyn Mux,
+    ) -> Result<Self, WorkerError> {
+        let mut worker = Self::init(repo, branch, base, OnCreate::Run, auto)?;
+        worker.issue_ref = issue_ref.clone();
+
+        let issue = issue_ref.unwrap_or_else(|| IssueRef::new(branch.to_string()));
+        let _ = worker.event_log.append(&Event::now(EventKind::Spawn {
+            branch: branch.to_string(),
+            repo: repo.name(),
+            issue,
+        }));
+
+        mux.create_window(&worker.branch, &worker.path)?;
+        let cmd = repo.config.agent.agent().spawn(prompt)?;
+        mux.send_keys(&worker.branch, &[&cmd, "Enter"])?;
+
+        Ok(worker)
+    }
+
+    /// A worker at `path`, with its logs resolved.
+    fn at(repo: &RepoCtx, branch: Branch, path: WorktreeRef) -> Self {
+        let logs = repo.logs();
+        let repo_name = repo.name();
         Self {
-            id: Uuid::nil(),
+            id: Uuid::new_v4(),
+            event_log: logs.worker_events(&repo_name, &branch),
+            setup_log: logs.setup(&repo_name, &branch),
             branch,
-            path: WorktreeRef::new(worktree_path),
+            path,
             issue_ref: None,
         }
+    }
+
+    /// What [`Worker::create`] and [`Worker::spawn`] share: start a fresh
+    /// event log, create the worktree and set it up, recording a failure in
+    /// the log so `jig attach`, `jig list` and the daemon's
+    /// needs_intervention alert can say why.
+    fn init(
+        repo: &RepoCtx,
+        branch: &Branch,
+        base: &Branch,
+        on_create: OnCreate,
+        auto: bool,
+    ) -> Result<Self, WorkerError> {
+        let git = Repo::open(&repo.paths.repo_root)?;
+        let worker = Self::at(
+            repo,
+            branch.clone(),
+            WorktreeRef::new(worktree_path(&repo.paths.repo_root, branch)),
+        );
+
+        worker.event_log.reset()?;
+        let _ = worker
+            .event_log
+            .append(&Event::now(EventKind::Initializing {
+                branch: branch.to_string(),
+                base: base.to_string(),
+                auto,
+            }));
+
+        let failed = |e: WorkerError| {
+            let _ = worker.event_log.append(&Event::now(EventKind::Terminal {
+                terminal: TerminalKind::Failed,
+                reason: Some(e.to_string()),
+            }));
+            e
+        };
+        Worktree::create(&git, branch, base).map_err(|e| failed(e.into()))?;
+        worker
+            .setup(repo, on_create)
+            .map_err(|e| failed(e.into()))?;
+
+        Ok(worker)
     }
 
     pub fn id(&self) -> Uuid {
@@ -112,21 +258,25 @@ impl Worker {
     }
 
     /// This worker's event log.
-    pub fn log(&self, paths: &AppPaths) -> events::EventLog {
-        Logs::new(paths).worker_events(&self.repo_name(), &self.branch)
+    pub fn event_log(&self) -> &events::EventLog {
+        &self.event_log
     }
 
-    pub fn status(&self, paths: &AppPaths) -> Option<WorkerStatus> {
-        let log = self.log(paths);
-        if !log.exists() {
+    /// This worker's `on_create` output, from its last setup.
+    pub fn setup_log(&self) -> &LogFile {
+        &self.setup_log
+    }
+
+    pub fn status(&self) -> Option<WorkerStatus> {
+        if !self.event_log.exists() {
             return None;
         }
-        let state: WorkerState = log.reduce().ok()?;
+        let state: WorkerState = self.event_log.reduce().ok()?;
         Some(state.status)
     }
 
-    pub fn fail_reason(&self, paths: &AppPaths) -> Option<String> {
-        let events = self.log(paths).read_all().ok()?;
+    pub fn fail_reason(&self) -> Option<String> {
+        let events = self.event_log.read_all().ok()?;
         events.iter().rev().find_map(|e| {
             if let EventKind::Terminal {
                 reason: Some(r), ..
@@ -143,39 +293,22 @@ impl Worker {
         Ok(self.worktree()?.remove(force)?)
     }
 
-    pub fn unregister(&self, paths: &AppPaths) -> Result<(), WorkerError> {
-        let _ = self.log(paths).remove();
+    pub fn unregister(&self) -> Result<(), WorkerError> {
+        // First, so removing the event log can also remove the now-empty
+        // directory.
+        let _ = self.setup_log.remove();
+        let _ = self.event_log.remove();
         Ok(())
-    }
-
-    pub fn discover(repo: &Repo) -> Vec<Self> {
-        let mut workers: Vec<Self> = repo
-            .list_worktrees()
-            .unwrap_or_default()
-            .iter()
-            .map(Self::from)
-            .collect();
-        workers.sort_by(|a, b| a.branch.cmp(&b.branch));
-        workers
     }
 
     pub fn repo_name(&self) -> String {
         let path: &Path = &self.path;
-        for ancestor in path.ancestors() {
-            if ancestor
-                .file_name()
-                .map(|n| n == crate::context::JIG_DIR)
-                .unwrap_or(false)
-            {
-                if let Some(root) = ancestor.parent() {
-                    return root
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-                }
-            }
-        }
-        "unknown".to_string()
+        path.ancestors()
+            .find(|a| a.file_name().is_some_and(|n| n == JIG_DIR))
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
     }
 
     // ── Mux operations ─────────────────────────────────────────────
@@ -198,106 +331,89 @@ impl Worker {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn(
-        paths: &AppPaths,
-        repo: &Repo,
-        branch: &Branch,
-        base: &Branch,
-        agent: &Agent,
-        prompt: Prompt,
-        auto: bool,
-        issue_ref: Option<IssueRef>,
-        copy_files: &[std::path::PathBuf],
-        on_create: Option<Exec>,
-        mux: &dyn Mux,
-    ) -> Result<Self, WorkerError> {
-        let repo_root = repo.clone_path();
-        let branch_name = branch.to_string();
+    /// Make a freshly created worktree ready to work in: copy the configured
+    /// files over from the main checkout, then run the `on_create` hook.
+    ///
+    /// NOTE(canonical): this is the one place worktree setup happens, and only
+    /// [`Worker::create`] / [`Worker::spawn`] call it. **Do not** copy files
+    /// or run `on_create` anywhere else.
+    ///
+    /// The hook's stdout and stderr go to the worker's `setup.log`; a failure
+    /// quotes the end of it and says where it is.
+    fn setup(&self, repo: &RepoCtx, on_create: OnCreate) -> Result<(), SetupError> {
+        let wt_path: &Path = &self.path;
+        let config = &repo.config.worktree;
 
-        let repo_name = repo_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let event_log = Logs::new(paths).worker_events(&repo_name, &branch_name);
-        event_log.reset()?;
-
-        let _ = event_log.append(&Event::now(EventKind::Initializing {
-            branch: branch_name.clone(),
-            base: base.to_string(),
-            auto,
-        }));
-
-        let wt = match Worktree::create(repo, branch, base, copy_files, on_create) {
-            Ok(wt) => wt,
-            Err(e) => {
-                let _ = event_log.append(&Event::now(EventKind::Terminal {
-                    terminal: TerminalKind::Failed,
-                    reason: Some(e.to_string()),
-                }));
-                return Err(e.into());
+        for file in config.copy_paths() {
+            let src = repo.paths.repo_root.join(&file);
+            let dst = wt_path.join(&file);
+            if src.exists() {
+                if let Some(parent) = dst.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&src, &dst)?;
             }
+        }
+
+        let log = &self.setup_log;
+        let hook = match on_create {
+            OnCreate::Run => config.on_create(),
+            OnCreate::Skip => None,
+        };
+        let Some(hook) = hook else {
+            // So a log from an earlier setup of this branch can't be
+            // mistaken for this one's.
+            let _ = log.remove();
+            return Ok(());
         };
 
-        let issue = issue_ref
-            .clone()
-            .unwrap_or_else(|| IssueRef::new(branch_name.clone()));
-        let _ = event_log.append(&Event::now(EventKind::Spawn {
-            branch: branch_name,
-            repo: repo_name,
-            issue,
-        }));
-
-        let worker = Self {
-            id: Uuid::new_v4(),
-            branch: wt.branch_name(),
-            path: wt.as_ref(),
-            issue_ref,
+        let label = hook.label().to_string();
+        let outcome = match hook.in_dir(wt_path).output_to(log.create()?).run() {
+            Ok(output) if output.success() => return Ok(()),
+            Ok(output) => match output.status.code() {
+                Some(code) => format!("exited with status {code}"),
+                None => "was killed by a signal".to_string(),
+            },
+            Err(ExecError::TimedOut { timeout, .. }) => {
+                format!("timed out after {timeout} and was killed")
+            }
+            Err(e) => return Err(e.into()),
         };
-
-        mux.create_window(&worker.branch, &worker.path)?;
-        let cmd = agent.spawn(prompt)?;
-        mux.send_keys(&worker.branch, &[&cmd, "Enter"])?;
-
-        Ok(worker)
+        Err(SetupError::Hook {
+            label,
+            outcome,
+            excerpt: log.excerpt(SETUP_EXCERPT_LINES),
+        })
     }
 
-    pub fn resume(
-        paths: &AppPaths,
-        wt: &Worktree,
-        agent: &Agent,
-        prompt: Prompt,
-        mux: &dyn Mux,
-    ) -> Result<Self, WorkerError> {
-        let worker = Self {
-            id: Uuid::new_v4(),
-            branch: wt.branch_name(),
-            path: wt.as_ref(),
-            issue_ref: None,
-        };
+    /// Relaunch the repo's agent in this worker's worktree.
+    pub fn resume(&self, repo: &RepoCtx, prompt: Prompt, mux: &dyn Mux) -> Result<(), WorkerError> {
+        let _ = self.event_log.append(&Event::now(EventKind::Resume));
 
-        let _ = worker.log(paths).append(&Event::now(EventKind::Resume));
-
-        mux.create_window(&worker.branch, &worker.path)?;
-        let cmd = agent.resume(prompt)?;
-        mux.send_keys(&worker.branch, &[&cmd, "Enter"])?;
-
-        Ok(worker)
+        mux.create_window(&self.branch, &self.path)?;
+        let cmd = repo.config.agent.agent().resume(prompt)?;
+        mux.send_keys(&self.branch, &[&cmd, "Enter"])?;
+        Ok(())
     }
 
-    pub fn nudge(
-        &self,
-        paths: &AppPaths,
-        prompt: Prompt,
-        mux: &dyn Mux,
-    ) -> Result<(), WorkerError> {
+    /// Relaunch the agent if its window is gone — after a crash, or when the
+    /// daemon restarts a worker. `false` if the window is still there.
+    pub fn recover(&self, repo: &RepoCtx, mux: &dyn Mux) -> Result<bool, WorkerError> {
+        if self.has_mux_window(mux) {
+            return Ok(false);
+        }
+        let prompt = resume_task("You were interrupted. Resume your previous task.");
+        self.resume(repo, prompt, mux)?;
+        Ok(true)
+    }
+
+    pub fn nudge(&self, prompt: Prompt, mux: &dyn Mux) -> Result<(), WorkerError> {
         let nudge_type_key = prompt.name().to_string();
         let message = prompt.render()?;
 
         mux.send_message(&self.branch, &message)?;
 
-        let _ = self.log(paths).append(&Event::now(EventKind::Nudge {
+        let _ = self.event_log.append(&Event::now(EventKind::Nudge {
             nudge_type: nudge_type_key,
             message: message.clone(),
         }));
@@ -310,17 +426,16 @@ impl Worker {
         Ok(())
     }
 
-    pub fn attach(&self, paths: &AppPaths, mux: &dyn Mux) -> Result<(), WorkerError> {
+    pub fn attach(&self, mux: &dyn Mux) -> Result<(), WorkerError> {
         if !mux.window_exists(&self.branch) {
             if self.path.exists() {
-                if let Some(status) = self.status(paths) {
+                if let Some(status) = self.status() {
                     match status {
                         WorkerStatus::Initializing => {
                             return Err(WorkerError::Initializing(self.branch.to_string()));
                         }
                         WorkerStatus::Failed => {
-                            let reason =
-                                self.fail_reason(paths).unwrap_or_else(|| "unknown".into());
+                            let reason = self.fail_reason().unwrap_or_else(|| "unknown".into());
                             return Err(WorkerError::SetupFailed {
                                 branch: self.branch.to_string(),
                                 reason,
@@ -336,11 +451,11 @@ impl Worker {
         Ok(())
     }
 
-    pub fn is_orphaned(&self, paths: &AppPaths, mux: &dyn Mux) -> bool {
+    pub fn is_orphaned(&self, mux: &dyn Mux) -> bool {
         if self.has_mux_window(mux) {
             return false;
         }
-        match self.status(paths) {
+        match self.status() {
             Some(s) => {
                 !s.is_terminal() && s != WorkerStatus::Initializing && s != WorkerStatus::Created
             }

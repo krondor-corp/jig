@@ -115,12 +115,12 @@ impl Op for Update {
                     // per-user copies.
                     eprintln!(
                         "jig is managed by root at {}. Ask an admin to update it:",
-                        ui::highlight(&path.display().to_string())
+                        ui::highlight(path.display().to_string())
                     );
                 } else {
                     eprintln!(
                         "{} is not writable by you.",
-                        ui::highlight(&dir.display().to_string())
+                        ui::highlight(dir.display().to_string())
                     );
                     eprintln!();
                     eprintln!("Re-run the installer as root:");

@@ -121,9 +121,18 @@ impl<'a> Logs<'a> {
             .count()
     }
 
+    /// A worker's `on_create` output, from its last setup. Reach it through
+    /// [`Worker::setup_log`](crate::worker::Worker::setup_log), which knows
+    /// the worker's repo and branch.
+    pub fn setup(&self, repo: &str, branch: &str) -> LogFile {
+        LogFile::at(self.paths.worker_setup_log(repo, branch))
+    }
+
     // ── structured ──
 
-    /// A worker's event log.
+    /// A worker's event log. Reach it through
+    /// [`Worker::event_log`](crate::worker::Worker::event_log), which knows
+    /// the worker's repo and branch.
     pub fn worker_events(&self, repo: &str, branch: &str) -> crate::worker::events::EventLog {
         jig_core::EventLog::new(self.paths.worker_events_log(repo, branch))
     }
@@ -163,6 +172,9 @@ pub fn session_log() -> Option<&'static LogFile> {
 
 /// How much of a log to read per step when looking for its tail.
 const TAIL_CHUNK: u64 = 64 * 1024;
+
+/// Longest a line quoted by [`LogFile::excerpt`] may be before it is cut.
+const EXCERPT_LINE_CHARS: usize = 200;
 
 /// A text log: what can be done with one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,6 +238,41 @@ impl LogFile {
         }
         let skip = lines.len().saturating_sub(n);
         Ok(lines[skip..].iter().map(|l| l.to_string()).collect())
+    }
+
+    /// The end of the log, for quoting in a message: the last `lines` lines
+    /// with something on them, indented, then where to read the rest.
+    ///
+    /// Bounded however much was written — each line is cut to
+    /// `EXCERPT_LINE_CHARS`. A progress bar redraws with `\r`, so only what
+    /// follows the last one on a line is kept: what a terminal would show.
+    pub fn excerpt(&self, lines: usize) -> String {
+        // Read past the blank lines that will be dropped.
+        let tail = self.tail(lines.saturating_mul(4)).unwrap_or_default();
+        let kept: Vec<String> = tail
+            .iter()
+            .filter_map(|line| line.rsplit('\r').find(|s| !s.trim().is_empty()))
+            .map(|line| {
+                let line = line.trim_end();
+                match line.char_indices().nth(EXCERPT_LINE_CHARS) {
+                    Some((cut, _)) => format!("{}…", &line[..cut]),
+                    None => line.to_string(),
+                }
+            })
+            .collect();
+
+        let mut out = String::new();
+        let quoted = &kept[kept.len().saturating_sub(lines)..];
+        if quoted.is_empty() {
+            out.push_str("  (no output)\n");
+        }
+        for line in quoted {
+            out.push_str("  ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str(&format!("  (full log: {self})"));
+        out
     }
 
     /// Follow lines written from now on.

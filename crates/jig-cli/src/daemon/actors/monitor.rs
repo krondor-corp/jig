@@ -10,15 +10,16 @@ use std::time::{Duration, Instant};
 
 use url::Url;
 
-use crate::context::log::Logs;
-use crate::context::{self, AppConfig, AppPaths, RepoConfig, RepoCtx, RepoEntry};
+use crate::context::{self, AppConfig, RepoConfig, RepoCtx, RepoEntry};
 use crate::daemon::checks::{self, PrHealth, PrStatus};
 use crate::notify::{NotificationEvent, Notifier};
 use crate::worker::events::{self, Event, EventKind, TerminalKind, WorkerState};
 use crate::worker::{MuxStatus, WorkerStatus};
 use jig_core::git::{Branch, Worktree};
 use jig_core::github::GitHubClient;
+use jig_core::issues::issue::IssueStatus;
 use jig_core::mux::Mux;
+use jig_core::prompt::Prompt;
 type Worker = crate::worker::Worker;
 
 use super::prune::PruneTarget;
@@ -70,42 +71,47 @@ impl Actor for MonitorActor {
     const QUEUE_SIZE: usize = 1;
 
     fn handle(&self, req: MonitorRequest) -> Vec<PruneTarget> {
-        let global_config = &req.ctx.config;
-        let paths = &req.ctx.paths;
-        let notifier = Notifier::new(
-            global_config.notify.clone(),
-            Logs::new(paths).notifications(),
-        );
+        let global_config = &req.ctx.app.config;
+        let app = &req.ctx.app;
+        let notifier = Notifier::new(global_config.notify.clone(), app.logs().notifications());
 
         // Discover workers
-        let workers: Vec<(&RepoEntry, Worker)> = {
-            let mut out = Vec::new();
-            for entry in req.ctx.repos.iter() {
-                let repo = match jig_core::git::Repo::open(&entry.path) {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
-                for worker in Worker::discover(&repo) {
-                    out.push((entry, worker));
+        let repos: Vec<(&RepoEntry, RepoCtx)> = req
+            .ctx
+            .repos
+            .iter()
+            .filter_map(|entry| match app.repo_at(&entry.path) {
+                Ok(repo) => Some((entry, repo)),
+                Err(e) => {
+                    tracing::warn!(repo = %entry.path.display(), error = %e, "skipping repo");
+                    None
                 }
-            }
-            out
-        };
+            })
+            .collect();
+        let workers: Vec<(&RepoEntry, &RepoCtx, Worker)> = repos
+            .iter()
+            .flat_map(|(entry, repo)| {
+                Worker::discover(repo)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(move |worker| (*entry, repo, worker))
+            })
+            .collect();
 
         let mut display_results = Vec::new();
         let mut prune_targets = Vec::new();
         let mut new_states = HashMap::new();
 
-        for (entry, worker) in &workers {
+        for (entry, repo, worker) in &workers {
             let key = worker.worker_key();
             let repo_name = worker.repo_name();
             let mux = jig_core::mux::for_repo_with_prefix(
-                req.ctx.config.mux,
+                req.ctx.app.config.mux,
                 &req.ctx.session_prefix,
                 &repo_name,
             );
 
-            match self.process_worker(paths, &mux, entry, worker, &key, global_config, &notifier) {
+            match self.process_worker(&mux, entry, repo, worker, &key, global_config, &notifier) {
                 Ok((state, targets)) => {
                     display_results.push(state.clone());
                     prune_targets.extend(targets);
@@ -128,7 +134,7 @@ impl Actor for MonitorActor {
         // Catch-up for PRs that finished while the daemon was down. Only PR
         // outcomes: a worker that broke — mux window lost, spawn failed —
         // keeps its worktree, because there may be something in it.
-        for (entry, worker) in &workers {
+        for (entry, _, worker) in &workers {
             let key = worker.worker_key();
             if let Some(prev) = self.previous_states.lock().unwrap().get(&key) {
                 if prev.status.is_pr_outcome() && worker.path().exists() {
@@ -149,9 +155,9 @@ impl MonitorActor {
     #[allow(clippy::too_many_arguments)]
     fn process_worker(
         &self,
-        paths: &AppPaths,
         mux: &dyn Mux,
         repo_entry: &RepoEntry,
+        repo: &RepoCtx,
         worker: &Worker,
         key: &str,
         global_config: &AppConfig,
@@ -161,7 +167,7 @@ impl MonitorActor {
         let repo_name = worker.repo_name();
 
         // 1. Reduce event log
-        let log = worker.log(paths);
+        let log = worker.event_log();
         let mut state: WorkerState = log.reduce()?;
         state.check_silence(global_config);
 
@@ -231,7 +237,7 @@ impl MonitorActor {
                         }));
                     }
                     state.review_feedback_count = report.review_feedback_count;
-                    process_pr_report(&report, &log, &state, &mut pr_health, &mut is_draft);
+                    process_pr_report(&report, log, &state, &mut pr_health, &mut is_draft);
 
                     // Re-reduce if we wrote a PrOpened event
                     if state.pr_url.is_none() && pr_health.has_pr {
@@ -302,8 +308,7 @@ impl MonitorActor {
                         attempts = failures,
                         "resume exhausted, marking failed"
                     );
-                    let event_log = Logs::new(paths).worker_events(&repo_name, &worker_name);
-                    let _ = event_log.append(&Event::now(EventKind::Terminal {
+                    let _ = log.append(&Event::now(EventKind::Terminal {
                         terminal: TerminalKind::Failed,
                         reason: Some(format!(
                             "mux window lost, {} resume attempts failed",
@@ -314,7 +319,7 @@ impl MonitorActor {
                     state.check_silence(global_config);
                 } else {
                     actions.retain(|a| !matches!(a, DispatchAction::Nudge { .. }));
-                    match try_resume_worker(paths, &repo_entry.path, &worker_name, mux) {
+                    match worker.recover(repo, mux) {
                         Ok(true) => {
                             tracing::info!(worker = key, "worker resumed");
                             self.resume_failures.lock().unwrap().remove(key);
@@ -358,18 +363,13 @@ impl MonitorActor {
 
         // Execute actions
         let branch: Branch = state.branch.as_deref().unwrap_or(&worker_name).into();
-        let event_log = Logs::new(paths).worker_events(&repo_name, &worker_name);
         let prune_targets = self.execute_actions(
-            paths,
             &actions,
             key,
-            &repo_name,
-            &worker_name,
+            repo,
+            worker,
             &branch,
-            &repo_entry.path,
             mux,
-            &event_log,
-            &state,
             global_config,
             notifier,
         );
@@ -479,20 +479,17 @@ impl MonitorActor {
     #[allow(clippy::too_many_arguments)]
     fn execute_actions(
         &self,
-        paths: &AppPaths,
         actions: &[DispatchAction],
         key: &str,
-        repo_name: &str,
-        worker_name: &str,
+        repo: &RepoCtx,
+        worker: &Worker,
         branch: &Branch,
-        repo_path: &std::path::Path,
         mux: &dyn Mux,
-        event_log: &crate::worker::events::EventLog,
-        _state: &WorkerState,
         global_config: &AppConfig,
         notifier: &Notifier,
     ) -> Vec<PruneTarget> {
         let mut prune_targets = Vec::new();
+        let worker_name = worker.branch();
 
         for action in actions {
             match action {
@@ -501,13 +498,12 @@ impl MonitorActor {
                     nudge_key,
                     is_pr_nudge,
                 } => {
-                    let w = Worker::from_branch(repo_path, branch.clone());
-                    if w.has_mux_window(mux) {
-                        if !is_pr_nudge && !w.is_agent_running(mux) {
+                    if worker.has_mux_window(mux) {
+                        if !is_pr_nudge && !worker.is_agent_running(mux) {
                             continue;
                         }
-                        let prompt = jig_core::prompt::Prompt::new(message).named(nudge_key);
-                        match w.nudge(paths, prompt, mux) {
+                        let prompt = Prompt::new(message).named(nudge_key);
+                        match worker.nudge(prompt, mux) {
                             Ok(()) => {
                                 tracing::info!(worker = key, nudge_key = %nudge_key, "nudge delivered")
                             }
@@ -528,46 +524,36 @@ impl MonitorActor {
                             tracing::warn!("failed to kill window for {}: {}", worker_name, e);
                         }
                     }
-                    if let Err(e) = event_log.append(&Event::now(EventKind::Terminal {
+                    if let Err(e) = worker.event_log().append(&Event::now(EventKind::Terminal {
                         terminal: TerminalKind::Archived,
                         reason: None,
                     })) {
                         tracing::warn!("failed to emit cleanup event for {}: {}", key, e);
                     }
                     prune_targets.push(PruneTarget {
-                        repo_path: repo_path.to_path_buf(),
-                        repo_name: repo_name.to_string(),
+                        repo_path: repo.paths.repo_root.clone(),
+                        repo_name: repo.name(),
                         worker_name: worker_name.to_string(),
                     });
                 }
-                DispatchAction::Restart => {
-                    match try_resume_worker(paths, repo_path, worker_name, mux) {
-                        Ok(true) => tracing::info!(worker = key, "worker resumed via restart"),
-                        Ok(false) => {}
-                        Err(e) => tracing::warn!(worker = key, "restart failed: {}", e),
-                    }
-                }
+                DispatchAction::Restart => match worker.recover(repo, mux) {
+                    Ok(true) => tracing::info!(worker = key, "worker resumed via restart"),
+                    Ok(false) => {}
+                    Err(e) => tracing::warn!(worker = key, "restart failed: {}", e),
+                },
                 DispatchAction::UpdateIssueStatus { issue_id } => {
-                    if let Ok(ctx) = RepoCtx::from_path(repo_path) {
-                        if let Ok(provider) = ctx.issue_provider(global_config) {
-                            let should_update = match provider.get(issue_id) {
-                                Ok(Some(issue)) => !matches!(
-                                    issue.status(),
-                                    jig_core::issues::issue::IssueStatus::Complete
-                                ),
-                                _ => false,
-                            };
-                            if should_update {
-                                match provider.update_status(
-                                    issue_id,
-                                    &jig_core::issues::issue::IssueStatus::Complete,
-                                ) {
-                                    Ok(()) => {
-                                        tracing::info!(worker = %worker_name, issue = %issue_id, "auto-completed issue")
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(worker = %worker_name, issue = %issue_id, "auto-complete failed: {}", e)
-                                    }
+                    if let Ok(provider) = repo.issue_provider(global_config) {
+                        let should_update = match provider.get(issue_id) {
+                            Ok(Some(issue)) => !matches!(issue.status(), IssueStatus::Complete),
+                            _ => false,
+                        };
+                        if should_update {
+                            match provider.update_status(issue_id, &IssueStatus::Complete) {
+                                Ok(()) => {
+                                    tracing::info!(worker = %worker_name, issue = %issue_id, "auto-completed issue")
+                                }
+                                Err(e) => {
+                                    tracing::warn!(worker = %worker_name, issue = %issue_id, "auto-complete failed: {}", e)
                                 }
                             }
                         }
@@ -672,7 +658,10 @@ fn dispatch_actions(
             event: NotificationEvent::NeedsIntervention {
                 repo: repo_name.to_string(),
                 worker: worker_name.to_string(),
-                reason: "Worker failed".to_string(),
+                reason: new_state
+                    .terminal_reason
+                    .clone()
+                    .unwrap_or_else(|| "Worker failed".to_string()),
             },
         });
     }
@@ -681,24 +670,6 @@ fn dispatch_actions(
 }
 
 // ── Free functions ──────────────────────────────────────────────────
-
-fn try_resume_worker(
-    paths: &AppPaths,
-    repo_root: &std::path::Path,
-    worker_name: &str,
-    mux: &dyn Mux,
-) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let worker = Worker::from_branch(repo_root, worker_name.into());
-    if worker.has_mux_window(mux) {
-        return Ok(false);
-    }
-    let wt = worker.worktree()?;
-    let jig_config = RepoConfig::load(repo_root)?.unwrap_or_default();
-    let agent = jig_config.agent.agent();
-    let prompt = crate::prompts::resume_task("You were interrupted. Resume your previous task.");
-    Worker::resume(paths, &wt, &agent, prompt, mux)?;
-    Ok(true)
-}
 
 /// A PR URL as the notification events carry it: text, empty when absent.
 fn url_text(pr_url: &Option<Url>) -> String {
@@ -888,7 +859,27 @@ mod tests {
         let actions = dispatch_actions("repo", "test", &old, &new, 300);
         assert_eq!(actions.len(), 1);
         assert!(
-            matches!(&actions[0], DispatchAction::Notify { event: NotificationEvent::NeedsIntervention { reason, .. } } if reason.contains("failed"))
+            matches!(&actions[0], DispatchAction::Notify { event: NotificationEvent::NeedsIntervention { reason, .. } } if reason == "Worker failed")
+        );
+    }
+
+    #[test]
+    fn failed_notify_carries_the_terminal_reason() {
+        let old = WorkerState {
+            status: WorkerStatus::Initializing,
+            ..Default::default()
+        };
+        let reason = "on_create hook exited with status 1:\n  ERR_PNPM_OUTDATED_LOCKFILE\n  (full log: /x/setup.log)";
+        let new = WorkerState {
+            status: WorkerStatus::Failed,
+            terminal_reason: Some(reason.to_string()),
+            ..Default::default()
+        };
+
+        let actions = dispatch_actions("repo", "test", &old, &new, 300);
+        assert_eq!(actions.len(), 1);
+        assert!(
+            matches!(&actions[0], DispatchAction::Notify { event: NotificationEvent::NeedsIntervention { reason: r, .. } } if r == reason)
         );
     }
 

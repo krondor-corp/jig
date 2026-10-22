@@ -44,9 +44,6 @@ pub enum GitError {
     #[error("push failed: {0}")]
     PushFailed(String),
 
-    #[error("hook failed: {0}")]
-    HookFailed(String),
-
     /// A command that could not be run, or that outran its deadline.
     /// Forwarded as-is: `exec` already names it and says how long it had.
     #[error(transparent)]
