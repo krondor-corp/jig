@@ -309,12 +309,7 @@ fn try_resume_worker(
     }
     let wt = worker.worktree()?;
     let jig_config = RepoConfig::load(repo_root)?.unwrap_or_default();
-    let agent = jig_core::agents::Agent::from_config(
-        &jig_config.agent.agent_type,
-        jig_config.agent.model.as_deref(),
-        &jig_config.agent.disallowed_tools,
-    )
-    .unwrap_or_else(|| jig_core::agents::Agent::from_config("claude", None, &[]).unwrap());
+    let agent = jig_config.agent.agent();
     let prompt = crate::prompts::resume_task("You were interrupted. Resume your previous task.");
     Worker::resume(paths, &wt, &agent, prompt, mux)?;
     Ok(true)

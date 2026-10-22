@@ -111,7 +111,7 @@ impl Op for Init {
         };
 
         // Validate agent argument
-        let agent = agents::Agent::from_config(agent_name, None, &[]).ok_or_else(|| {
+        let kind: agents::AgentKind = agent_name.parse().map_err(|_| {
             InitError::UnknownAgent(
                 agent_name.to_string(),
                 agents::AgentKind::ALL
@@ -121,6 +121,7 @@ impl Op for Init {
                     .join(", "),
             )
         })?;
+        let agent = agents::Agent::new(kind, None, &[]);
 
         // Check if agent is installed
         if terminal::which(agent.command()).is_none() {

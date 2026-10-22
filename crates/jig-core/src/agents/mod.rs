@@ -33,10 +33,10 @@
 //! # Usage
 //!
 //! ```no_run
-//! use jig_core::agents::Agent;
+//! use jig_core::agents::{Agent, AgentKind};
 //! use jig_core::Prompt;
 //!
-//! let agent = Agent::from_config("claude", Some("opus"), &[]).unwrap();
+//! let agent = Agent::new(AgentKind::Claude, Some("opus"), &[]);
 //!
 //! // Generate a shell command to send to a mux window
 //! let prompt = Prompt::new("Fix the auth bug in {{file}}")
@@ -177,21 +177,17 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// Create an agent from config strings.
+    /// Create an agent of a known kind.
     ///
     /// `model` is passed through to the agent CLI untouched — jig does not
     /// validate model names. If `None`, the agent's own configured default
     /// applies. `extra_disallowed_tools` are merged with
     /// [`DEFAULT_DISALLOWED_TOOLS`].
     ///
-    /// Returns `None` if the kind is unknown.
-    pub fn from_config(
-        kind: &str,
-        model: Option<&str>,
-        extra_disallowed_tools: &[String],
-    ) -> Option<Self> {
-        let k = kind.parse::<AgentKind>().ok()?;
-        let inner: Box<dyn AgentBackend> = match k {
+    /// Takes an [`AgentKind`], not a name: an unknown agent is an error where
+    /// the name is read (config, CLI args), not something to paper over here.
+    pub fn new(kind: AgentKind, model: Option<&str>, extra_disallowed_tools: &[String]) -> Self {
+        let inner: Box<dyn AgentBackend> = match kind {
             AgentKind::Claude => Box::new(ClaudeCode::new(model.map(str::to_string))),
         };
         let mut disallowed: Vec<String> = DEFAULT_DISALLOWED_TOOLS
@@ -203,10 +199,10 @@ impl Agent {
                 disallowed.push(tool.clone());
             }
         }
-        Some(Self {
+        Self {
             inner,
             disallowed_tools: disallowed,
-        })
+        }
     }
 
     pub fn kind(&self) -> AgentKind {

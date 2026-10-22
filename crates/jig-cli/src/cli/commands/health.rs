@@ -3,7 +3,7 @@
 use clap::Args;
 
 use crate::context::AppCtx;
-use crate::context::RepoConfig;
+use crate::context::{ContextError, RepoConfig};
 use crate::terminal::check_dep;
 
 use crate::cli::op::{NoOutput, Op};
@@ -97,10 +97,10 @@ impl Op for Health {
         // Section 2: Repository
         eprintln!();
         // Health reports on the repo you are standing in, if any — being
-        // outside one is a finding, not a failure.
-        let repo = RepoCtx::from_cwd().ok();
-        match repo.as_ref() {
-            Some(repo) => {
+        // outside one is a finding, not a failure. A repo whose config won't
+        // load is a failure, and says why.
+        match RepoCtx::from_cwd() {
+            Ok(repo) => {
                 let repo_name = repo.name();
                 ui::header(&format!("Repository: {}", repo_name));
 
@@ -131,88 +131,85 @@ impl Op for Health {
 
                 // Section 3: Agent — init from config, use its health + scaffolding
                 eprintln!();
-                let jig_config = RepoConfig::load(&repo.paths.repo_root)
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default();
-                let agent = jig_core::agents::Agent::from_config(
-                    &jig_config.agent.agent_type,
-                    jig_config.agent.model.as_deref(),
-                    &jig_config.agent.disallowed_tools,
-                );
+                let agent = repo.config.agent.agent();
+                ui::header(&format!("Agent: {}", agent.name()));
 
-                match agent {
-                    Some(agent) => {
-                        ui::header(&format!("Agent: {}", agent.name()));
-
-                        match agent.health() {
-                            Ok(ver) => check_ok(agent.command(), Some(&ver)),
-                            Err(e) => {
-                                check_fail(agent.command(), Some(&format!("({e})")));
-                                all_passed = false;
-                            }
-                        }
-
-                        let project_file = agent.project_file();
-                        if repo.paths.repo_root.join(project_file).is_file() {
-                            check_ok(&project_file.display().to_string(), None);
-                        } else {
-                            check_fail(&project_file.display().to_string(), Some("(not found)"));
-                            all_passed = false;
-                        }
-
-                        if let Some(settings) = agent.settings_file() {
-                            if repo.paths.repo_root.join(settings).is_file() {
-                                check_ok(&settings.display().to_string(), None);
-                            } else {
-                                check_fail(&settings.display().to_string(), Some("(not found)"));
-                                all_passed = false;
-                            }
-                        }
-
-                        let skills_dir = repo.paths.repo_root.join(agent.skills_dir());
-                        if skills_dir.is_dir() {
-                            eprintln!("  Skills ({}):", agent.skills_dir().display());
-                            if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-                                let mut found_any = false;
-                                let mut skill_names: Vec<String> = entries
-                                    .filter_map(|e| e.ok())
-                                    .filter(|e| e.path().is_dir())
-                                    .filter(|e| e.path().join(agent.skill_file()).is_file())
-                                    .map(|e| e.file_name().to_string_lossy().to_string())
-                                    .collect();
-                                skill_names.sort();
-                                for name in &skill_names {
-                                    eprintln!("    {} {}", ui::SYM_OK, name);
-                                    found_any = true;
-                                }
-                                if !found_any {
-                                    eprintln!("    {} (none found)", ui::SYM_FAIL);
-                                    all_passed = false;
-                                }
-                            }
-                        } else {
-                            check_fail(
-                                &format!("{} directory", agent.skills_dir().display()),
-                                Some("(not found)"),
-                            );
-                            all_passed = false;
-                        }
-                    }
-                    None => {
-                        ui::header("Agent");
-                        check_fail("agent", Some("(unknown agent type in config)"));
+                match agent.health() {
+                    Ok(ver) => check_ok(agent.command(), Some(&ver)),
+                    Err(e) => {
+                        check_fail(agent.command(), Some(&format!("({e})")));
                         all_passed = false;
                     }
                 }
+
+                let project_file = agent.project_file();
+                if repo.paths.repo_root.join(project_file).is_file() {
+                    check_ok(&project_file.display().to_string(), None);
+                } else {
+                    check_fail(&project_file.display().to_string(), Some("(not found)"));
+                    all_passed = false;
+                }
+
+                if let Some(settings) = agent.settings_file() {
+                    if repo.paths.repo_root.join(settings).is_file() {
+                        check_ok(&settings.display().to_string(), None);
+                    } else {
+                        check_fail(&settings.display().to_string(), Some("(not found)"));
+                        all_passed = false;
+                    }
+                }
+
+                let skills_dir = repo.paths.repo_root.join(agent.skills_dir());
+                if skills_dir.is_dir() {
+                    eprintln!("  Skills ({}):", agent.skills_dir().display());
+                    if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+                        let mut found_any = false;
+                        let mut skill_names: Vec<String> = entries
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.path().is_dir())
+                            .filter(|e| e.path().join(agent.skill_file()).is_file())
+                            .map(|e| e.file_name().to_string_lossy().to_string())
+                            .collect();
+                        skill_names.sort();
+                        for name in &skill_names {
+                            eprintln!("    {} {}", ui::SYM_OK, name);
+                            found_any = true;
+                        }
+                        if !found_any {
+                            eprintln!("    {} (none found)", ui::SYM_FAIL);
+                            all_passed = false;
+                        }
+                    }
+                } else {
+                    check_fail(
+                        &format!("{} directory", agent.skills_dir().display()),
+                        Some("(not found)"),
+                    );
+                    all_passed = false;
+                }
             }
-            None => {
+            Err(ContextError::Git(_)) => {
                 ui::header("Repository:");
                 eprintln!("  {} Not in a git repository", ui::SYM_FAIL);
 
                 eprintln!();
                 ui::header("Agent");
                 eprintln!("  {} Skipped (no repository)", ui::SYM_FAIL);
+                all_passed = false;
+            }
+            Err(e) => {
+                ui::header("Repository");
+                // TOML errors span lines; a check line is one.
+                let reason = e
+                    .to_string()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                check_fail("jig.toml", Some(&format!("({reason})")));
+
+                eprintln!();
+                ui::header("Agent");
+                eprintln!("  {} Skipped (config did not load)", ui::SYM_FAIL);
                 all_passed = false;
             }
         }

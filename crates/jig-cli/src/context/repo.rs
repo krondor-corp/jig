@@ -1,5 +1,6 @@
 //! Repository configuration — jig.toml + jig.local.toml overlay.
 
+use jig_core::agents::{Agent, AgentKind};
 use jig_core::exec::{Exec, Hook};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -81,8 +82,10 @@ impl WorktreeConfig {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentConfig {
+    /// An unknown `type` fails the load: running some other agent than the
+    /// one configured would be worse than not starting.
     #[serde(rename = "type")]
-    pub agent_type: String,
+    pub agent_type: AgentKind,
     pub model: Option<String>,
     pub disallowed_tools: Vec<String>,
 }
@@ -90,10 +93,24 @@ pub struct AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            agent_type: "claude".to_string(),
+            agent_type: AgentKind::Claude,
             model: None,
             disallowed_tools: Vec::new(),
         }
+    }
+}
+
+impl AgentConfig {
+    /// The configured agent, ready to spawn or resume.
+    ///
+    /// NOTE(canonical): build an `Agent` from repo config here. **Do not**
+    /// call `Agent::new` with these fields anywhere else.
+    pub fn agent(&self) -> Agent {
+        Agent::new(
+            self.agent_type,
+            self.model.as_deref(),
+            &self.disallowed_tools,
+        )
     }
 }
 

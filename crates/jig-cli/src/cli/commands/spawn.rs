@@ -8,7 +8,6 @@ use crate::context::ContextError;
 use crate::context::Ctx;
 use crate::terminal;
 use crate::worker::Worker;
-use jig_core::agents;
 use jig_core::git::Branch;
 
 use crate::cli::op::{NoOutput, Op};
@@ -115,12 +114,7 @@ impl Op for Spawn {
         };
 
         let jig_config = context::RepoConfig::load(&repo.paths.repo_root)?.unwrap_or_default();
-        let agent = agents::Agent::from_config(
-            &jig_config.agent.agent_type,
-            jig_config.agent.model.as_deref(),
-            &jig_config.agent.disallowed_tools,
-        )
-        .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
+        let agent = jig_config.agent.agent();
 
         let git_repo = jig_core::Repo::open(&repo.paths.repo_root)?;
         let branch = Branch::new(&branch_name);

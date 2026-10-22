@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use crate::context::{self, RepoCtx};
-use jig_core::agents;
 use jig_core::git::{Branch, Repo};
 use jig_core::issues::issue::{IssueFilter, IssueStatus};
 use jig_core::issues::{Issue, IssueProvider};
@@ -151,12 +150,7 @@ fn spawn_worker_for_issue(
     let repo = Repo::open(repo_root).map_err(|e| e.to_string())?;
     let branch = issue.branch().clone();
 
-    let agent = agents::Agent::from_config(
-        &cfg.config.agent.agent_type,
-        cfg.config.agent.model.as_deref(),
-        &cfg.config.agent.disallowed_tools,
-    )
-    .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
+    let agent = cfg.config.agent.agent();
 
     let prompt = crate::prompts::spawn_task(issue, provider);
 
