@@ -1,8 +1,13 @@
 # jig fleet spec — one view of all work, everywhere
 
-Status: accepted direction (2026-08-31). Supersedes the earlier "all-in on herdr"
-framing. Phase 1 of this spec — the daemon-to-service refactor — shipped in v0.9.0;
-it lives in `crates/jig-cli/src/daemon/` and its plan doc has been retired.
+Status: accepted direction (2026-08-31), networking revised 2026-10-22. Phase 1
+of this spec — the daemon-to-service refactor — shipped in v0.9.0; it lives in
+`crates/jig-cli/src/daemon/` and its plan doc has been retired.
+
+The 2026-10-22 revision replaces the hub-and-spoke iroh transport with a peer
+mesh over a **pluggable private network** (`Net`), chosen per machine the way
+`mux` is. Tailscale is the first backend; iroh becomes a later backend rather
+than the only one. The web view moves from stretch goal to core.
 
 ## The problem
 
@@ -12,176 +17,239 @@ hand-created worktrees locally — and there is no single place to answer:
 1. What issues are in the queue?
 2. What is the current review state?
 3. Which agents are *genuinely* stuck?
-4. How do I switch the model a task is running on?
+4. Which setups failed, and why?
+5. How do I prune, nudge, or switch the model of a task on another machine?
 
 herdr solves the *terminal* half of this (persistent PTYs, attach from anywhere,
 `herdr --remote` as a client over remote sessions). It cannot solve the *work* half:
 herdr knows a pane went idle; it does not know whether that means "done and merged,"
-"done but no PR," "CI red," or "waiting on review."
+"done but no PR," "CI red," "setup never finished," or "waiting on review."
 
 ## Identity
 
 **jig is the delivery loop — issue → worktree → agent → PR → merge — and its control
-plane.** Not a multiplexer, not a terminal UI.
+plane.** Not a multiplexer, not a terminal UI, not a network.
 
 - **Mux-agnostic by design.** The `Mux` trait (`crates/jig-core/src/mux/`) has two
-  first-class backends chosen per device in config: `tmux` (ubiquitous, fine for
-  throwaway boxes) and `herdr` (persistent PTYs, remote attach, live
-  `agent_state: idle|working|blocked|done|unknown`). Capabilities degrade honestly:
-  `agent_state() == None` on tmux means the monitor judges from the event log alone —
-  today's behavior. Neither backend is deprecated.
+  first-class backends chosen per device in config: `tmux` and `herdr`.
+  Capabilities degrade honestly: `agent_state() == None` on tmux means the monitor
+  judges from the event log alone.
+- **Network-agnostic by the same design.** The `Net` trait (below) is chosen per
+  device in config. jig never runs a public endpoint and never implements login:
+  reachability and identity come from a private network the operator already
+  trusts.
 - **Terminal viewing/attach is delegated**, always: `jig attach` locally,
   `herdr --remote` across machines. jig builds no terminal UI, ever.
-- **The fleet view is a *work* view**: branches, pipeline state, PR/CI/review health,
-  issue linkage, stuck-ness — joined across every machine.
+- **The fleet view is a *work* view** — branches, pipeline state, setup state,
+  PR/CI/review health, issue linkage, stuck-ness — joined across every machine,
+  as `jig ps --fleet` and as a web page on the private network.
 
 ## Why the distributed problem is small
 
-The four questions decompose by data source:
+The questions decompose by data source:
 
 | Question | Source of truth | Distribution needed |
 |----------|----------------|---------------------|
-| Issue queue | Linear (cloud) | none — hub polls it (jig already does: `issues`, triage) |
-| Review state | GitHub (cloud) | none — hub polls it (jig already does: `daemon/checks.rs`) |
-| Genuinely stuck | per-machine: event log + mux `agent_state` | **state up**: small worker snapshots |
-| Switch model / kill / nudge | the machine owning the worker | **commands down**: routed to that machine |
+| Issue queue | Linear (cloud) | none — each daemon polls it for its repos (as today) |
+| Review state | GitHub (cloud) | none — each daemon polls it for its workers (`daemon/checks.rs`) |
+| Genuinely stuck / setup failed | per-machine: event log + mux `agent_state` | **read**: peers ask each other for status |
+| Prune / nudge / switch model | the machine owning the worker | **command**: sent to the owning peer |
 
-Only rows 3–4 cross machines. The sync fabric is worker snapshots flowing up and
-commands flowing down — a handful of typed message kinds, not state replication.
-`WorkerSnapshot` already exists in `crates/jig-cli/src/daemon/ipc.rs` as the IPC
-projection; the network frames are the same types plus a machine identity.
+Only the last two rows cross machines, and both are request/response against
+the machine that owns the data. There is no replicated state and no aggregator
+that has to be up for anything to work.
 
-## Topology
+## Topology: a peer mesh that polls
 
 ```
-            Linear ──┐            ┌── GitHub
-                     ▼            ▼
-               ┌──────────────────────┐
-               │  jig hub             │  persistent deployment (dev server)
-               │  = jig daemon +      │  · polls Linear/GitHub (as today)
-               │    aggregator role   │  · holds fleet state: machine → workers
-               │                      │  · routes commands to owning daemon
-               └──▲───────▲───────▲───┘
-        snapshots │       │       │ commands
-               ┌──┴──┐ ┌──┴──┐ ┌──┴──┐
-               │ dev │ │ lap │ │ box │   jig daemons (one per machine)
-               │ srv │ │ top │ │  N  │   · local monitor loop, unchanged
-               └──┬──┘ └──┬──┘ └──┬──┘   · forward snapshots, execute commands
-                  │       │       │
-               tmux/herdr per device      terminals: herdr --remote for eyes-on
+     ┌──────────┐        ┌──────────┐        ┌──────────┐
+     │ dev srv  │◄──────►│  laptop  │◄──────►│  box N   │   jig daemons, one per machine
+     │ daemon   │        │  daemon  │        │  daemon  │   · local monitor loop, unchanged
+     └────▲─────┘        └────▲─────┘        └────▲─────┘   · answer Status for own workers
+          └───────────────────┴───────────────────┘         · execute commands for own workers
+                    private network (Net)                    · serve the fleet view
+                          ▲
+                          │ browser on any enrolled device (phone included,
+                          │ for IP-based backends)
 ```
 
-- **hub** = the same jig daemon binary with an aggregator role enabled, running as a
-  user service on the always-on dev server. Machines connect *outward* to it (laptop
-  behind NAT never needs to be reachable).
-- **daemon** = the shipped socket daemon (`crates/jig-cli/src/daemon/`), plus a
-  forwarder: publish `WorkerSnapshot`s on change (and heartbeat), subscribe for
-  commands addressed to this machine.
-- **clients** = thin: `jig ps --fleet` (any machine) asks the hub; `jig model`,
-  `jig kill --machine`, etc. submit commands to the hub for routing. Local commands
-  keep talking to the local daemon socket directly.
+- **Every daemon is a peer.** It answers `Status` for its own workers over the
+  private network and executes commands for its own workers. Nothing else.
+- **Any peer can render the fleet.** `jig ps --fleet` (or the web page) asks
+  `Net::peers()` who is out there, requests `Status` from each, and joins the
+  results with a `MACHINE` column. A peer that doesn't answer is rendered stale,
+  never guessed at.
+- **Commands go to the owner.** `jig kill --machine laptop X` connects to
+  `laptop` and asks it; the owner checks the caller (`Net::identify`) before
+  acting.
+- **No hub.** Polling a handful of machines every few seconds is cheap. If
+  cross-machine coordination is ever needed (queue assignment, Phase 6), a
+  coordinator is a role a peer takes on, not a new deployment.
 
-## Transport: typed frames, pluggable carrier, iroh for the network
+The wire protocol is the existing one in `daemon/ipc.rs` — newline-delimited
+JSON, one `Request` in and one `Response` out per connection — carried over a
+`Net` stream instead of only the unix socket. Local commands keep using the
+unix socket directly.
 
-Design the protocol once, transport-agnostic: the same serde frames
-(`Snapshot`, `Heartbeat`, `Command`, `Ack`) over:
+## Networking: the `Net` trait
 
-1. **Local**: the daemon's unix socket (newline-delimited JSON) — see `daemon/ipc.rs`.
-2. **Network**: [iroh](https://iroh.computer) — QUIC with hole-punching + relays,
-   node identity = keypairs. Chosen because:
-   - The laptop roams and NATs; iroh needs no port-forwarding and no reachable hub IP.
-   - The command channel is remote code execution by construction; iroh's keypair
-     identity gives a natural allowlist ("my machines"), e2e encrypted by default.
-   - zim (krondor-corp/zim, built on iroh-blobs) has working patterns to reuse:
-     `zim-peer`'s accept policy, peer registry, and wire-protocol shape.
+jig needs exactly four things from a network: somewhere to listen, a list of
+peers, who is calling, and whether the network is up. `Net` asks for those and
+nothing more, at the level of authenticated streams so that address-based
+networks and key-based ones fit behind the same trait:
 
-   Alternatives considered and rejected:
-   - *HTTPS + tokens to a reachable hub*: fails the roaming-laptop case for
-     downstream commands (polling) and makes the hub a public endpoint.
-   - *Tailscale/WireGuard mesh + plain HTTP*: only moves the connectivity problem —
-     the command channel still needs app-level identity for the allowlist (trusting
-     the network is not acceptable for remote execution), so the keypair machinery
-     gets built regardless, plus a third-party control plane and a login on every
-     box. With iroh the transport and the auth model are the same keypair, and the
-     operational patterns (endpoint setup, accept policy, peer registry, relays) are
-     already solved in `zim-peer`.
+```rust
+pub trait Net {
+    /// This machine: its name and node id on the network.
+    fn local(&self) -> Result<Node, NetError>;
+    /// The other jig machines this one can see.
+    fn peers(&self) -> Result<Vec<Node>, NetError>;
+    /// The next incoming connection and who it is from.
+    fn accept(&self) -> Result<(Box<dyn Stream>, NodeId), NetError>;
+    /// Open a connection to a peer.
+    fn dial(&self, peer: &NodeId) -> Result<Box<dyn Stream>, NetError>;
+    /// Installed? Connected? This machine enrolled? For `jig health`.
+    fn health(&self) -> NetHealth;
+}
+```
 
-   iroh is the settled choice. It still lives in one transport crate behind the
-   frame types — that's separation of concerns, not a planned escape hatch.
+Configured per machine, like `mux`:
 
-Security invariant: the hub and daemons accept frames **only** from allowlisted node
-keys (`jig fleet trust <node-id>` to enroll a machine). A command frame is refused,
-not queued, for unknown keys. No open enrollment, ever.
+```toml
+# ~/.config/jig/config.toml
+[fleet]
+net = "tailscale"        # "tailscale" | "static" | (later) "iroh"
+```
+
+### Backends
+
+| Backend | `peers` | `accept` identity | Operator does once | jig can own |
+|---------|---------|-------------------|--------------------|-------------|
+| `tailscale` | `tailscale status --json`, filtered to `tag:jig` | `tailscale whois <ip>` on the TCP peer | install Tailscale | `jig fleet join <authkey>` runs `tailscale up --authkey … --advertise-tags=tag:jig`; discovery; health |
+| `tailscale` + Headscale | same | same | install Tailscale; run Headscale on the dev server | same, pointed at the operator's control server |
+| `static` | listed in config | source address checked against an allowlist | bring your own WireGuard / ZeroTier / Nebula / NetBird / LAN | binding, peer list, allowlist |
+| `iroh` (later) | enrolled node keys | the QUIC peer's node key | nothing — embedded in the binary | everything, `jig fleet join <ticket>` |
+
+- **`tailscale` is the first backend.** Like the `tmux` and `herdr` backends it
+  shells out through `Exec` — no new dependencies, no async runtime. It gives
+  automatic discovery by tag, per-connection identity, and a fleet page any
+  enrolled device's browser can open, phone included.
+- **`static` is the escape hatch** for any private IP network. Address-based
+  identity is sound on WireGuard-family networks, where an address can only be
+  used by the holder of its key; on a plain LAN it is only as good as the LAN.
+- **Headscale needs no backend of its own** — it is Tailscale's control server,
+  self-hosted, and clients are the normal `tailscale` client.
+- **`iroh` is the most plug-and-play** (nothing to install) but a browser cannot
+  join it, so the web view needs an IP backend, and it brings tokio into a daemon
+  that is std-threads today. It is designed for, not built first. `zim-peer`
+  (krondor-corp/zim) remains the reference for its accept policy and peer
+  registry.
+
+What jig can never own on `tailscale` is the login itself — proving a machine
+belongs to the operator. A reusable, pre-tagged auth key reduces that to one
+command per machine.
+
+### Security invariant
+
+Every request arriving over `Net` is checked against the caller's identity
+before it is answered:
+
+- **Reads** (`Ping`, `Status`) — any trusted peer. On `tailscale`, trusted means
+  tagged `tag:jig` on the operator's tailnet (tailnet ACLs restrict the jig port
+  to that tag as well); on `static`, the configured allowlist; on `iroh`, the
+  enrolled keys.
+- **Commands** (`kill`, `nudge`, `prune`, `retry-setup`, `model`) — trusted
+  peers only, refused (not queued) otherwise. Commands ship after reads, behind
+  the same check.
+- The `Net` listener is **off by default**; enabling `[fleet]` is opt-in per
+  machine. Nothing ever binds a public interface.
+
+## Setup state is fleet state
+
+The fleet view can only show what the event log records in structured form. A
+failed `on_create` must therefore be data, not a string:
+
+- `on_create` output is kept in `setup.log` beside the worker's `events.jsonl`,
+  and its failure reason carries exit status, an output tail, and the log path
+  (KRO-236).
+- Setup becomes a first-class part of `WorkerState` and `WorkerSnapshot` —
+  phase, duration, and on failure the tail and log path — so `ps`, the fleet
+  view, and notifications all render it from the same field.
+- Failed workers stay visible in `ps` until pruned; `retry-setup` re-runs the
+  hook in the existing worktree. `setup.log` itself is fetched from the owning
+  peer on demand; only the tail travels in `Status`.
 
 ## Model switching
 
 `jig model <branch> <model> [--machine <name>]`:
 
-- **v0 (local, ships with Phase 2):** the agent session is live in a mux window —
-  send `/model <model>` through `Mux::send_message`. claude applies it in-session.
-  Record the change as an event so `ps` shows the current model.
-- **v1 (routed):** same command from any machine; hub routes to the owning daemon.
-- **v2 (cold switch):** for a worker that must restart (agent doesn't support live
-  switch, or session wedged): daemon kills the window and re-runs `Agent::resume`
-  with the new `--model` flag. Requires persisting model + session id on the worker
-  record (`Agent::from_config` already takes the model; resume already re-launches
-  with context).
+- **v0 (local):** the agent session is live in a mux window — send `/model
+  <model>` through `Mux::send_message`. Record the change as an event so `ps`
+  shows the current model.
+- **v1 (routed):** same command from any peer, sent to the owning machine.
+- **v2 (cold switch):** for a worker that must restart, the owning daemon kills
+  the window and re-runs `Agent::resume` with the new `--model`. Requires
+  persisting model + session id on the worker record.
 
-Same routing carries the rest of the control verbs: `kill`, `nudge`, `spawn --machine`.
+The same routing carries the rest of the control verbs: `kill`, `nudge`,
+`prune`, `retry-setup`, `spawn --machine`.
 
 ## The fleet view
 
-`jig ps --fleet` (later `-g` grows a `MACHINE` column): one table joining
-hub-polled Linear/GitHub state with per-machine snapshots —
-`MACHINE · WORKER · STATE · AGENT (live mux state) · MODEL · PR · CI · REVIEW · ISSUE`.
-"Genuinely stuck" is a first-class filter: pipeline says working, agent state
-idle/blocked past threshold, no commits — the existing nudge-ladder heuristics, now
-visible in one place instead of per-box.
+`jig ps --fleet`: one table joining every peer's `Status` —
+`MACHINE · WORKER · STATE · SETUP · AGENT (live mux state) · MODEL · PR · CI · REVIEW · ISSUE`.
+"Genuinely stuck" and "setup failed" are first-class filters.
 
-Stretch, explicitly after everything else: the hub serves a read-only web view of the
-same table (axum, the zim `daemon/api` pattern). It renders work state only — attach
-links can deep-link to `herdr --remote` targets, but terminals never render in jig.
+The web view serves the same table over HTTP on the `Net` listen address (IP
+backends only), with a failed-setups panel and buttons for the command verbs. It
+renders work state only — attach links can deep-link to `herdr --remote`
+targets, but terminals never render in jig. It is reachable only from enrolled
+devices; there is no public page and no login.
 
 ## Phases
 
 1. **Daemon as a service** — ✅ shipped in v0.9.0: unix-socket IPC,
    `WorkerSnapshot`, `jig daemon start/stop/status/logs/install/uninstall`,
-   `service-manager` (launchd agent on macOS; a systemd system unit with `User=`
-   on Linux, so the daemon keeps the user's supplementary groups). Plus, landed
-   prerequisites hardened:
-   `mux` selection in `jig.toml` (env `JIG_MUX` as override), per-tick mux snapshot
-   batching (herdr's CLI is 3 calls/worker/tick today — too chatty for always-on),
+   `service-manager`, `mux` selection, per-tick mux snapshot batching,
    `jig health` herdr detection.
 2. **Local control verbs + state fusion** — `jig model` v0; monitor uses
    `agent_state` where present: never nudge `blocked` (notify: "needs approval —
    `jig attach X`"), suppress idle-nudges while `working`, unchanged when `None`.
-3. **Fleet fabric** — transport crate (frames over unix socket first, iroh second,
-   `zim-peer` as reference), hub role flag, `jig fleet trust`, snapshot forwarding,
-   command routing, `jig ps --fleet`.
-4. **Queue across machines** — auto-spawn assignment: hub assigns queued issues to
-   machines. Note there is no longer a per-repo worker cap to build on — the old
-   `max_concurrent_workers` was removed as more confusing than useful — so a
-   per-machine limit, if one is wanted, is a fleet-level decision to design here.
-   `jig spawn --machine <name>` routed like any command.
-5. **Web view** (stretch) — read-only axum table on the hub.
+3. **Setup as state** — KRO-236 (setup log, real failure reasons in
+   notifications), then structured setup state on `WorkerState`/`WorkerSnapshot`,
+   failed workers visible in `ps`, notification dedupe across daemon restarts,
+   `jig retry-setup`. Useful on one machine before any networking exists.
+4. **Peer reads** — machine identity in `Ping`/`Status`; the `Net` trait and
+   `[fleet] net` config with `static` and `tailscale` backends; `jig health`
+   checks; a `Net` listener serving the existing IPC protocol, read-only;
+   `jig fleet join`; `jig ps --fleet`.
+5. **Peer commands + web view** — command verbs routed to the owning peer,
+   gated by `accept` identity; the HTTP web view on IP backends.
+6. **Queue across machines** — assigning queued issues to machines. There is no
+   per-repo worker cap to build on (`max_concurrent_workers` was removed), so a
+   per-machine limit, if wanted, is designed here. `jig spawn --machine <name>`
+   routed like any command.
+7. **`iroh` backend** — when zero-install enrollment is worth an async runtime.
 
 ## Risks
 
 | Risk | Mitigation |
 |------|------------|
-| Scope: this is a small distributed system | The protocol is 4 frame kinds; hub is the same binary/role-flag; phases 1–2 are useful standalone if 3 stalls |
-| Command channel = remote execution | Keypair allowlist only, explicit `fleet trust`, refuse unknown keys, no auto-enrollment |
-| iroh operational surface (relays, keys) | Patterns already proven in zim-peer; isolated in one transport crate behind the frame types |
-| Stale snapshots misleading the fleet view | Heartbeats + `last_seen` rendered honestly (dim stale machines); hub never fabricates liveness |
-| herdr pre-1.0 CLI drift (backend dep) | Typed fail-loud parsing, version guard, tmux backend fully supported forever under this identity |
+| Scope: this is a small distributed system | No replicated state, no hub, one existing protocol; phases 2–3 are useful standalone if 4+ stall |
+| Command channel = remote execution | Off by default, private network only, every request checked against `Net` identity, commands refused for untrusted callers, reads ship before commands |
+| Vendor dependency on Tailscale | `Net` is a trait: Headscale needs no code, `static` covers any private network, `iroh` stays designed-for |
+| Address-based identity on `static` | Documented as only as strong as the underlying network; recommended only on WireGuard-family overlays |
+| Stale peers misleading the fleet view | A peer that doesn't answer is rendered stale with its `last_seen`; the view never fabricates liveness |
+| herdr pre-1.0 CLI drift (backend dep) | Typed fail-loud parsing, version guard, tmux backend fully supported |
 | Two views drift (local `ps` vs. fleet) | Both render from the same `WorkerSnapshot` type; fleet adds columns, never diverges in derivation |
 
 ## Non-goals
 
 - A terminal UI or terminal fleet view (herdr's product; `herdr --remote` covers it).
-- Making herdr (or tmux) the sole backend — per-device choice is the point.
+- A public endpoint, accounts, or login of any kind — identity is the private network's.
+- Running or reimplementing a VPN — jig uses one through `Net`, never ships one.
+- Making herdr (or tmux), or Tailscale (or iroh), the sole backend — per-device choice is the point.
 - Writing mux `agent_state` into the event log (it's a sensor; the log stays the
   pipeline source of truth).
 - General-purpose task queue for non-jig work.
-- Multi-user fleets — this is one operator's machines (one keyring). Revisit if that
-  changes.
+- Multi-user fleets — this is one operator's machines. Revisit if that changes.
