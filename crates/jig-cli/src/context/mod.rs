@@ -406,7 +406,11 @@ pub fn update_local_toml(
 
 /// Record `repo_root` in the global registry so daemon/-g commands see it.
 /// Best-effort: a filesystem problem must not fail an unrelated command.
-fn register_globally(paths: &AppPaths, repo_root: &Path) {
+///
+/// This is the single registration path — commands that resolve their repo
+/// without [`Ctx::here`] / [`Ctx::for_repo`] (e.g. `jig init`) call this
+/// directly rather than writing `repos.json` themselves.
+pub fn register_globally(paths: &AppPaths, repo_root: &Path) {
     let mut global = RepoRegistry::load(paths).unwrap_or_default();
     global.register(repo_root.to_path_buf());
     let _ = global.save(paths);

@@ -134,6 +134,7 @@ impl Op for Init {
         if RepoConfig::exists(&repo_root) && !self.force {
             ui::progress("Already initialized, ensuring hooks are set up...");
             install_hooks(&repo_root, &agent, false);
+            crate::context::register_globally(&paths, &repo_root);
             eprintln!();
             ui::success("Hooks up to date");
             return Ok(NoOutput);
@@ -285,6 +286,7 @@ type = "{}"
         }
 
         install_hooks(&repo_root, &agent, self.force);
+        crate::context::register_globally(&paths, &repo_root);
 
         eprintln!();
         ui::success(&ui::bold("Initialization complete"));
