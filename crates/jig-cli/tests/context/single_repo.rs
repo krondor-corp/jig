@@ -9,7 +9,7 @@ fn test_single_repo_context_registers_the_repo() {
     let paths = sandbox.paths();
     let dir = sandbox.repo(0);
 
-    let repo = RepoCtx::from_path(dir).unwrap();
+    let repo = RepoCtx::from_path(&paths, dir).unwrap();
     let ctx = Ctx::for_repo(AppCtx::load(paths.clone(), Flags::default()), repo);
 
     let repo = ctx.repo().unwrap();
@@ -18,6 +18,7 @@ fn test_single_repo_context_registers_the_repo() {
         dir.canonicalize().unwrap()
     );
     assert!(repo.paths.worktrees_path.ends_with(JIG_DIR));
+    assert_eq!(repo.app_paths, paths);
     assert!(repo.session_name().starts_with("jig-"));
     assert_eq!(repo.base_branch(&ctx.config), "origin/main");
 
@@ -72,6 +73,6 @@ fn test_base_branch_from_jig_toml() {
     )
     .unwrap();
 
-    let repo = RepoCtx::from_path(dir).unwrap();
+    let repo = RepoCtx::from_path(&sandbox.paths(), dir).unwrap();
     assert_eq!(repo.base_branch(&AppConfig::default()), "origin/develop");
 }

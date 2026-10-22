@@ -102,7 +102,7 @@ impl Op for Init {
 
         // Init discovers the repo root directly: jig.toml may not exist yet,
         // since init is often the first jig command run in a repo.
-        let repo_root = match RepoCtx::from_cwd() {
+        let repo_root = match RepoCtx::from_cwd(&paths) {
             Ok(repo) => repo.paths.repo_root,
             Err(_) => {
                 let git_repo = Repo::discover()?;

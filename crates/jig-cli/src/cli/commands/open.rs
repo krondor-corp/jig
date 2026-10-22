@@ -53,7 +53,7 @@ impl Op for Open {
             .as_deref()
             .ok_or(OpenError::Usage("branch is required".into()))?;
 
-        let cfg = match RepoCtx::from_cwd() {
+        let cfg = match RepoCtx::from_cwd(&paths) {
             Ok(cfg) => cfg,
             Err(_) => {
                 let registry = RepoRegistry::load(&paths).unwrap_or_default();
@@ -61,7 +61,7 @@ impl Op for Open {
                     .repos()
                     .iter()
                     .filter(|e| e.path.exists())
-                    .filter_map(|e| RepoCtx::from_path(&e.path).ok())
+                    .filter_map(|e| RepoCtx::from_path(&paths, &e.path).ok())
                     .collect();
                 configs
                     .into_iter()

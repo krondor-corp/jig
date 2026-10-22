@@ -98,7 +98,7 @@ impl Op for Config {
         }
 
         match &self.subcommand {
-            None | Some(ConfigCommands::Show) => match RepoCtx::from_cwd() {
+            None | Some(ConfigCommands::Show) => match RepoCtx::from_cwd(paths) {
                 Ok(repo) => show_config(paths, &repo),
                 Err(_) => show_global_config(paths),
             },
@@ -108,7 +108,7 @@ impl Op for Config {
                 unset,
             }) => handle_base(paths, branch.as_deref(), *global, *unset),
             Some(ConfigCommands::OnCreate { command, unset }) => {
-                handle_on_create(command.as_deref(), *unset)
+                handle_on_create(paths, command.as_deref(), *unset)
             }
             Some(ConfigCommands::Mux { backend }) => handle_mux(paths, *backend),
         }
@@ -390,7 +390,7 @@ fn handle_base(
             global_cfg.save(paths)?;
             ui::success("Unset global base branch");
         } else {
-            let repo = RepoCtx::from_cwd()?;
+            let repo = RepoCtx::from_cwd(paths)?;
             context::update_local_toml(&repo.paths.repo_root, "worktree", "base", None)?;
             ui::success("Unset repo base branch");
         }
@@ -405,7 +405,7 @@ fn handle_base(
                 global_cfg.save(paths)?;
                 ui::success(&format!("Set global base branch to '{}'", ui::highlight(b)));
             } else {
-                let repo = RepoCtx::from_cwd()?;
+                let repo = RepoCtx::from_cwd(paths)?;
                 context::update_local_toml(&repo.paths.repo_root, "worktree", "base", Some(b))?;
                 ui::success(&format!("Set repo base branch to '{}'", ui::highlight(b)));
             }
@@ -422,7 +422,7 @@ fn handle_base(
                     }
                 }
             } else {
-                let repo = RepoCtx::from_cwd()?;
+                let repo = RepoCtx::from_cwd(paths)?;
                 let config = crate::context::AppConfig::load(paths)?;
                 Ok(ConfigOutput(Some(repo.base_branch(&config).to_string())))
             }
@@ -430,8 +430,12 @@ fn handle_base(
     }
 }
 
-fn handle_on_create(command: Option<&str>, unset: bool) -> Result<ConfigOutput, ConfigError> {
-    let repo = RepoCtx::from_cwd()?;
+fn handle_on_create(
+    paths: &AppPaths,
+    command: Option<&str>,
+    unset: bool,
+) -> Result<ConfigOutput, ConfigError> {
+    let repo = RepoCtx::from_cwd(paths)?;
 
     if unset {
         context::update_local_toml(&repo.paths.repo_root, "worktree", "on_create", None)?;

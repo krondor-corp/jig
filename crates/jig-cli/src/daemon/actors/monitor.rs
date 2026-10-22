@@ -548,7 +548,7 @@ impl MonitorActor {
                     }
                 }
                 DispatchAction::UpdateIssueStatus { issue_id } => {
-                    if let Ok(ctx) = RepoCtx::from_path(repo_path) {
+                    if let Ok(ctx) = RepoCtx::from_path(paths, repo_path) {
                         if let Ok(provider) = ctx.issue_provider(global_config) {
                             let should_update = match provider.get(issue_id) {
                                 Ok(Some(issue)) => !matches!(

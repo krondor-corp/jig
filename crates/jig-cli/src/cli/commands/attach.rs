@@ -68,7 +68,7 @@ impl Op for Attach {
         let local = if self.global {
             None
         } else {
-            RepoCtx::from_cwd().ok()
+            RepoCtx::from_cwd(&paths).ok()
         };
 
         match (&local, branch) {
@@ -104,7 +104,7 @@ fn registered_repos(paths: &AppPaths) -> Vec<RepoCtx> {
         .repos()
         .iter()
         .filter(|e| e.path.exists())
-        .filter_map(|e| RepoCtx::from_path(&e.path).ok())
+        .filter_map(|e| RepoCtx::from_path(paths, &e.path).ok())
         .collect()
 }
 

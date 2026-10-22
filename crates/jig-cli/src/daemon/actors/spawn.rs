@@ -55,7 +55,7 @@ impl Actor for SpawnActor {
                 }
             };
 
-            let cfg = match RepoCtx::from_path(&repo_root) {
+            let cfg = match RepoCtx::from_path(&req.ctx.paths, &repo_root) {
                 Ok(cfg) => cfg,
                 Err(e) => {
                     tracing::debug!(repo = %repo_name, error = %e, "failed to load config");

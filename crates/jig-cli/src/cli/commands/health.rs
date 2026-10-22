@@ -99,7 +99,7 @@ impl Op for Health {
         // Health reports on the repo you are standing in, if any — being
         // outside one is a finding, not a failure. A repo whose config won't
         // load is a failure, and says why.
-        match RepoCtx::from_cwd() {
+        match RepoCtx::from_cwd(&app.paths) {
             Ok(repo) => {
                 let repo_name = repo.name();
                 ui::header(&format!("Repository: {}", repo_name));
