@@ -159,8 +159,8 @@ before it is answered:
   to that tag as well); on `static`, the configured allowlist; on `iroh`, the
   enrolled keys.
 - **Commands** (`kill`, `nudge`, `prune`, `retry-setup`, `model`) — trusted
-  peers only, refused (not queued) otherwise. Commands ship after reads, behind
-  the same check.
+  peers only, refused (not queued) otherwise. Over `Net`, commands can be enabled
+  separately from reads, behind the same check.
 - The `Net` listener is **off by default**; enabling `[fleet]` is opt-in per
   machine. Nothing ever binds a public interface.
 
@@ -215,28 +215,36 @@ devices; there is no public page and no login.
 2. **Local control verbs + state fusion** — `jig model` v0; monitor uses
    `agent_state` where present: never nudge `blocked` (notify: "needs approval —
    `jig attach X`"), suppress idle-nudges while `working`, unchanged when `None`.
-3. **Setup as state** — KRO-236 (setup log, real failure reasons in
-   notifications), then structured setup state on `WorkerState`/`WorkerSnapshot`,
-   failed workers visible in `ps`, notification dedupe across daemon restarts,
-   `jig retry-setup`. Useful on one machine before any networking exists.
-4. **Peer reads** — machine identity in `Ping`/`Status`; the `Net` trait and
-   `[fleet] net` config with `static` and `tailscale` backends; `jig health`
-   checks; a `Net` listener serving the existing IPC protocol, read-only;
-   `jig fleet join`; `jig ps --fleet`.
-5. **Peer commands + web view** — command verbs routed to the owning peer,
-   gated by `accept` identity; the HTTP web view on IP backends.
-6. **Queue across machines** — assigning queued issues to machines. There is no
+3. **Local control plane** — everything the fleet needs, built and useful on
+   one machine first, so networking later only changes who can reach it:
+   - **Machine identity** — every daemon has a stable machine name and node id,
+     carried in `Ping`/`Status` and rendered by `ps`.
+   - **Setup as state** — KRO-236 (setup log, real failure reasons in
+     notifications), then structured setup state on `WorkerState`/`WorkerSnapshot`,
+     failed workers visible in `ps`, notification dedupe across daemon restarts.
+   - **Daemon commands** — `kill`, `nudge` (with free text), `prune`,
+     `retry-setup`, `model` as IPC `Request`s the daemon executes, so the CLI and
+     the web view drive the same code path.
+   - **Local web view** — the daemon serves the work view and command buttons
+     over HTTP on `127.0.0.1`. Hardened against browser-borne requests
+     (Host-header check, no state change on GET, a per-session token).
+4. **Net** — the `Net` trait and `[fleet] net` config with `static` and
+   `tailscale` backends; `jig health` checks; `jig fleet join`; the daemon's
+   protocol and web view served on the `Net` listener, gated by `accept`
+   identity; `jig ps --fleet` and a fleet web view that poll every peer;
+   commands routed to the owning peer.
+5. **Queue across machines** — assigning queued issues to machines. There is no
    per-repo worker cap to build on (`max_concurrent_workers` was removed), so a
    per-machine limit, if wanted, is designed here. `jig spawn --machine <name>`
    routed like any command.
-7. **`iroh` backend** — when zero-install enrollment is worth an async runtime.
+6. **`iroh` backend** — when zero-install enrollment is worth an async runtime.
 
 ## Risks
 
 | Risk | Mitigation |
 |------|------------|
-| Scope: this is a small distributed system | No replicated state, no hub, one existing protocol; phases 2–3 are useful standalone if 4+ stall |
-| Command channel = remote execution | Off by default, private network only, every request checked against `Net` identity, commands refused for untrusted callers, reads ship before commands |
+| Scope: this is a small distributed system | No replicated state, no hub, one existing protocol; phases 2–3 are useful on one machine if 4+ stall |
+| Command channel = remote execution | Off by default, private network only, every request checked against `Net` identity, commands refused for untrusted callers, commands enabled separately from reads |
 | Vendor dependency on Tailscale | `Net` is a trait: Headscale needs no code, `static` covers any private network, `iroh` stays designed-for |
 | Address-based identity on `static` | Documented as only as strong as the underlying network; recommended only on WireGuard-family overlays |
 | Stale peers misleading the fleet view | A peer that doesn't answer is rendered stale with its `last_seen`; the view never fabricates liveness |
