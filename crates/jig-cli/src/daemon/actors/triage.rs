@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::context::{self, RepoCtx};
-use jig_core::agents;
+use jig_core::agents::Agent;
 use jig_core::exec::{Exec, Timeout};
 use jig_core::git::Repo;
 use jig_core::issues::issue::{IssueFilter, IssueStatus};
@@ -194,12 +194,13 @@ pub(crate) fn run_triage_subprocess(
     let jig_toml = context::RepoConfig::load(repo_root)
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
-    let agent = agents::Agent::from_config(
-        &jig_toml.agent.agent_type,
+    // Triage runs the repo's agent kind with its own model and no extra
+    // disallowed tools — `once` takes an allow-list instead.
+    let agent = Agent::new(
+        jig_toml.agent.agent_type,
         jig_toml.triage.model.as_deref(),
         &[],
-    )
-    .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
+    );
 
     let argv = agent
         .once(prompt, crate::prompts::triage::ALLOWED_TOOLS)

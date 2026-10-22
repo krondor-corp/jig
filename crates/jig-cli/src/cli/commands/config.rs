@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use clap::{Args, Subcommand};
+use jig_core::agents::AgentKind;
 use jig_core::exec::Hook;
 
 use crate::context::ContextError;
@@ -275,7 +276,7 @@ fn show_config(paths: &AppPaths, repo: &RepoCtx) -> Result<ConfigOutput, ConfigE
     eprintln!(
         "  {} {} {}",
         ui::dim("Type:"),
-        ui::highlight(&display.agent_type),
+        ui::highlight(&display.agent_type.to_string()),
         src(&display.agent_source)
     );
 
@@ -464,7 +465,7 @@ struct ConfigDisplay {
     global_base: Option<String>,
     effective_on_create: Option<Hook>,
     toml_on_create: Option<Hook>,
-    agent_type: String,
+    agent_type: AgentKind,
     agent_source: String,
     issues_source: String,
     linear: Option<LinearIssuesConfig>,

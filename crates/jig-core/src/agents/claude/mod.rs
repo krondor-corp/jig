@@ -268,11 +268,11 @@ impl AgentBackend for ClaudeCode {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Agent, HookType};
+    use super::super::{Agent, AgentKind, HookType};
     use crate::prompt::Prompt;
 
     fn agent() -> Agent {
-        Agent::from_config("claude", None, &[]).unwrap()
+        Agent::new(AgentKind::Claude, None, &[])
     }
 
     #[test]
@@ -287,8 +287,7 @@ mod tests {
 
     #[test]
     fn spawn_with_opus() {
-        let cmd = Agent::from_config("claude", Some("opus"), &[])
-            .unwrap()
+        let cmd = Agent::new(AgentKind::Claude, Some("opus"), &[])
             .spawn(Prompt::new("do work"))
             .unwrap();
         assert!(cmd.contains("--model 'opus'"));
@@ -296,8 +295,7 @@ mod tests {
 
     #[test]
     fn spawn_passes_any_model_through() {
-        let cmd = Agent::from_config("claude", Some("claude-fable-5-1[1m]"), &[])
-            .unwrap()
+        let cmd = Agent::new(AgentKind::Claude, Some("claude-fable-5-1[1m]"), &[])
             .spawn(Prompt::new("do work"))
             .unwrap();
         assert!(cmd.contains("--model 'claude-fable-5-1[1m]'"));
@@ -315,8 +313,7 @@ mod tests {
 
     #[test]
     fn spawn_extra_disallowed() {
-        let cmd = Agent::from_config("claude", None, &["Bash(rm -rf:*)".into()])
-            .unwrap()
+        let cmd = Agent::new(AgentKind::Claude, None, &["Bash(rm -rf:*)".into()])
             .spawn(Prompt::new("do work"))
             .unwrap();
         assert_eq!(
@@ -328,8 +325,7 @@ mod tests {
 
     #[test]
     fn spawn_deduplicates() {
-        let cmd = Agent::from_config("claude", None, &["Bash(gh pr create:*)".into()])
-            .unwrap()
+        let cmd = Agent::new(AgentKind::Claude, None, &["Bash(gh pr create:*)".into()])
             .spawn(Prompt::new("work"))
             .unwrap();
         assert_eq!(
@@ -369,8 +365,7 @@ mod tests {
 
     #[test]
     fn once_no_tools() {
-        let argv = Agent::from_config("claude", Some("opus"), &[])
-            .unwrap()
+        let argv = Agent::new(AgentKind::Claude, Some("opus"), &[])
             .once(Prompt::new("hello"), &[])
             .unwrap();
         assert_eq!(
@@ -389,16 +384,19 @@ mod tests {
     }
 
     #[test]
-    fn from_config_accepts_any_model() {
-        let a = Agent::from_config("claude", Some("claude-opus-5-5[1m]"), &[]).unwrap();
+    fn any_model_is_accepted() {
+        let a = Agent::new(AgentKind::Claude, Some("claude-opus-5-5[1m]"), &[]);
         assert_eq!(a.model(), Some("claude-opus-5-5[1m]"));
-        assert!(Agent::from_config("unknown", Some("sonnet"), &[]).is_none());
     }
 
     #[test]
-    fn from_config_default_model() {
-        let a = Agent::from_config("claude", None, &[]).unwrap();
-        assert_eq!(a.model(), None);
+    fn no_model_means_the_agent_default() {
+        assert_eq!(Agent::new(AgentKind::Claude, None, &[]).model(), None);
+    }
+
+    #[test]
+    fn an_unknown_agent_name_does_not_parse() {
+        assert!("unknown".parse::<AgentKind>().is_err());
     }
 
     #[test]

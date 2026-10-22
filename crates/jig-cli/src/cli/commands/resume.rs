@@ -3,7 +3,6 @@
 use clap::Args;
 
 use crate::worker::Worker;
-use jig_core::agents;
 use jig_core::Worktree;
 
 use crate::cli::op::{NoOutput, Op};
@@ -77,12 +76,7 @@ impl Op for Resume {
             .clone()
             .unwrap_or_else(|| "You were interrupted. Resume your previous task.".to_string());
 
-        let agent = agents::Agent::from_config(
-            &repo.config.agent.agent_type,
-            repo.config.agent.model.as_deref(),
-            &repo.config.agent.disallowed_tools,
-        )
-        .unwrap_or_else(|| agents::Agent::from_config("claude", None, &[]).unwrap());
+        let agent = repo.config.agent.agent();
 
         let prompt = crate::prompts::resume_task(&effective_context);
         Worker::resume(&ctx.paths, &wt, &agent, prompt, &mux)?;

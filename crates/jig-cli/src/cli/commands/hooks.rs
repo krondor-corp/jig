@@ -4,7 +4,6 @@ use clap::{Args, Subcommand};
 
 use crate::context::AppCtx;
 use crate::context::Ctx;
-use crate::context::RepoConfig;
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
@@ -81,7 +80,8 @@ impl Op for Hooks {
     fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
         match &self.subcommand {
             HooksCommands::Init { force } => {
-                let repo_path = &ctx.repo()?.paths.repo_root;
+                let repo = ctx.repo()?;
+                let repo_path = &repo.paths.repo_root;
 
                 // Install git hooks
                 eprintln!("Installing git hooks...");
@@ -123,26 +123,20 @@ impl Op for Hooks {
                 }
 
                 // Install agent-specific hooks based on config
-                let jig_toml = RepoConfig::load(repo_path)?.unwrap_or_default();
-                if let Some(agent) = jig_core::agents::Agent::from_config(
-                    &jig_toml.agent.agent_type,
-                    jig_toml.agent.model.as_deref(),
-                    &jig_toml.agent.disallowed_tools,
-                ) {
-                    eprintln!();
-                    ui::progress(&format!("Installing {} agent hooks...", agent.name()));
-                    match agent.install() {
-                        Ok(result) => {
-                            for name in &result.installed {
-                                eprintln!("  {} {}: installed", ui::SYM_OK, name);
-                            }
-                            for name in &result.skipped {
-                                eprintln!("  {} {}: up to date", ui::SYM_OK, name);
-                            }
+                let agent = repo.config.agent.agent();
+                eprintln!();
+                ui::progress(&format!("Installing {} agent hooks...", agent.name()));
+                match agent.install() {
+                    Ok(result) => {
+                        for name in &result.installed {
+                            eprintln!("  {} {}: installed", ui::SYM_OK, name);
                         }
-                        Err(e) => {
-                            ui::warning(&format!("Agent hooks: {}", e));
+                        for name in &result.skipped {
+                            eprintln!("  {} {}: up to date", ui::SYM_OK, name);
                         }
+                    }
+                    Err(e) => {
+                        ui::warning(&format!("Agent hooks: {}", e));
                     }
                 }
 
