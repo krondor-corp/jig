@@ -66,7 +66,13 @@ impl ReducibleKind for EventKind {
                 state.status = WorkerStatus::WaitingInput;
             }
             EventKind::Stop => {
-                state.status = WorkerStatus::Idle;
+                // An agent that stops with a PR open is waiting on the
+                // reviewer, not idle.
+                state.status = if state.pr_url.is_some() {
+                    WorkerStatus::WaitingReview
+                } else {
+                    WorkerStatus::Idle
+                };
             }
             EventKind::PrOpened { pr_url, .. } => {
                 state.status = WorkerStatus::WaitingReview;
@@ -338,6 +344,107 @@ mod tests {
             ..Default::default()
         };
         let state = reduce(&events, &config);
+        assert_eq!(state.status, WorkerStatus::Stalled);
+    }
+
+    fn silence_config() -> AppConfig {
+        AppConfig {
+            silence_threshold_seconds: 300,
+            ..Default::default()
+        }
+    }
+
+    fn at(ts: i64, kind: EventKind) -> Event {
+        Event { ts, kind }
+    }
+
+    /// KRO-244. The agent keeps working after the PR poll writes `PrOpened`,
+    /// then stops. It used to land on `Idle`, which silence turned `Stalled`.
+    #[test]
+    fn stopping_with_a_pr_open_waits_for_review_through_silence() {
+        let old_ts = chrono::Utc::now().timestamp() - 600;
+        let events = vec![
+            at(
+                old_ts,
+                EventKind::Spawn {
+                    branch: "main".into(),
+                    repo: "r".into(),
+                    issue: IssueRef::new("JIG-1"),
+                },
+            ),
+            at(
+                old_ts,
+                EventKind::PrOpened {
+                    pr_url: "https://github.com/o/r/pull/1".into(),
+                    pr_number: "1".into(),
+                },
+            ),
+            at(old_ts, EventKind::ToolUseStart),
+            at(old_ts, EventKind::ToolUseEnd),
+            at(old_ts, EventKind::Stop),
+        ];
+        let state = reduce(&events, &silence_config());
+        assert_eq!(state.status, WorkerStatus::WaitingReview);
+    }
+
+    #[test]
+    fn tool_use_with_a_pr_open_is_running() {
+        let events = vec![
+            Event::now(EventKind::PrOpened {
+                pr_url: "https://github.com/o/r/pull/1".into(),
+                pr_number: "1".into(),
+            }),
+            Event::now(EventKind::ToolUseStart),
+        ];
+        let state = reduce(&events, &default_config());
+        assert_eq!(state.status, WorkerStatus::Running);
+    }
+
+    #[test]
+    fn idle_is_not_marked_stalled() {
+        let old_ts = chrono::Utc::now().timestamp() - 600;
+        let events = vec![
+            at(old_ts, EventKind::ToolUseEnd),
+            at(old_ts, EventKind::Stop),
+        ];
+        let state = reduce(&events, &silence_config());
+        assert_eq!(state.status, WorkerStatus::Idle);
+    }
+
+    #[test]
+    fn waiting_input_is_not_marked_stalled() {
+        let old_ts = chrono::Utc::now().timestamp() - 600;
+        let events = vec![at(old_ts, EventKind::Notification)];
+        let state = reduce(&events, &silence_config());
+        assert_eq!(state.status, WorkerStatus::WaitingInput);
+    }
+
+    #[test]
+    fn approved_is_not_marked_stalled() {
+        let old_ts = chrono::Utc::now().timestamp() - 600;
+        let events = vec![at(
+            old_ts,
+            EventKind::Terminal {
+                terminal: TerminalKind::Approved,
+                reason: None,
+            },
+        )];
+        let state = reduce(&events, &silence_config());
+        assert_eq!(state.status, WorkerStatus::Approved);
+    }
+
+    #[test]
+    fn silent_spawn_is_marked_stalled() {
+        let old_ts = chrono::Utc::now().timestamp() - 600;
+        let events = vec![at(
+            old_ts,
+            EventKind::Spawn {
+                branch: "main".into(),
+                repo: "r".into(),
+                issue: IssueRef::new("JIG-1"),
+            },
+        )];
+        let state = reduce(&events, &silence_config());
         assert_eq!(state.status, WorkerStatus::Stalled);
     }
 
