@@ -17,7 +17,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::context::log::Logs;
-use crate::context::{AppConfig, AppCtx, AppPaths, ContextError, Ctx, RepoEntry, RepoRegistry};
+use crate::context::{
+    AppConfig, AppCtx, AppPaths, ContextError, Ctx, Machine, RepoEntry, RepoRegistry,
+};
 use jig_core::mux;
 
 #[derive(Debug, thiserror::Error)]
@@ -74,6 +76,7 @@ pub struct DaemonShared {
     started_at: i64,
     tick_interval: u64,
     log: Option<PathBuf>,
+    machine: Machine,
 }
 
 impl DaemonShared {
@@ -87,6 +90,7 @@ impl DaemonShared {
             tick_interval: self.tick_interval,
             log: self.log.clone(),
             actors: self.probes.iter().map(ActivityProbe::activity).collect(),
+            machine: Some(self.machine.clone()),
         }
     }
 
@@ -131,6 +135,8 @@ impl Daemon {
             flags: cfg.flags,
         });
         log_startup(&app.paths);
+        let machine = Machine::load(&app.paths, &app.config)?;
+        tracing::info!(name = %machine.name, node_id = %machine.node_id, "machine identity");
         recover_orphans(&app, &cfg.registry);
 
         let last_poll = Instant::now() - Duration::from_secs(app.config.poll_interval + 1);
@@ -158,6 +164,7 @@ impl Daemon {
             started_at,
             tick_interval: app.config.tick_interval,
             log: crate::context::log::session_log().map(|l| l.path().to_path_buf()),
+            machine,
         };
 
         Ok(Self {

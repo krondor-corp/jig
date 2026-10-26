@@ -278,6 +278,17 @@ This bounds the **whole command**, not idle time — a legitimately slow fetch o
 
 Authentication is whatever your `git` already does: `~/.ssh/config` and its per-host `IdentityFile`, the agent, the keychain, credential helpers, deploy keys, HTTPS tokens. jig runs `git fetch` and `git push` rather than speaking the protocols itself, so there is nothing separate to configure — if `git fetch` works in that repo, jig works.
 
+### Machine name
+
+Each daemon reports which machine it runs on, shown by `jig daemon status`:
+
+```toml
+[fleet]
+name = "devbox"                # defaults to the hostname
+```
+
+Beside the name, jig mints a node id once into `~/.config/jig/node_id`. It survives restarts, renames and hostname changes. Delete the file to give the machine a new identity.
+
 ## Iterating after init
 
 `jig init` is a first pass. Iterate on the generated docs — ask your agent to improve `docs/index.md`, or edit by hand. Consider adding:

@@ -81,6 +81,13 @@ impl AppPaths {
         self.config.join("config.toml")
     }
 
+    /// `~/.config/jig/node_id` — this machine's fleet node id, generated once.
+    /// Kept beside the config rather than under `state/` because it is
+    /// identity, not something safe to clear.
+    pub fn node_id_file(&self) -> PathBuf {
+        self.config.join("node_id")
+    }
+
     /// `~/.config/jig/hooks/`
     pub fn hooks_dir(&self) -> PathBuf {
         self.config.join("hooks")
