@@ -218,7 +218,10 @@ devices; there is no public page and no login.
 3. **Local control plane** — everything the fleet needs, built and useful on
    one machine first, so networking later only changes who can reach it:
    - **Machine identity** — every daemon has a stable machine name and node id,
-     carried in `Ping`/`Status` and rendered by `ps`.
+     carried in `Ping`/`Status` and rendered by `ps`. Done in the daemon: the
+     name is `[fleet] name` (default: hostname), the node id a UUID minted once
+     into `~/.config/jig/node_id` (`crates/jig-cli/src/context/machine.rs`);
+     both ride on `DaemonInfo.machine` and show in `jig daemon status`.
    - **Setup as state** — KRO-236 (setup log, real failure reasons in
      notifications), then structured setup state on `WorkerState`/`WorkerSnapshot`,
      failed workers visible in `ps`, notification dedupe across daemon restarts.

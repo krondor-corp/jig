@@ -9,6 +9,7 @@
 
 pub mod config;
 pub mod log;
+pub mod machine;
 pub mod paths;
 pub mod registry;
 pub mod repo;
@@ -37,7 +38,8 @@ pub enum ContextError {
 }
 
 pub use config::AppConfig;
-pub use config::{GitConfig, LinearConfig, LinearProfile, NotifyConfig};
+pub use config::{FleetConfig, GitConfig, LinearConfig, LinearProfile, NotifyConfig};
+pub use machine::Machine;
 pub use paths::{hook_registry_path, AppPaths};
 pub use registry::{RepoEntry, RepoRegistry};
 pub use repo::{

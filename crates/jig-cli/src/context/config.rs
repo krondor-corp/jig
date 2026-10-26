@@ -69,7 +69,19 @@ pub struct AppConfig {
     #[serde(default)]
     pub git: GitConfig,
 
+    #[serde(default)]
+    pub fleet: FleetConfig,
+
     pub default_base_branch: Option<String>,
+}
+
+/// This machine's place in the fleet — see `docs/fleet-spec.md`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FleetConfig {
+    /// What the fleet calls this machine. Defaults to the hostname.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// How long a `git` fetch or push may take.
@@ -106,6 +118,7 @@ impl Default for AppConfig {
             notify: NotifyConfig::default(),
             linear: LinearConfig::default(),
             git: GitConfig::default(),
+            fleet: FleetConfig::default(),
             default_base_branch: None,
         }
     }
@@ -161,6 +174,9 @@ poll_interval = 120              # seconds between issue polls
 
 [git]
 timeout = 600                    # seconds a fetch or push may take, or "none"
+
+# [fleet]
+# name = "devbox"                # machine name in the fleet view (default: hostname)
 
 # [notify]
 # exec = "~/.config/jig/hooks/notify.sh"

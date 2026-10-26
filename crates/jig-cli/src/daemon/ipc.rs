@@ -33,7 +33,7 @@ use super::actors::triage::TriageEntry;
 use super::actors::ActorActivity;
 use super::checks::PrHealth;
 use super::DaemonShared;
-use crate::context::{AppPaths, RepoEntry};
+use crate::context::{AppPaths, Machine, RepoEntry};
 use crate::worker::events::WorkerState;
 use crate::worker::{MuxStatus, WorkerStatus};
 
@@ -99,6 +99,11 @@ pub struct DaemonInfo {
     /// The daemon's own tracing log.
     pub log: Option<PathBuf>,
     pub actors: Vec<ActorActivity>,
+    /// Which machine this daemon runs on. `None` only from a daemon built
+    /// before machine identity existed — defaulted so a newer CLI can still
+    /// read an older daemon's reply.
+    #[serde(default)]
+    pub machine: Option<Machine>,
 }
 
 /// What the daemon knows right now — the frame `jig ps` renders.
@@ -514,6 +519,7 @@ fn dispatch(req: Request, shared: &DaemonShared, quit: &AtomicBool) -> Response 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     fn info(ticked_at: i64, actors: Vec<ActorActivity>) -> DaemonInfo {
         DaemonInfo {
@@ -524,6 +530,14 @@ mod tests {
             tick_interval: 2,
             log: None,
             actors,
+            machine: Some(machine()),
+        }
+    }
+
+    fn machine() -> Machine {
+        Machine {
+            name: "devbox".into(),
+            node_id: Uuid::from_u128(0x4a1c_0de5),
         }
     }
 
@@ -588,6 +602,37 @@ mod tests {
             let json = serde_json::to_string(&resp).unwrap();
             assert_eq!(serde_json::from_str::<Response>(&json).unwrap(), resp);
         }
+    }
+
+    #[test]
+    fn ping_and_status_carry_the_machine() {
+        let pong = serde_json::to_value(Response::Pong(info(5, vec![]))).unwrap();
+        assert_eq!(pong["body"]["machine"]["name"], "devbox");
+        assert_eq!(
+            pong["body"]["machine"]["node_id"],
+            machine().node_id.to_string()
+        );
+
+        let status = serde_json::to_value(Response::Status(Box::new(DaemonStatus {
+            info: info(5, vec![]),
+            workers: vec![],
+            triages: vec![],
+            spawning: vec![],
+            poll_remaining: 0,
+        })))
+        .unwrap();
+        assert_eq!(status["body"]["info"]["machine"]["name"], "devbox");
+    }
+
+    /// A daemon from before machine identity still answers a newer CLI.
+    #[test]
+    fn a_pong_without_a_machine_still_parses() {
+        let json = r#"{"response":"pong","body":{"pid":1,"version":"0.15.0",
+            "started_at":0,"ticked_at":0,"tick_interval":2,"log":null,"actors":[]}}"#;
+        let Response::Pong(info) = serde_json::from_str(json).unwrap() else {
+            panic!("expected pong");
+        };
+        assert_eq!(info.machine, None);
     }
 
     #[test]

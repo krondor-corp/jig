@@ -73,6 +73,13 @@ impl Op for Status {
             ui::warning(&drift);
         }
 
+        if let Some(machine) = &info.machine {
+            ui::detail(&format!(
+                "machine {} {}",
+                ui::highlight(&machine.name),
+                ui::dim(&format!("(node {})", machine.node_id))
+            ));
+        }
         ui::detail(&format!(
             "last tick {} ago {}",
             ago(info.ticked_at),
