@@ -10,13 +10,14 @@ mod status;
 pub use status::{MuxStatus, WorkerStatus};
 
 use std::path::Path;
+use std::time::Instant;
 
 use uuid::Uuid;
 
 use crate::context::log::LogFile;
 use crate::context::{worktree_path, RepoCtx, JIG_DIR};
 use crate::prompts::resume_task;
-use events::{Event, EventKind, TerminalKind, WorkerState};
+use events::{Event, EventKind, SetupPhase, TerminalKind, WorkerState};
 use jig_core::exec::ExecError;
 use jig_core::git::{Branch, Repo, Worktree, WorktreeRef};
 
@@ -75,12 +76,17 @@ pub enum OnCreate {
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
     /// The hook ran and didn't succeed — exited non-zero, was killed, or
-    /// outran its deadline. `excerpt` is [`LogFile::excerpt`] of `setup.log`.
+    /// outran its deadline. `excerpt` is [`LogFile::excerpt`] of `setup.log`;
+    /// `exit_code`, `timed_out` and `tail` are the same facts as data, for
+    /// the `SetupFinished` event.
     #[error("{label} {outcome}:\n{excerpt}")]
     Hook {
         label: String,
         outcome: String,
         excerpt: String,
+        exit_code: Option<i32>,
+        timed_out: bool,
+        tail: Vec<String>,
     },
 
     /// The hook couldn't be started at all.
@@ -170,9 +176,12 @@ impl Worker {
             issue,
         }));
 
-        mux.create_window(&worker.branch, &worker.path)?;
-        let cmd = repo.config.agent.agent().spawn(prompt)?;
-        mux.send_keys(&worker.branch, &[&cmd, "Enter"])?;
+        worker.phase(SetupPhase::AgentLaunch, None, || {
+            mux.create_window(&worker.branch, &worker.path)?;
+            let cmd = repo.config.agent.agent().spawn(prompt)?;
+            mux.send_keys(&worker.branch, &[&cmd, "Enter"])?;
+            Ok(())
+        })?;
 
         Ok(worker)
     }
@@ -192,9 +201,9 @@ impl Worker {
     }
 
     /// What [`Worker::create`] and [`Worker::spawn`] share: start a fresh
-    /// event log, create the worktree and set it up, recording a failure in
-    /// the log so `jig attach`, `jig list` and the daemon's
-    /// needs_intervention alert can say why.
+    /// event log, create the worktree and set it up, each step a recorded
+    /// [`Worker::phase`] so `ps`, `jig attach`, `jig list` and the daemon's
+    /// needs_intervention alert can say how far it got and why it stopped.
     fn init(
         repo: &RepoCtx,
         branch: &Branch,
@@ -218,19 +227,62 @@ impl Worker {
                 auto,
             }));
 
-        let failed = |e: WorkerError| {
-            let _ = worker.event_log.append(&Event::now(EventKind::Terminal {
+        worker.phase(SetupPhase::Worktree, None, || {
+            Worktree::create(&git, branch, base)?;
+            Ok(())
+        })?;
+        worker.setup(repo, on_create)?;
+
+        Ok(worker)
+    }
+
+    /// Run one setup phase, recording it as `SetupStarted` / `SetupFinished`.
+    /// A failure ends the worker — a `Terminal` failure with the error as
+    /// its reason follows.
+    fn phase(
+        &self,
+        phase: SetupPhase,
+        log: Option<&LogFile>,
+        run: impl FnOnce() -> Result<(), WorkerError>,
+    ) -> Result<(), WorkerError> {
+        let _ = self.event_log.append(&Event::now(EventKind::SetupStarted {
+            phase,
+            log_path: log.map(|l| l.path().to_path_buf()),
+        }));
+        let start = Instant::now();
+        let result = run();
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        let (exit_code, timed_out, tail) = match &result {
+            Ok(()) => (None, false, Vec::new()),
+            Err(WorkerError::Setup(SetupError::Hook {
+                exit_code,
+                timed_out,
+                tail,
+                ..
+            })) => (*exit_code, *timed_out, tail.clone()),
+            Err(e) => (
+                None,
+                false,
+                e.to_string().lines().map(String::from).collect(),
+            ),
+        };
+        let _ = self.event_log.append(&Event::now(EventKind::SetupFinished {
+            phase,
+            ok: result.is_ok(),
+            exit_code,
+            timed_out,
+            duration_ms,
+            tail,
+        }));
+
+        if let Err(e) = &result {
+            let _ = self.event_log.append(&Event::now(EventKind::Terminal {
                 terminal: TerminalKind::Failed,
                 reason: Some(e.to_string()),
             }));
-            e
-        };
-        Worktree::create(&git, branch, base).map_err(|e| failed(e.into()))?;
-        worker
-            .setup(repo, on_create)
-            .map_err(|e| failed(e.into()))?;
-
-        Ok(worker)
+        }
+        result
     }
 
     pub fn id(&self) -> Uuid {
@@ -338,22 +390,26 @@ impl Worker {
     /// [`Worker::create`] / [`Worker::spawn`] call it. **Do not** copy files
     /// or run `on_create` anywhere else.
     ///
-    /// The hook's stdout and stderr go to the worker's `setup.log`; a failure
-    /// quotes the end of it and says where it is.
-    fn setup(&self, repo: &RepoCtx, on_create: OnCreate) -> Result<(), SetupError> {
+    /// Each is a recorded [`Worker::phase`]. The hook's stdout and stderr go
+    /// to the worker's `setup.log`; a failure quotes the end of it and says
+    /// where it is.
+    fn setup(&self, repo: &RepoCtx, on_create: OnCreate) -> Result<(), WorkerError> {
         let wt_path: &Path = &self.path;
         let config = &repo.config.worktree;
 
-        for file in config.copy_paths() {
-            let src = repo.paths.repo_root.join(&file);
-            let dst = wt_path.join(&file);
-            if src.exists() {
-                if let Some(parent) = dst.parent() {
-                    std::fs::create_dir_all(parent)?;
+        self.phase(SetupPhase::CopyFiles, None, || {
+            for file in config.copy_paths() {
+                let src = repo.paths.repo_root.join(&file);
+                let dst = wt_path.join(&file);
+                if src.exists() {
+                    if let Some(parent) = dst.parent() {
+                        std::fs::create_dir_all(parent).map_err(SetupError::from)?;
+                    }
+                    std::fs::copy(&src, &dst).map_err(SetupError::from)?;
                 }
-                std::fs::copy(&src, &dst)?;
             }
-        }
+            Ok(())
+        })?;
 
         let log = &self.setup_log;
         let hook = match on_create {
@@ -367,22 +423,32 @@ impl Worker {
             return Ok(());
         };
 
-        let label = hook.label().to_string();
-        let outcome = match hook.in_dir(wt_path).output_to(log.create()?).run() {
-            Ok(output) if output.success() => return Ok(()),
-            Ok(output) => match output.status.code() {
-                Some(code) => format!("exited with status {code}"),
-                None => "was killed by a signal".to_string(),
-            },
-            Err(ExecError::TimedOut { timeout, .. }) => {
-                format!("timed out after {timeout} and was killed")
+        self.phase(SetupPhase::OnCreate, Some(log), || {
+            let label = hook.label().to_string();
+            let output = log.create().map_err(SetupError::from)?;
+            let (outcome, exit_code, timed_out) = match hook.in_dir(wt_path).output_to(output).run()
+            {
+                Ok(output) if output.success() => return Ok(()),
+                Ok(output) => match output.status.code() {
+                    Some(code) => (format!("exited with status {code}"), Some(code), false),
+                    None => ("was killed by a signal".to_string(), None, false),
+                },
+                Err(ExecError::TimedOut { timeout, .. }) => (
+                    format!("timed out after {timeout} and was killed"),
+                    None,
+                    true,
+                ),
+                Err(e) => return Err(SetupError::from(e).into()),
+            };
+            Err(SetupError::Hook {
+                label,
+                outcome,
+                excerpt: log.excerpt(SETUP_EXCERPT_LINES),
+                exit_code,
+                timed_out,
+                tail: log.quoted_tail(SETUP_EXCERPT_LINES),
             }
-            Err(e) => return Err(e.into()),
-        };
-        Err(SetupError::Hook {
-            label,
-            outcome,
-            excerpt: log.excerpt(SETUP_EXCERPT_LINES),
+            .into())
         })
     }
 

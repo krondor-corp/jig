@@ -34,7 +34,7 @@ use super::actors::ActorActivity;
 use super::checks::PrHealth;
 use super::DaemonShared;
 use crate::context::{AppPaths, Machine, RepoEntry};
-use crate::worker::events::WorkerState;
+use crate::worker::events::{SetupState, WorkerState};
 use crate::worker::{MuxStatus, WorkerStatus};
 
 /// An actor busy longer than this is reported as possibly stuck.
@@ -178,6 +178,9 @@ pub struct WorkerSnapshot {
     pub pr_changes_requested: u32,
     pub pr_bad_commits: Vec<String>,
     pub is_draft: bool,
+    /// Defaulted so a newer CLI still reads an older daemon's frame.
+    #[serde(default)]
+    pub setup: SetupState,
 
     // ── Runtime ─────────────────────────────────────────────────
     pub repo: Option<RepoEntry>,
@@ -212,6 +215,7 @@ impl From<&WorkerState> for WorkerSnapshot {
             pr_changes_requested: w.pr_changes_requested,
             pr_bad_commits: w.pr_bad_commits.clone(),
             is_draft: w.is_draft,
+            setup: w.setup.clone(),
 
             repo: w.repo.clone(),
             name: w.name.clone(),
@@ -252,9 +256,12 @@ impl WorkerSnapshot {
             pr_changes_requested: self.pr_changes_requested,
             pr_bad_commits: self.pr_bad_commits.clone(),
             is_draft: self.is_draft,
-            // Not on the wire: `ps` doesn't render it, and failed workers
-            // aren't in the frame anyway.
+            // Not on the wire: `ps` renders `setup` instead, and a failure
+            // that isn't setup's says nothing a column can hold.
             terminal_reason: None,
+            setup: self.setup.clone(),
+            // The daemon's dedupe record; nothing renders it.
+            notified: Default::default(),
 
             repo: self.repo.clone(),
             name: self.name.clone(),

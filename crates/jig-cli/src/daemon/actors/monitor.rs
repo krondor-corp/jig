@@ -14,7 +14,7 @@ use crate::context::{self, AppConfig, RepoConfig, RepoCtx, RepoEntry};
 use crate::daemon::checks::{self, PrHealth, PrStatus};
 use crate::notify::{NotificationEvent, Notifier};
 use crate::worker::events::{self, Event, EventKind, TerminalKind, WorkerState};
-use crate::worker::{MuxStatus, WorkerStatus};
+use crate::worker::WorkerStatus;
 use jig_core::git::{Branch, Worktree};
 use jig_core::github::GitHubClient;
 use jig_core::issues::issue::IssueStatus;
@@ -123,9 +123,9 @@ impl Actor for MonitorActor {
             }
         }
 
-        // Filter terminal/dead workers from display
-        display_results
-            .retain(|w| !w.status.is_terminal() && !matches!(w.mux_status, MuxStatus::NotFound));
+        // Live workers with a window, failed ones until pruned, and ones
+        // still setting up.
+        display_results.retain(WorkerState::is_displayed);
         display_results.sort_by(|a, b| a.name.cmp(&b.name));
 
         *self.workers.lock().unwrap() = display_results;
@@ -513,11 +513,14 @@ impl MonitorActor {
                         }
                     }
                 }
-                DispatchAction::Notify { event } => {
-                    if let Err(e) = notifier.emit(event.clone()) {
-                        tracing::warn!(worker = key, "notification failed: {}", e);
+                DispatchAction::Notify { event } => match notifier.emit(event.clone()) {
+                    Ok(()) => {
+                        let _ = worker.event_log().append(&Event::now(EventKind::Notified {
+                            kind: event.kind().to_string(),
+                        }));
                     }
-                }
+                    Err(e) => tracing::warn!(worker = key, "notification failed: {}", e),
+                },
                 DispatchAction::Cleanup => {
                     if mux.window_exists(&branch.to_string()) {
                         if let Err(e) = mux.kill_window(&branch.to_string()) {
@@ -643,19 +646,23 @@ fn dispatch_actions(
     // PR opened
     if old_state.pr_url.is_none() && new_state.pr_url.is_some() {
         let pr_url = url_text(&new_state.pr_url);
-        actions.push(DispatchAction::Notify {
-            event: NotificationEvent::PrOpened {
+        notify_once(
+            &mut actions,
+            new_state,
+            NotificationEvent::PrOpened {
                 repo: repo_name.to_string(),
                 worker: worker_name.to_string(),
                 pr_url,
             },
-        });
+        );
     }
 
     // Transition to Failed
     if old_state.status != WorkerStatus::Failed && new_state.status == WorkerStatus::Failed {
-        actions.push(DispatchAction::Notify {
-            event: NotificationEvent::NeedsIntervention {
+        notify_once(
+            &mut actions,
+            new_state,
+            NotificationEvent::NeedsIntervention {
                 repo: repo_name.to_string(),
                 worker: worker_name.to_string(),
                 reason: new_state
@@ -663,10 +670,22 @@ fn dispatch_actions(
                     .clone()
                     .unwrap_or_else(|| "Worker failed".to_string()),
             },
-        });
+        );
     }
 
     actions
+}
+
+/// Queue a one-shot alert unless the worker's log says it was already sent.
+///
+/// The transition checks above compare against the previous tick's state,
+/// which a restarted daemon doesn't have — every worker looks freshly failed
+/// to it. The `Notified` events written when an alert goes out are what
+/// survive the restart.
+fn notify_once(actions: &mut Vec<DispatchAction>, state: &WorkerState, event: NotificationEvent) {
+    if !state.notified.contains(event.kind()) {
+        actions.push(DispatchAction::Notify { event });
+    }
 }
 
 // ── Free functions ──────────────────────────────────────────────────
@@ -765,6 +784,7 @@ fn process_pr_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::MuxStatus;
 
     #[test]
     fn waiting_input_triggers_nudge() {
@@ -976,5 +996,125 @@ mod tests {
             feedback_notifications(&with_feedback(14), &with_feedback(15)),
             1
         );
+    }
+
+    /// After a restart `previous_states` is empty, so a worker already
+    /// failed on disk looks like a fresh transition. Its `Notified` record
+    /// is what keeps it quiet.
+    #[test]
+    fn an_already_notified_failure_does_not_alert_after_a_restart() {
+        let after_restart = WorkerState::default();
+        let mut failed = WorkerState {
+            status: WorkerStatus::Failed,
+            ..Default::default()
+        };
+        failed.notified.insert("needs_intervention".to_string());
+
+        let actions = dispatch_actions("repo", "test", &after_restart, &failed, 300);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn an_already_notified_pr_does_not_alert_after_a_restart() {
+        let after_restart = WorkerState::default();
+        let mut with_pr = WorkerState {
+            status: WorkerStatus::WaitingReview,
+            pr_url: Url::parse("https://github.com/pr/1").ok(),
+            ..Default::default()
+        };
+        with_pr.notified.insert("pr_opened".to_string());
+
+        let actions = dispatch_actions("repo", "test", &after_restart, &with_pr, 300);
+        assert!(actions.is_empty());
+    }
+
+    /// End to end through the event log: the alert is sent once, recorded,
+    /// and a restarted daemon reducing the same log stays quiet.
+    #[test]
+    fn a_recorded_notification_survives_a_restart() {
+        use crate::worker::events::{SetupExit, SetupPhase, SetupState};
+
+        let dir = tempfile::tempdir().unwrap();
+        let log = events::EventLog::new(dir.path().join("events.jsonl"));
+        for kind in [
+            EventKind::SetupStarted {
+                phase: SetupPhase::OnCreate,
+                log_path: None,
+            },
+            EventKind::SetupFinished {
+                phase: SetupPhase::OnCreate,
+                ok: false,
+                exit_code: Some(1),
+                timed_out: false,
+                duration_ms: 10,
+                tail: vec!["boom".into()],
+            },
+            EventKind::Terminal {
+                terminal: TerminalKind::Failed,
+                reason: Some("on_create hook exited with status 1".into()),
+            },
+        ] {
+            log.append(&Event::now(kind)).unwrap();
+        }
+
+        let state: WorkerState = log.reduce().unwrap();
+        assert!(matches!(
+            state.setup,
+            SetupState::Failed {
+                exit: SetupExit::Code(1),
+                ..
+            }
+        ));
+        let actions = dispatch_actions("repo", "w", &WorkerState::default(), &state, 300);
+        let [DispatchAction::Notify { event }] = actions.as_slice() else {
+            panic!("expected one notification");
+        };
+        // What `execute_actions` writes once the alert goes out.
+        log.append(&Event::now(EventKind::Notified {
+            kind: event.kind().to_string(),
+        }))
+        .unwrap();
+
+        let restarted: WorkerState = log.reduce().unwrap();
+        let actions = dispatch_actions("repo", "w", &WorkerState::default(), &restarted, 300);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn failed_and_setting_up_workers_stay_displayed() {
+        use crate::worker::events::{SetupPhase, SetupState};
+
+        let failed = WorkerState {
+            status: WorkerStatus::Failed,
+            mux_status: MuxStatus::NotFound,
+            ..Default::default()
+        };
+        assert!(failed.is_displayed());
+
+        let setting_up = WorkerState {
+            status: WorkerStatus::Initializing,
+            mux_status: MuxStatus::NotFound,
+            setup: SetupState::Running {
+                phase: SetupPhase::OnCreate,
+                since: 0,
+                elapsed_ms: 0,
+                log_path: None,
+            },
+            ..Default::default()
+        };
+        assert!(setting_up.is_displayed());
+
+        let archived = WorkerState {
+            status: WorkerStatus::Archived,
+            ..Default::default()
+        };
+        assert!(!archived.is_displayed());
+
+        let windowless = WorkerState {
+            status: WorkerStatus::Running,
+            mux_status: MuxStatus::NotFound,
+            ..Default::default()
+        };
+        assert!(!windowless.is_displayed());
     }
 }

@@ -106,6 +106,42 @@ fn a_failed_create_records_why_in_the_event_log() {
         .stderr(predicate::str::contains("setup failed"));
 }
 
+/// The failure is structured, not just a string: the event log records the
+/// phase, exit status and output tail, and `ps` renders them.
+#[test]
+fn a_failing_hook_is_a_structured_setup_failure_ps_shows() {
+    let sandbox = Sandbox::with_repo();
+    configure(&sandbox, "on_create = \"echo boom; exit 3\"\n");
+    let events = sandbox
+        .paths()
+        .worker_events_log(&repo_name(&sandbox), "feat");
+
+    sandbox.jig().args(["create", "feat"]).assert().failure();
+
+    let log = std::fs::read_to_string(&events).unwrap();
+    let finished: Vec<serde_json::Value> = log
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .filter(|e: &serde_json::Value| e["type"] == "setup_finished")
+        .collect();
+    let phases: Vec<&str> = finished
+        .iter()
+        .map(|e| e["phase"].as_str().unwrap())
+        .collect();
+    assert_eq!(phases, ["worktree", "copy_files", "on_create"], "{log}");
+    let on_create = &finished[2];
+    assert_eq!(on_create["ok"], false);
+    assert_eq!(on_create["exit_code"], 3);
+    assert_eq!(on_create["tail"], serde_json::json!(["boom"]));
+
+    sandbox
+        .jig()
+        .args(["ps"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("failed: on_create (exit 3)"));
+}
+
 #[test]
 fn resuming_a_worker_with_no_worktree_says_not_found() {
     let sandbox = Sandbox::with_repo();

@@ -1,9 +1,13 @@
 //! `WorkerState` — what a worker's event log reduces to, plus the runtime
 //! details the daemon fills in. The reduction itself lives in `reducer.rs`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use url::Url;
+
+use super::SetupPhase;
 
 use crate::context::{AppConfig, RepoEntry};
 use crate::daemon::checks::PrHealth;
@@ -41,6 +45,12 @@ pub struct WorkerState {
     /// Why the worker reached its terminal status, if its log said — for a
     /// failed setup, the hook's status, output tail and log path.
     pub terminal_reason: Option<String>,
+    /// How far bringing the worker up got — what `ps`, notifications and the
+    /// fleet view say about setup, all read from here.
+    pub setup: SetupState,
+    /// Notification kinds already sent for this worker, from `Notified`
+    /// events.
+    pub notified: HashSet<String>,
 
     // ── Runtime (set by tick) ───────────────────────────────────
     pub repo: Option<RepoEntry>,
@@ -66,6 +76,85 @@ impl WorkerState {
     pub fn nudge_count(&self) -> u32 {
         self.nudge_counts.values().sum()
     }
+
+    /// Whether `ps` lists this worker.
+    ///
+    /// A live worker is listed while its window is there. A failed one stays
+    /// listed until it is pruned — that's when someone needs to look — and so
+    /// does one still setting up, which has no window yet.
+    pub fn is_displayed(&self) -> bool {
+        self.status == WorkerStatus::Failed
+            || matches!(self.setup, SetupState::Running { .. })
+            || (!self.status.is_terminal() && self.mux_status != MuxStatus::NotFound)
+    }
+}
+
+/// Where a worker's setup is. Folded from `SetupStarted` / `SetupFinished`
+/// events; see [`SetupPhase`] for the steps.
+///
+/// NOTE(canonical): this is the one structured record of setup. `ps`,
+/// notifications and the fleet view render from it — **do not** parse
+/// `terminal_reason` or `setup.log` for setup status.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SetupState {
+    /// No phase has started — or the log predates setup events.
+    #[default]
+    Pending,
+    /// `phase` began at `since` (unix seconds). `elapsed_ms` is what the
+    /// phases before it took; `log_path` is where this one's output goes.
+    Running {
+        phase: SetupPhase,
+        since: i64,
+        #[serde(default)]
+        elapsed_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        log_path: Option<PathBuf>,
+    },
+    /// Every phase so far succeeded, taking `duration_ms` between them.
+    Ok { duration_ms: u64 },
+    /// `phase` failed. `tail` is the end of its output, or the error.
+    Failed {
+        phase: SetupPhase,
+        exit: SetupExit,
+        #[serde(default)]
+        tail: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        log_path: Option<PathBuf>,
+    },
+}
+
+/// How a failed setup phase ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupExit {
+    /// The hook exited with this status.
+    Code(i32),
+    /// The hook outran its deadline and was killed.
+    TimedOut,
+    /// Killed by a signal, or the phase isn't a process at all (git, copying
+    /// files, starting the agent) — the tail says which.
+    Error,
+}
+
+impl SetupExit {
+    pub fn from_event(exit_code: Option<i32>, timed_out: bool) -> Self {
+        match (exit_code, timed_out) {
+            (_, true) => Self::TimedOut,
+            (Some(code), false) => Self::Code(code),
+            (None, false) => Self::Error,
+        }
+    }
+}
+
+impl std::fmt::Display for SetupExit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Code(code) => write!(f, "exit {code}"),
+            Self::TimedOut => f.write_str("timed out"),
+            Self::Error => f.write_str("error"),
+        }
+    }
 }
 
 impl Default for WorkerState {
@@ -90,6 +179,8 @@ impl Default for WorkerState {
             pr_bad_commits: Vec::new(),
             is_draft: false,
             terminal_reason: None,
+            setup: SetupState::default(),
+            notified: HashSet::new(),
 
             repo: None,
             name: String::new(),

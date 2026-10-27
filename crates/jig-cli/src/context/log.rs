@@ -247,6 +247,23 @@ impl LogFile {
     /// `EXCERPT_LINE_CHARS`. A progress bar redraws with `\r`, so only what
     /// follows the last one on a line is kept: what a terminal would show.
     pub fn excerpt(&self, lines: usize) -> String {
+        let quoted = self.quoted_tail(lines);
+        let mut out = String::new();
+        if quoted.is_empty() {
+            out.push_str("  (no output)\n");
+        }
+        for line in &quoted {
+            out.push_str("  ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str(&format!("  (full log: {self})"));
+        out
+    }
+
+    /// The last `lines` lines with something on them, as [`Self::excerpt`]
+    /// quotes them but unadorned — for recording in an event.
+    pub fn quoted_tail(&self, lines: usize) -> Vec<String> {
         // Read past the blank lines that will be dropped.
         let tail = self.tail(lines.saturating_mul(4)).unwrap_or_default();
         let kept: Vec<String> = tail
@@ -260,19 +277,7 @@ impl LogFile {
                 }
             })
             .collect();
-
-        let mut out = String::new();
-        let quoted = &kept[kept.len().saturating_sub(lines)..];
-        if quoted.is_empty() {
-            out.push_str("  (no output)\n");
-        }
-        for line in quoted {
-            out.push_str("  ");
-            out.push_str(line);
-            out.push('\n');
-        }
-        out.push_str(&format!("  (full log: {self})"));
-        out
+        kept[kept.len().saturating_sub(lines)..].to_vec()
     }
 
     /// Follow lines written from now on.

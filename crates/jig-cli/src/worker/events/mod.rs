@@ -6,8 +6,8 @@ mod reducer;
 mod schema;
 mod worker_state;
 
-pub use schema::{Event, EventKind, EventType, TerminalKind};
-pub use worker_state::WorkerState;
+pub use schema::{Event, EventKind, EventType, SetupPhase, TerminalKind};
+pub use worker_state::{SetupExit, SetupState, WorkerState};
 
 /// A worker's event log. Opened by [`crate::context::log::Logs::worker_events`].
 pub type EventLog = jig_core::EventLog<Event>;
