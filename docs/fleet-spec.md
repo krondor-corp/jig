@@ -225,6 +225,14 @@ devices; there is no public page and no login.
    - **Setup as state** — KRO-236 (setup log, real failure reasons in
      notifications), then structured setup state on `WorkerState`/`WorkerSnapshot`,
      failed workers visible in `ps`, notification dedupe across daemon restarts.
+     Done locally: `Worker` records each phase (`worktree → copy_files →
+     on_create → agent_launch`) as `SetupStarted`/`SetupFinished` events,
+     which reduce to `WorkerState.setup` (`SetupState`:
+     `Pending | Running | Ok | Failed`) and travel in `WorkerSnapshot`;
+     `ps` renders it in STATE (`on_create 42s`, `failed: on_create (exit 1)`)
+     and keeps failed and still-setting-up workers listed. One-shot alerts
+     (`needs_intervention`, `pr_opened`) write a `Notified { kind }` event and
+     are skipped once it is in the log.
    - **Daemon commands** — `kill`, `nudge` (with free text), `prune`,
      `retry-setup`, `model` as IPC `Request`s the daemon executes, so the CLI and
      the web view drive the same code path.
