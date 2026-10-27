@@ -389,6 +389,7 @@ pub fn render_triage_section_grouped(triages: &[TriageEntry], borders: bool) -> 
 mod tests {
     use super::*;
     use crate::cli::ui;
+    use crate::worker::events::{SetupExit, SetupPhase};
 
     /// Serializes the tests that flip the global plain-mode flag and restores
     /// it on drop, so parallel tests cannot observe each other's setting and a
@@ -466,7 +467,6 @@ mod tests {
 
     #[test]
     fn a_running_setup_shows_its_phase_and_duration() {
-        use crate::worker::events::SetupPhase;
         let w = WorkerState {
             status: WorkerStatus::Initializing,
             setup: SetupState::Running {
@@ -484,7 +484,6 @@ mod tests {
 
     #[test]
     fn a_failed_setup_shows_its_phase_and_exit() {
-        use crate::worker::events::{SetupExit, SetupPhase};
         let w = WorkerState {
             status: WorkerStatus::Failed,
             setup: SetupState::Failed {

@@ -784,6 +784,7 @@ fn process_pr_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::events::{SetupExit, SetupPhase, SetupState};
     use crate::worker::MuxStatus;
 
     #[test]
@@ -1032,8 +1033,6 @@ mod tests {
     /// and a restarted daemon reducing the same log stays quiet.
     #[test]
     fn a_recorded_notification_survives_a_restart() {
-        use crate::worker::events::{SetupExit, SetupPhase, SetupState};
-
         let dir = tempfile::tempdir().unwrap();
         let log = events::EventLog::new(dir.path().join("events.jsonl"));
         for kind in [
@@ -1082,8 +1081,6 @@ mod tests {
 
     #[test]
     fn failed_and_setting_up_workers_stay_displayed() {
-        use crate::worker::events::{SetupPhase, SetupState};
-
         let failed = WorkerState {
             status: WorkerStatus::Failed,
             mux_status: MuxStatus::NotFound,
