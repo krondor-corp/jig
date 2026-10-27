@@ -6,12 +6,14 @@
 //!
 //! Two halves live here:
 //!
-//! * **Client** — [`request`], used by `jig daemon status/stop` and `jig ps`.
+//! * **Client** — [`request`], used by `jig daemon status/stop`, `jig ps`
+//!   and the control verbs (`jig kill`, `jig nudge`, …).
 //!   A refused connection means "no daemon", not an error to show the user;
 //!   every caller falls back to doing the work in-process.
 //! * **Server** — [`Server`], a listener thread the daemon owns. It reads
 //!   [`DaemonShared`] rather than the `Daemon` itself, so answering a status
-//!   request never blocks (or is blocked by) a tick.
+//!   request never blocks (or is blocked by) a tick. Control verbs run on a
+//!   thread per request, so a slow one never holds up the listener either.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -32,6 +34,7 @@ use jig_core::mux::AgentState;
 use super::actors::triage::TriageEntry;
 use super::actors::ActorActivity;
 use super::checks::PrHealth;
+use super::commands::{Command, WorkerKey};
 use super::DaemonShared;
 use crate::context::{AppPaths, Machine, RepoEntry};
 use crate::worker::events::{SetupState, WorkerState};
@@ -43,6 +46,14 @@ pub const STUCK_ACTOR_SECS: i64 = 10 * 60;
 /// How long a client waits on a daemon that accepted the connection but has
 /// not answered. Generous: the listener may be mid-tick on a loaded box.
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a client waits on a control verb: it types into a mux or
+/// removes a worktree, which on a big tree takes a while.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How long a client waits on `retry-setup`, which runs a whole `on_create`
+/// hook before answering.
+const SETUP_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// How long the server waits for a client that connected and went quiet, so
 /// one wedged client cannot stall the accept loop.
@@ -68,6 +79,44 @@ pub enum Request {
     GetStatus,
     /// Ask the daemon to stop after its current tick.
     Shutdown,
+
+    // ── Control verbs — see `daemon::commands` ──────────────────────
+    /// Close a worker's window and forget its logs.
+    Kill { worker: WorkerKey },
+    /// Type free text into a worker's agent session.
+    Nudge { worker: WorkerKey, text: String },
+    /// Remove a stopped worker's worktree and logs.
+    Prune { worker: WorkerKey },
+    /// Re-run `on_create` for a worker whose setup failed, then start it.
+    RetrySetup { worker: WorkerKey },
+    /// Switch a worker's model.
+    Model { worker: WorkerKey, model: String },
+}
+
+impl Request {
+    /// The control verb this request carries, or the request back if it is
+    /// not one.
+    pub fn into_command(self) -> Result<(WorkerKey, Command), Self> {
+        match self {
+            Self::Kill { worker } => Ok((worker, Command::Kill)),
+            Self::Nudge { worker, text } => Ok((worker, Command::Nudge { text })),
+            Self::Prune { worker } => Ok((worker, Command::Prune)),
+            Self::RetrySetup { worker } => Ok((worker, Command::RetrySetup)),
+            Self::Model { worker, model } => Ok((worker, Command::Model { model })),
+            other @ (Self::Ping | Self::GetStatus | Self::Shutdown) => Err(other),
+        }
+    }
+
+    /// How long a client waits for the answer.
+    fn client_timeout(&self) -> Duration {
+        match self {
+            Self::Ping | Self::GetStatus | Self::Shutdown => CLIENT_TIMEOUT,
+            Self::RetrySetup { .. } => SETUP_TIMEOUT,
+            Self::Kill { .. } | Self::Nudge { .. } | Self::Prune { .. } | Self::Model { .. } => {
+                COMMAND_TIMEOUT
+            }
+        }
+    }
 }
 
 /// The daemon's answer.
@@ -318,7 +367,7 @@ pub fn request(paths: &AppPaths, req: &Request) -> Result<Response, IpcError> {
         }
         _ => IpcError::Socket(path.clone(), e),
     })?;
-    stream.set_read_timeout(Some(CLIENT_TIMEOUT))?;
+    stream.set_read_timeout(Some(req.client_timeout()))?;
     stream.set_write_timeout(Some(CLIENT_TIMEOUT))?;
 
     write_message(&stream, req)?;
@@ -347,6 +396,18 @@ pub fn status(paths: &AppPaths) -> Result<Option<DaemonStatus>, IpcError> {
             "expected status, got {other:?}"
         ))),
         Err(IpcError::NotRunning) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Have the daemon run a control verb. `Ok(false)` when no daemon is
+/// running — the caller runs it in-process instead; the daemon's reason for
+/// a failure comes back as [`IpcError::Refused`].
+pub fn command(paths: &AppPaths, worker: WorkerKey, cmd: Command) -> Result<bool, IpcError> {
+    match request(paths, &cmd.request(worker)) {
+        Ok(Response::Ok) => Ok(true),
+        Ok(other) => Err(IpcError::Protocol(format!("expected ok, got {other:?}"))),
+        Err(IpcError::NotRunning) => Ok(false),
         Err(e) => Err(e),
     }
 }
@@ -469,7 +530,7 @@ impl Server {
                     // `SERVER_TIMEOUT` — or a client that has connected but
                     // not yet written its request reads as a closed one.
                     let _ = stream.set_nonblocking(false);
-                    if let Err(e) = handle_connection(&stream, shared, quit) {
+                    if let Err(e) = handle_connection(stream, shared, quit) {
                         tracing::warn!("ipc request failed: {}", e);
                     }
                 }
@@ -493,22 +554,46 @@ impl Drop for Server {
     }
 }
 
-/// Read one request, answer it, close. A panic while answering must not take
-/// the listener down with it — the daemon would go mute but keep ticking.
+/// Read one request, answer it, close.
+///
+/// Queries are answered here, on the listener thread — they only read
+/// shared state. A control verb does real work (a mux round trip, removing a
+/// worktree, a whole `on_create` hook), so it gets a thread of its own that
+/// answers when done, and the listener goes straight back to accepting.
 fn handle_connection(
-    stream: &UnixStream,
+    stream: UnixStream,
     shared: &DaemonShared,
     quit: &AtomicBool,
 ) -> Result<(), IpcError> {
     stream.set_read_timeout(Some(SERVER_TIMEOUT))?;
     stream.set_write_timeout(Some(SERVER_TIMEOUT))?;
 
-    let req: Request = read_message(stream)?;
-    let response =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(req, shared, quit)))
-            .unwrap_or_else(|_| Response::Error("daemon panicked while answering".into()));
+    let req: Request = read_message(&stream)?;
+    match req.into_command() {
+        Ok((worker, cmd)) => {
+            let shared = shared.clone();
+            std::thread::Builder::new()
+                .name("jig-command".into())
+                .spawn(move || {
+                    let response = guarded(|| shared.run_command(worker, cmd));
+                    if let Err(e) = write_message(&stream, &response) {
+                        tracing::warn!("ipc command reply failed: {}", e);
+                    }
+                })?;
+            Ok(())
+        }
+        Err(req) => {
+            let response = guarded(|| dispatch(req, shared, quit));
+            write_message(&stream, &response)
+        }
+    }
+}
 
-    write_message(stream, &response)
+/// A panic while answering must not take the listener down with it — the
+/// daemon would go mute but keep ticking.
+fn guarded(answer: impl FnOnce() -> Response) -> Response {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(answer))
+        .unwrap_or_else(|_| Response::Error("daemon panicked while answering".into()))
 }
 
 fn dispatch(req: Request, shared: &DaemonShared, quit: &AtomicBool) -> Response {
@@ -520,6 +605,8 @@ fn dispatch(req: Request, shared: &DaemonShared, quit: &AtomicBool) -> Response 
             quit.store(true, Ordering::Relaxed);
             Response::Ok
         }
+        // Peeled off by `handle_connection` before it gets here.
+        req => Response::Error(format!("{req:?} is not answered inline")),
     }
 }
 
@@ -578,12 +665,68 @@ mod tests {
         }
     }
 
+    fn key() -> WorkerKey {
+        "jig/feat/socket".parse().unwrap()
+    }
+
+    fn verbs() -> Vec<Request> {
+        vec![
+            Request::Kill { worker: key() },
+            Request::Nudge {
+                worker: key(),
+                text: "rebase on main".into(),
+            },
+            Request::Prune { worker: key() },
+            Request::RetrySetup { worker: key() },
+            Request::Model {
+                worker: key(),
+                model: "opus".into(),
+            },
+        ]
+    }
+
     #[test]
     fn requests_round_trip() {
-        for req in [Request::Ping, Request::GetStatus, Request::Shutdown] {
+        let mut requests = vec![Request::Ping, Request::GetStatus, Request::Shutdown];
+        requests.extend(verbs());
+        for req in requests {
             let json = serde_json::to_string(&req).unwrap();
             assert_eq!(serde_json::from_str::<Request>(&json).unwrap(), req);
         }
+    }
+
+    #[test]
+    fn a_verb_names_its_worker_by_key() {
+        let json = serde_json::to_value(Request::Nudge {
+            worker: key(),
+            text: "hi".into(),
+        })
+        .unwrap();
+        assert_eq!(json["request"], "nudge");
+        assert_eq!(json["worker"], "jig/feat/socket");
+        assert_eq!(json["text"], "hi");
+        assert_eq!(
+            serde_json::to_value(Request::RetrySetup { worker: key() }).unwrap()["request"],
+            "retry_setup"
+        );
+    }
+
+    #[test]
+    fn every_verb_converts_to_a_command_and_back() {
+        for req in verbs() {
+            let (worker, cmd) = req.clone().into_command().expect("a verb");
+            assert_eq!(cmd.request(worker), req);
+        }
+        for req in [Request::Ping, Request::GetStatus, Request::Shutdown] {
+            assert_eq!(req.clone().into_command(), Err(req));
+        }
+    }
+
+    #[test]
+    fn retry_setup_waits_longer_than_a_query() {
+        assert!(Request::RetrySetup { worker: key() }.client_timeout() > COMMAND_TIMEOUT);
+        assert!(Request::Kill { worker: key() }.client_timeout() > CLIENT_TIMEOUT);
+        assert_eq!(Request::Ping.client_timeout(), CLIENT_TIMEOUT);
     }
 
     #[test]

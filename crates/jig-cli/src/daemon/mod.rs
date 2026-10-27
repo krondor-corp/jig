@@ -7,6 +7,7 @@
 
 pub mod actors;
 pub mod checks;
+pub mod commands;
 pub mod events;
 pub mod ipc;
 pub mod pidfile;
@@ -50,6 +51,8 @@ use actors::spawn::SpawnActor;
 use actors::sync::SyncActor;
 use actors::triage::TriageActor;
 use actors::{ActivityProbe, ActorHandle};
+use commands::{Command, InFlight, WorkerKey};
+use ipc::Response;
 
 pub use crate::worker::events::WorkerState;
 pub use actors::triage::TriageEntry;
@@ -77,9 +80,18 @@ pub struct DaemonShared {
     tick_interval: u64,
     log: Option<PathBuf>,
     machine: Machine,
+    /// What control verbs run against.
+    app: Arc<AppCtx>,
+    in_flight: InFlight,
 }
 
 impl DaemonShared {
+    /// Run a control verb — the answer to `Kill`, `Nudge`, … Called on the
+    /// command's own thread, never the listener's or the tick loop's.
+    pub fn run_command(&self, worker: WorkerKey, cmd: Command) -> Response {
+        commands::serve(&self.app, &self.in_flight, worker, cmd)
+    }
+
     /// Identity and liveness — the answer to `Request::Ping`.
     pub fn info(&self) -> DaemonInfo {
         DaemonInfo {
@@ -165,6 +177,8 @@ impl Daemon {
             tick_interval: app.config.tick_interval,
             log: crate::context::log::session_log().map(|l| l.path().to_path_buf()),
             machine,
+            app: Arc::clone(&app),
+            in_flight: InFlight::default(),
         };
 
         Ok(Self {
