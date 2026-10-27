@@ -23,6 +23,11 @@ pub enum EventKind {
         base: String,
         #[serde(default, skip_serializing_if = "is_false")]
         auto: bool,
+        /// The issue being set up for, so a retry after a failed setup can
+        /// rebuild the agent's task — the `Spawn` event that would otherwise
+        /// carry it is only written once setup succeeds.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        issue: Option<IssueRef>,
     },
     Spawn {
         branch: String,
@@ -107,6 +112,14 @@ pub enum EventKind {
     Notified {
         kind: String,
     },
+    /// A control verb someone ran against this worker — `jig kill`,
+    /// `jig nudge`, … — whether from the CLI or over the daemon socket.
+    /// A record only: it never changes the worker's status.
+    Command {
+        command: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
 }
 
 fn is_false(v: &bool) -> bool {
@@ -182,6 +195,7 @@ pub enum EventType {
     SetupStarted,
     SetupFinished,
     Notified,
+    Command,
 }
 
 impl EventKind {
@@ -210,6 +224,7 @@ impl EventKind {
             EventKind::SetupStarted { .. } => EventType::SetupStarted,
             EventKind::SetupFinished { .. } => EventType::SetupFinished,
             EventKind::Notified { .. } => EventType::Notified,
+            EventKind::Command { .. } => EventType::Command,
         }
     }
 }
@@ -327,10 +342,27 @@ mod tests {
             branch: "feat/foo".into(),
             base: "main".into(),
             auto: false,
+            issue: None,
         });
         let json = serde_json::to_string(&event).unwrap();
         assert!(!json.contains("issue"));
         assert!(!json.contains("repo"));
         assert!(!json.contains("auto")); // false is skipped
+    }
+
+    #[test]
+    fn command_round_trips_and_omits_an_empty_detail() {
+        let event = Event::now(EventKind::Command {
+            command: "kill".into(),
+            detail: None,
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(!json.contains("detail"));
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["type"], "command");
+        assert_eq!(parsed["command"], "kill");
+
+        let restored: Event = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.kind.event_type(), EventType::Command);
     }
 }
