@@ -2,10 +2,10 @@
 
 use clap::Args;
 
+use super::verb::{self, VerbError};
 use crate::context::{AppCtx, ContextError, Ctx, RepoCtx};
+use crate::daemon::commands::{self, Command, CommandError};
 use crate::worker::{Worker, WorkerError};
-use jig_core::git::Branch;
-use jig_core::mux::{self, MuxKind};
 
 use crate::cli::op::{NoOutput, Op};
 use crate::cli::ui;
@@ -31,10 +31,12 @@ pub enum KillError {
     Ctx(#[from] ContextError),
     #[error(transparent)]
     Worker(#[from] WorkerError),
+    #[error(transparent)]
+    Command(#[from] CommandError),
+    #[error(transparent)]
+    Verb(#[from] VerbError),
     #[error("specify a branch or --all")]
     NoTarget,
-    #[error("{0}")]
-    NotFound(String),
 }
 
 impl Op for Kill {
@@ -47,12 +49,10 @@ impl Op for Kill {
     }
 
     fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
-        let kind = ctx.config.mux;
-
         if self.all {
             let mut killed = 0;
             for repo in ctx.repos() {
-                killed += kill_all_in_repo(repo, kind)?;
+                killed += kill_all_in_repo(&ctx, repo)?;
             }
             if killed == 0 {
                 eprintln!("{}", ui::dim("No workers to kill."));
@@ -62,28 +62,16 @@ impl Op for Kill {
 
         // One repo or every tracked one, the search is the same.
         let name = self.branch.as_deref().ok_or(KillError::NoTarget)?;
-        let branch = Branch::new(name);
-        for repo in ctx.repos() {
-            let worker = match Worker::open(repo, &branch) {
-                Ok(worker) => worker,
-                Err(WorkerError::NotFound(_)) => continue,
-                Err(e) => return Err(e.into()),
-            };
-            let _ = worker.kill(&mux::for_repo(kind, &repo.name()));
-            worker.unregister()?;
-            ui::success(&format!("Killed '{}'", ui::highlight(name)));
-            return Ok(NoOutput);
-        }
-        Err(KillError::NotFound(format!("worker '{}' not found", name)))
+        verb::run(&ctx, name, Command::Kill)?;
+        ui::success(&format!("Killed '{}'", ui::highlight(name)));
+        Ok(NoOutput)
     }
 }
 
-fn kill_all_in_repo(repo: &RepoCtx, kind: MuxKind) -> Result<usize, KillError> {
-    let mux = mux::for_repo(kind, &repo.name());
+fn kill_all_in_repo(ctx: &Ctx, repo: &RepoCtx) -> Result<usize, KillError> {
     let workers = Worker::discover(repo)?;
     for worker in &workers {
-        let _ = worker.kill(&mux);
-        worker.unregister()?;
+        commands::run(&ctx.paths, &ctx.config, repo, worker, Command::Kill)?;
         ui::success(&format!("Killed '{}'", ui::highlight(worker.branch())));
     }
     Ok(workers.len())

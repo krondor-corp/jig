@@ -51,6 +51,13 @@ crate::command_enum! {
     (Resume, commands::Resume),
     (Notify, commands::Notify),
     (Kill, commands::Kill),
+    (Nudge, commands::Nudge),
+    (Prune, commands::Prune),
+    (Model, commands::Model),
+
+    #[command(name = "retry-setup")]
+    (RetrySetup, commands::RetrySetup),
+
     (Nuke, commands::Nuke),
     (Init, commands::Init),
     (Update, commands::Update),
