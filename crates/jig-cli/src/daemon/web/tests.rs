@@ -1,16 +1,22 @@
-use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use axum::body::{to_bytes, Body};
+use axum::http::{header, Request, StatusCode};
+use tower::ServiceExt;
+
 use jig_core::git::Branch;
 
+use super::api::read_tail;
+use super::guard::constant_time_eq;
 use super::*;
 use crate::context::RepoEntry;
 use crate::daemon::ipc::{DaemonInfo, WorkerSnapshot};
-use crate::worker::events::{SetupExit, SetupPhase, WorkerState};
+use crate::worker::events::{SetupExit, SetupPhase, SetupState, WorkerState};
 use crate::worker::{MuxStatus, WorkerStatus};
 
 const PORT: u16 = 7477;
+const HOST: &str = "127.0.0.1:7477";
 const TOKEN: &str = "s3cret";
 
 /// A daemon stand-in: a fixed frame, and a record of every command.
@@ -68,91 +74,112 @@ fn worker(name: &str) -> WorkerState {
     }
 }
 
-fn site(fake: Fake) -> Site<Fake> {
-    Site {
+fn app(fake: Fake) -> Router {
+    router(Site {
         backend: fake,
         port: PORT,
         token: TOKEN.into(),
+    })
+}
+
+/// Send one request through the whole router; the status and body.
+async fn send(app: &Router, request: Request<Body>) -> (StatusCode, String) {
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, String::from_utf8(bytes.to_vec()).unwrap())
+}
+
+fn get(path: &str, host: &str) -> Request<Body> {
+    Request::get(path)
+        .header(header::HOST, host)
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn post(body: &str, headers: &[(&str, &str)]) -> Request<Body> {
+    let mut request = Request::post(jig_api::COMMAND)
+        .header(header::HOST, HOST)
+        .header(header::CONTENT_TYPE, "application/json");
+    for (k, v) in headers {
+        request = request.header(*k, *v);
     }
+    request.body(Body::from(body.to_string())).unwrap()
 }
 
-fn get(path: &str, host: &str) -> HttpRequest {
-    let (path, query) = path.split_once('?').unwrap_or((path, ""));
-    HttpRequest {
-        method: "GET".into(),
-        path: path.into(),
-        query: query.into(),
-        headers: vec![("host".into(), host.into())],
-        body: vec![],
-    }
-}
+const NUDGE: &str =
+    r#"{"worker":"jig/feat/web","command":{"verb":"nudge","text":"rebase please"}}"#;
 
-fn post(body: &str, headers: &[(&str, &str)]) -> HttpRequest {
-    let mut all = vec![("host".to_string(), format!("127.0.0.1:{PORT}"))];
-    all.extend(headers.iter().map(|(k, v)| (k.to_string(), v.to_string())));
-    HttpRequest {
-        method: "POST".into(),
-        path: "/command".into(),
-        query: String::new(),
-        headers: all,
-        body: body.as_bytes().to_vec(),
-    }
-}
-
-fn body(r: &HttpResponse) -> String {
-    String::from_utf8(r.body.clone()).unwrap()
-}
-
-const NUDGE: &str = r#"{"request":"nudge","worker":"jig/feat/web","text":"rebase please"}"#;
-
-#[test]
-fn the_page_is_served_to_our_own_host() {
-    let site = site(Fake {
+#[tokio::test]
+async fn the_status_is_the_ps_view_as_json() {
+    let app = app(Fake {
         workers: vec![worker("feat/web")],
         ..Default::default()
     });
-    for host in ["127.0.0.1:7477", "localhost:7477"] {
-        let r = site.respond(&get("/", host));
-        assert_eq!(r.status, 200, "{host}");
-        assert!(body(&r).contains("feat/web"));
-        assert!(body(&r).contains(TOKEN));
+    for host in [HOST, "localhost:7477"] {
+        let (status, body) = send(&app, get(jig_api::STATUS, host)).await;
+        assert_eq!(status, StatusCode::OK, "{host}");
+        let view: jig_api::Status = serde_json::from_str(&body).unwrap();
+        assert_eq!(view.repos.len(), 1);
+        assert_eq!(view.repos[0].name, "jig");
+        let w = &view.repos[0].workers[0];
+        assert_eq!(w.key, "jig/feat/web");
+        assert_eq!(w.cells.len(), view.headers.len());
+        assert!(w.failed_setup.is_none());
     }
 }
 
-#[test]
-fn a_foreign_host_is_refused() {
-    let site = site(Fake::default());
+#[tokio::test]
+async fn the_session_hands_out_the_token() {
+    let (status, body) = send(&app(Fake::default()), get(jig_api::SESSION, HOST)).await;
+    assert_eq!(status, StatusCode::OK);
+    let session: jig_api::Session = serde_json::from_str(&body).unwrap();
+    assert_eq!(session.token, TOKEN);
+}
+
+#[tokio::test]
+async fn a_foreign_host_is_refused() {
+    let app = app(Fake::default());
     for host in [
         "evil.example:7477",
         "127.0.0.1:80",
         "localhost",
         "127.0.0.1.evil:7477",
     ] {
-        for path in ["/", "/view", "/setup-log?worker=jig/x", "/app.js"] {
-            let r = site.respond(&get(path, host));
-            assert_eq!(r.status, 403, "{host} {path}");
-            assert!(!body(&r).contains(TOKEN));
+        for path in ["/", jig_api::SESSION, jig_api::STATUS, "/app.js"] {
+            let (status, body) = send(&app, get(path, host)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{host} {path}");
+            assert!(!body.contains(TOKEN));
         }
     }
-    let mut no_host = get("/", "");
-    no_host.headers.clear();
-    assert_eq!(site.respond(&no_host).status, 403);
+    let no_host = Request::get(jig_api::SESSION).body(Body::empty()).unwrap();
+    assert_eq!(send(&app, no_host).await.0, StatusCode::FORBIDDEN);
 
-    let mut foreign_post = post(NUDGE, &[("x-jig-token", TOKEN)]);
-    foreign_post.headers[0].1 = "evil.example:7477".into();
-    assert_eq!(site.respond(&foreign_post).status, 403);
+    let mut foreign_post = post(NUDGE, &[(jig_api::TOKEN_HEADER, TOKEN)]);
+    foreign_post
+        .headers_mut()
+        .insert(header::HOST, "evil.example:7477".parse().unwrap());
+    assert_eq!(send(&app, foreign_post).await.0, StatusCode::FORBIDDEN);
 }
 
-#[test]
-fn a_command_runs_with_the_token() {
+#[tokio::test]
+async fn a_command_runs_with_the_token() {
     let fake = Fake::default();
-    let site = site(fake.clone());
-    let r = site.respond(&post(
-        NUDGE,
-        &[("x-jig-token", TOKEN), ("origin", "http://127.0.0.1:7477")],
-    ));
-    assert_eq!(r.status, 200, "{}", body(&r));
-    assert!(body(&r).contains(r#""ok":true"#));
+    let app = app(fake.clone());
+    let (status, body) = send(
+        &app,
+        post(
+            NUDGE,
+            &[
+                (jig_api::TOKEN_HEADER, TOKEN),
+                ("origin", "http://127.0.0.1:7477"),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let outcome: jig_api::CommandOutcome = serde_json::from_str(&body).unwrap();
+    assert_eq!(outcome.message, "nudge jig/feat/web: done");
     assert_eq!(
         fake.ran.lock().unwrap().as_slice(),
         &[(
@@ -164,52 +191,66 @@ fn a_command_runs_with_the_token() {
     );
 }
 
-#[test]
-fn a_command_without_the_right_token_is_refused() {
+#[tokio::test]
+async fn a_command_without_the_right_token_is_refused() {
     let fake = Fake::default();
-    let site = site(fake.clone());
-    for headers in [&[][..], &[("x-jig-token", "guess")], &[("x-jig-token", "")]] {
-        let r = site.respond(&post(NUDGE, headers));
-        assert_eq!(r.status, 403, "{headers:?}");
+    let app = app(fake.clone());
+    for headers in [
+        &[][..],
+        &[(jig_api::TOKEN_HEADER, "guess")],
+        &[(jig_api::TOKEN_HEADER, "")],
+    ] {
+        let (status, body) = send(&app, post(NUDGE, headers)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{headers:?}");
+        assert!(serde_json::from_str::<jig_api::ApiError>(&body).is_ok());
     }
     assert!(fake.ran.lock().unwrap().is_empty());
 }
 
-#[test]
-fn a_command_from_a_foreign_origin_is_refused() {
+#[tokio::test]
+async fn a_command_from_a_foreign_origin_is_refused() {
     let fake = Fake::default();
-    let site = site(fake.clone());
-    let r = site.respond(&post(
-        NUDGE,
-        &[("x-jig-token", TOKEN), ("origin", "https://evil.example")],
-    ));
-    assert_eq!(r.status, 403);
+    let (status, _) = send(
+        &app(fake.clone()),
+        post(
+            NUDGE,
+            &[
+                (jig_api::TOKEN_HEADER, TOKEN),
+                ("origin", "https://evil.example"),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(fake.ran.lock().unwrap().is_empty());
 }
 
-#[test]
-fn get_never_runs_a_command() {
+#[tokio::test]
+async fn get_never_runs_a_command() {
     let fake = Fake::default();
-    let site = site(fake.clone());
-    let mut r = get("/command", "127.0.0.1:7477");
-    r.headers.push(("x-jig-token".into(), TOKEN.into()));
-    assert_eq!(site.respond(&r).status, 405);
+    let mut request = get(jig_api::COMMAND, HOST);
+    request
+        .headers_mut()
+        .insert(jig_api::TOKEN_HEADER, TOKEN.parse().unwrap());
+    let (status, _) = send(&app(fake.clone()), request).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     assert!(fake.ran.lock().unwrap().is_empty());
 }
 
-#[test]
-fn every_verb_is_accepted() {
+#[tokio::test]
+async fn every_verb_is_accepted() {
     let fake = Fake::default();
-    let site = site(fake.clone());
-    for body in [
-        r#"{"request":"kill","worker":"jig/feat/web"}"#,
-        NUDGE,
-        r#"{"request":"prune","worker":"jig/feat/web"}"#,
-        r#"{"request":"retry_setup","worker":"jig/feat/web"}"#,
-        r#"{"request":"model","worker":"jig/feat/web","model":"opus"}"#,
+    let app = app(fake.clone());
+    for command in [
+        r#"{"verb":"kill"}"#,
+        r#"{"verb":"nudge","text":"rebase please"}"#,
+        r#"{"verb":"prune"}"#,
+        r#"{"verb":"retry-setup"}"#,
+        r#"{"verb":"model","model":"opus"}"#,
     ] {
-        let r = site.respond(&post(body, &[("x-jig-token", TOKEN)]));
-        assert_eq!(r.status, 200, "{body}");
+        let body = format!(r#"{{"worker":"jig/feat/web","command":{command}}}"#);
+        let (status, _) = send(&app, post(&body, &[(jig_api::TOKEN_HEADER, TOKEN)])).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
     }
     let verbs: Vec<_> = fake
         .ran
@@ -221,41 +262,70 @@ fn every_verb_is_accepted() {
     assert_eq!(verbs, ["kill", "nudge", "prune", "retry-setup", "model"]);
 }
 
-#[test]
-fn a_query_is_not_a_command() {
+#[tokio::test]
+async fn a_malformed_command_is_refused() {
     let fake = Fake::default();
-    let site = site(fake.clone());
+    let app = app(fake.clone());
     for body in [
-        r#"{"request":"shutdown"}"#,
-        r#"{"request":"get_status"}"#,
+        r#"{"worker":"jig/feat/web","command":{"verb":"shutdown"}}"#,
+        r#"{"worker":"not-a-key","command":{"verb":"kill"}}"#,
         "nope",
     ] {
-        assert_eq!(
-            site.respond(&post(body, &[("x-jig-token", TOKEN)])).status,
-            400,
+        let (status, body) = send(&app, post(body, &[(jig_api::TOKEN_HEADER, TOKEN)])).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            serde_json::from_str::<jig_api::ApiError>(&body).is_ok(),
             "{body}"
         );
     }
     assert!(fake.ran.lock().unwrap().is_empty());
 }
 
-#[test]
-fn a_refused_command_shows_the_daemons_reason() {
-    let site = site(Fake {
+#[tokio::test]
+async fn a_refused_command_shows_the_daemons_reason() {
+    let app = app(Fake {
         answer: Some("worker 'feat/web' is still running — kill it first".into()),
         ..Default::default()
     });
-    let r = site.respond(&post(
-        r#"{"request":"prune","worker":"jig/feat/web"}"#,
-        &[("x-jig-token", TOKEN)],
-    ));
-    assert_eq!(r.status, 409);
-    assert!(body(&r).contains("still running"));
-    assert!(body(&r).contains(r#""ok":false"#));
+    let (status, body) = send(
+        &app,
+        post(
+            r#"{"worker":"jig/feat/web","command":{"verb":"prune"}}"#,
+            &[(jig_api::TOKEN_HEADER, TOKEN)],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let error: jig_api::ApiError = serde_json::from_str(&body).unwrap();
+    assert!(error.error.contains("still running"), "{}", error.error);
 }
 
-#[test]
-fn the_setup_log_is_fetched_by_worker_not_by_path() {
+#[tokio::test]
+async fn a_failed_setup_is_in_the_status() {
+    let mut w = worker("feat/broken");
+    w.status = WorkerStatus::Failed;
+    w.setup = SetupState::Failed {
+        phase: SetupPhase::OnCreate,
+        exit: SetupExit::Code(1),
+        tail: vec!["step 2: boom".into()],
+        log_path: Some(PathBuf::from("/tmp/setup.log")),
+    };
+    let (_, body) = send(
+        &app(Fake {
+            workers: vec![w],
+            ..Default::default()
+        }),
+        get(jig_api::STATUS, HOST),
+    )
+    .await;
+    let view: jig_api::Status = serde_json::from_str(&body).unwrap();
+    let failed = view.repos[0].workers[0].failed_setup.as_ref().unwrap();
+    assert_eq!(failed.tail, ["step 2: boom"]);
+    assert!(failed.has_log);
+}
+
+#[tokio::test]
+async fn the_setup_log_is_fetched_by_worker_not_by_path() {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("setup.log");
     std::fs::write(&log, "step 1\nstep 2: boom\n").unwrap();
@@ -268,29 +338,56 @@ fn the_setup_log_is_fetched_by_worker_not_by_path() {
         tail: vec!["step 2: boom".into()],
         log_path: Some(log),
     };
-    let site = site(Fake {
+    let app = app(Fake {
         workers: vec![w, worker("feat/fine")],
         ..Default::default()
     });
+    let log_of = |query: &str| get(&format!("{}{query}", jig_api::SETUP_LOG), HOST);
 
-    let r = site.respond(&get(
-        "/setup-log?worker=jig%2Ffeat%2Fbroken",
-        "127.0.0.1:7477",
-    ));
-    assert_eq!(r.status, 200);
-    assert_eq!(body(&r), "step 1\nstep 2: boom\n");
+    let (status, body) = send(&app, log_of("?worker=jig%2Ffeat%2Fbroken")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, "step 1\nstep 2: boom\n");
 
-    let none = site.respond(&get("/setup-log?worker=jig/feat/fine", "127.0.0.1:7477"));
-    assert_eq!(none.status, 404);
+    assert_eq!(
+        send(&app, log_of("?worker=jig/feat/fine")).await.0,
+        StatusCode::NOT_FOUND
+    );
     // A path is not a worker key.
-    let bad = site.respond(&get("/setup-log?worker=/etc/passwd", "127.0.0.1:7477"));
-    assert_eq!(bad.status, 400);
-    let traversal = site.respond(&get("/setup-log?worker=jig/../../etc", "127.0.0.1:7477"));
-    assert_eq!(traversal.status, 400);
-    let unknown = site.respond(&get("/setup-log?worker=jig/feat/nobody", "127.0.0.1:7477"));
-    assert_eq!(unknown.status, 404);
-    let missing = site.respond(&get("/setup-log", "127.0.0.1:7477"));
-    assert_eq!(missing.status, 400);
+    assert_eq!(
+        send(&app, log_of("?worker=/etc/passwd")).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        send(&app, log_of("?worker=jig/../../etc")).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        send(&app, log_of("?worker=jig/feat/nobody")).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(send(&app, log_of("")).await.0, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn an_unknown_api_route_is_an_api_error_not_the_app() {
+    let (status, body) = send(&app(Fake::default()), get("/api/v0/nope", HOST)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(
+        serde_json::from_str::<jig_api::ApiError>(&body).is_ok(),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn every_response_is_hardened() {
+    let app = app(Fake::default());
+    let response = app.oneshot(get(jig_api::STATUS, HOST)).await.unwrap();
+    let headers = response.headers();
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    assert!(!csp.contains("unsafe-inline"), "{csp}");
 }
 
 #[test]
@@ -309,26 +406,6 @@ fn token_comparison() {
     assert!(!constant_time_eq(b"abc", b"ab"));
 }
 
-// ── Over a real socket ──────────────────────────────────────────────
-
-/// Start a server on a free port; returns its port and token.
-fn serve(fake: Fake) -> (u16, String, Arc<AtomicBool>) {
-    let server = WebServer::bind(0).unwrap();
-    let port = server.port;
-    let token = server.token.clone();
-    let quit = Arc::new(AtomicBool::new(false));
-    server.spawn(fake, Arc::clone(&quit));
-    (port, token, quit)
-}
-
-fn send(port: u16, raw: &str) -> String {
-    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
-    stream.write_all(raw.as_bytes()).unwrap();
-    let mut out = String::new();
-    stream.read_to_string(&mut out).unwrap();
-    out
-}
-
 #[test]
 fn it_binds_loopback_only() {
     let server = WebServer::bind(0).unwrap();
@@ -337,48 +414,4 @@ fn it_binds_loopback_only() {
     // Fresh per session, and long enough not to guess.
     assert_ne!(server.token, WebServer::bind(0).unwrap().token);
     assert_eq!(server.token.len(), 32);
-}
-
-#[test]
-fn end_to_end_page_then_command() {
-    let fake = Fake {
-        workers: vec![worker("feat/web")],
-        ..Default::default()
-    };
-    let (port, token, quit) = serve(fake.clone());
-
-    let page = send(
-        port,
-        &format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"),
-    );
-    assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
-    assert!(page.contains("Content-Security-Policy:"));
-    assert!(page.contains(&format!(r#"content="{token}""#)));
-
-    let rebound = send(port, "GET / HTTP/1.1\r\nHost: attacker.example\r\n\r\n");
-    assert!(rebound.starts_with("HTTP/1.1 403"), "{rebound}");
-    assert!(!rebound.contains(&token));
-
-    let body = r#"{"request":"kill","worker":"jig/feat/web"}"#;
-    let tokenless = send(
-        port,
-        &format!(
-            "POST /command HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
-        ),
-    );
-    assert!(tokenless.starts_with("HTTP/1.1 403"), "{tokenless}");
-    assert!(fake.ran.lock().unwrap().is_empty());
-
-    let ok = send(
-        port,
-        &format!(
-            "POST /command HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Jig-Token: {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
-        ),
-    );
-    assert!(ok.starts_with("HTTP/1.1 200 OK"), "{ok}");
-    assert_eq!(fake.ran.lock().unwrap().len(), 1);
-
-    quit.store(true, Ordering::Relaxed);
 }

@@ -1,0 +1,15 @@
+[package]
+name = "jig-api"
+description = "Wire types for jig's web view API — shared by the daemon and the wasm web app"
+version = "0.15.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# serde only: the web app compiles this to wasm32, so nothing here may pull
+# in jig-core (git2, tmux) or a runtime.
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
