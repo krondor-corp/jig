@@ -36,7 +36,16 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target }}, wasm32-unknown-unknown
+
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      # Embedded into the binary by the build below (daemon/web/spa.rs).
+      - name: Build web view
+        run: make build-web-release
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} --package jig-cli
