@@ -10,8 +10,6 @@
 //! default), so `make build-web` shows up without rebuilding jig. A release
 //! build embeds it.
 
-use std::sync::OnceLock;
-
 use axum::extract::OriginalUri;
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -54,14 +52,17 @@ pub async fn serve(OriginalUri(uri): OriginalUri) -> Response {
 /// Scripts come only from us. `'wasm-unsafe-eval'` lets the bundle compile
 /// its wasm module, and Trunk's inline loader script is allowed by its
 /// hash, so `'unsafe-inline'` is never needed.
-pub fn csp() -> &'static str {
-    static CSP: OnceLock<String> = OnceLock::new();
-    CSP.get_or_init(|| {
-        let index = Dist::get("index.html")
-            .map(|f| String::from_utf8_lossy(&f.data).into_owned())
-            .unwrap_or_default();
-        policy(&index)
-    })
+///
+/// Worked out per response, from the `index.html` being served now: in a
+/// debug build that's read from disk, and a `make build-web` changes the
+/// loader (it names the bundle's hashed files). A cached hash would block
+/// the new loader until jig restarted. Hashing ~1 KB per response costs
+/// nothing.
+pub fn csp() -> String {
+    let index = Dist::get("index.html")
+        .map(|f| String::from_utf8_lossy(&f.data).into_owned())
+        .unwrap_or_default();
+    policy(&index)
 }
 
 /// The policy for an app whose `index.html` is `index`.

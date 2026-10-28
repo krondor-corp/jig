@@ -42,7 +42,7 @@ pub async fn headers(request: Request, next: Next) -> Response {
     ] {
         headers.insert(name, HeaderValue::from_static(value));
     }
-    if let Ok(csp) = HeaderValue::from_str(spa::csp()) {
+    if let Ok(csp) = HeaderValue::from_str(&spa::csp()) {
         headers.insert(header::CONTENT_SECURITY_POLICY, csp);
     }
     response
