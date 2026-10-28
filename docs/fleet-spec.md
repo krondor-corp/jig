@@ -246,6 +246,15 @@ devices; there is no public page and no login.
    - **Local web view** — the daemon serves the work view and command buttons
      over HTTP on `127.0.0.1`. Hardened against browser-borne requests
      (Host-header check, no state change on GET, a per-session token).
+     Done: `[fleet] web = true` (`web_port`, default 7477) binds
+     `127.0.0.1` only, on a std-threads server (`crates/jig-cli/src/daemon/web/`,
+     `httparse` for the request head). Rows come from the same
+     `worker_columns` `ps` renders; the page adds PR links, a failed-setups
+     panel (tail plus `GET /setup-log?worker=repo/branch`, which only reads a
+     path the daemon recorded) and buttons that `POST /command` an IPC
+     `Request` with an `X-Jig-Token` header, run through
+     `DaemonShared::run_command`. The URL rides on `DaemonInfo.web`;
+     `jig web` opens it and `jig daemon status` prints it.
 4. **Net** — the `Net` trait and `[fleet] net` config with `static` and
    `tailscale` backends; `jig health` checks; `jig fleet join`; the daemon's
    protocol and web view served on the `Net` listener, gated by `accept`

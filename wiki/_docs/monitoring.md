@@ -199,6 +199,31 @@ With Ansible that's the whole setup:
 
 Only the daemon and `jig ps --watch` write log files (`~/.config/jig/state/logs/`). Every other command prints warnings straight to stderr; set `RUST_LOG=info` (or `debug`) to see more.
 
+## Web view
+
+The daemon can serve the same view in a browser, on `127.0.0.1` only. It is off by default; turn it on in `~/.config/jig/config.toml` and restart the daemon:
+
+```toml
+[fleet]
+web = true
+web_port = 7477                # the default
+```
+
+```bash
+jig web              # open it in your browser
+jig web --no-open    # just print the URL
+```
+
+Each worker row is the same as its `jig ps` row, grouped by repo the way `ps -g` groups it. The page adds a few things a terminal can't: PR numbers link to the PR, a **Failed setups** panel shows the end of each failed `on_create` with a link to the whole `setup.log`, and every worker has buttons for `nudge`, `model`, `kill` and `prune` (and `retry-setup` when its setup failed). The buttons run the same daemon commands as the CLI verbs, and the page shows each result or the daemon's reason for refusing. The page refreshes itself every few seconds.
+
+Any web page open in your browser can send requests to a localhost port, so the web view protects itself:
+
+- a request whose `Host` isn't `127.0.0.1:<port>` or `localhost:<port>` is refused, which blocks DNS rebinding
+- `GET` requests only read; commands are `POST`s
+- each command must carry a token that is minted when the daemon starts and embedded in the page, so other sites can't learn it
+
+There's no login. To reach the view from another machine, wait for the fleet's private network (see `docs/fleet-spec.md`); don't put a proxy in front of it.
+
 ## Nudges
 
 When agents get stuck, the daemon intervenes by sending keystrokes through the mux backend (tmux or herdr). Each nudge type has an independent counter and escalates after `max_nudges` (default 3) to a notification instead.

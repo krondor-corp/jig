@@ -79,6 +79,7 @@ eval "$(jig shell-init zsh)"
 | `jig model <branch> <model>` | Switch a worker's agent to another model |
 | `jig prune <branch>` | Remove a stopped worker's worktree and logs |
 | `jig retry-setup <branch>` | Re-run `on_create` for a failed worker, then start it |
+| `jig web` | Open the daemon's local web view (`[fleet] web = true`) |
 | `jig nuke` | Nuke all workers and state (keeps config) |
 | `jig pr` | Push current branch and create a draft PR |
 | `jig pr comments` | Show review feedback on the current PR |
