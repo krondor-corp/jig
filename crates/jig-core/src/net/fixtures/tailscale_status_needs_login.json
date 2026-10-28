@@ -1,0 +1,24 @@
+{
+  "Version": "1.76.1-t1234abcd-gdeadbeef",
+  "TUN": true,
+  "BackendState": "NeedsLogin",
+  "HaveNodeKey": false,
+  "AuthURL": "",
+  "TailscaleIPs": null,
+  "Self": {
+    "ID": "",
+    "PublicKey": "nodekey:0000",
+    "HostName": "devbox",
+    "DNSName": "",
+    "OS": "linux",
+    "UserID": 0,
+    "TailscaleIPs": null,
+    "Online": false,
+    "Active": false
+  },
+  "Health": ["You are logged out."],
+  "MagicDNSSuffix": "",
+  "CurrentTailnet": null,
+  "Peer": null,
+  "User": null
+}

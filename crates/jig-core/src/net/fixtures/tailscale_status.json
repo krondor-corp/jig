@@ -1,0 +1,65 @@
+{
+  "Version": "1.76.1-t1234abcd-gdeadbeef",
+  "TUN": true,
+  "BackendState": "Running",
+  "HaveNodeKey": true,
+  "AuthURL": "",
+  "TailscaleIPs": ["100.101.1.1", "fd7a:115c:a1e0::1"],
+  "Self": {
+    "ID": "nSELF11CNTRL",
+    "PublicKey": "nodekey:1111",
+    "HostName": "devbox",
+    "DNSName": "devbox.tail1234.ts.net.",
+    "OS": "linux",
+    "UserID": 123,
+    "TailscaleIPs": ["100.101.1.1", "fd7a:115c:a1e0::1"],
+    "Tags": ["tag:jig"],
+    "Online": true,
+    "Active": false
+  },
+  "Health": [],
+  "MagicDNSSuffix": "tail1234.ts.net",
+  "CurrentTailnet": {
+    "Name": "operator@example.com",
+    "MagicDNSSuffix": "tail1234.ts.net",
+    "MagicDNSEnabled": true
+  },
+  "Peer": {
+    "nodekey:2222": {
+      "ID": "nLAPTOP2CNTRL",
+      "PublicKey": "nodekey:2222",
+      "HostName": "Alex's MacBook",
+      "DNSName": "laptop.tail1234.ts.net.",
+      "OS": "macOS",
+      "UserID": 123,
+      "TailscaleIPs": ["fd7a:115c:a1e0::2", "100.101.1.2"],
+      "Tags": ["tag:jig"],
+      "Online": true,
+      "Active": true
+    },
+    "nodekey:3333": {
+      "ID": "nPHONE3CNTRL",
+      "PublicKey": "nodekey:3333",
+      "HostName": "phone",
+      "DNSName": "phone.tail1234.ts.net.",
+      "OS": "iOS",
+      "UserID": 123,
+      "TailscaleIPs": ["100.101.1.3"],
+      "Online": true,
+      "Active": false
+    },
+    "nodekey:4444": {
+      "ID": "nBUILD4CNTRL",
+      "PublicKey": "nodekey:4444",
+      "HostName": "build",
+      "DNSName": "build.tail1234.ts.net.",
+      "OS": "linux",
+      "UserID": 456,
+      "TailscaleIPs": ["100.101.1.4"],
+      "Tags": ["tag:ci", "tag:jig"],
+      "Online": false,
+      "Active": false
+    }
+  },
+  "User": null
+}
