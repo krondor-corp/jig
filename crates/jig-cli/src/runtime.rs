@@ -30,6 +30,11 @@ use tokio::task::{Id, JoinSet};
 
 /// A long-running async component. It runs until `shutdown` changes, then
 /// winds down and returns.
+///
+/// NOTE(canonical): async code in the daemon runs as a `Service` under a
+/// [`Supervisor`]. Do not build another tokio runtime or thread for it: the
+/// next listener (the fleet's `Net`, say) is one more `services.spawn` on
+/// the supervisor `daemon start` already runs.
 pub trait Service: Send + 'static {
     type State: Send + 'static;
 

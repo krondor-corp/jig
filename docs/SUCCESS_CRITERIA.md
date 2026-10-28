@@ -61,6 +61,19 @@ Fix formatting:
 cargo fmt
 ```
 
+### Web view app
+
+The Yew app in `crates/jig-cli/web` is its own workspace, so none of the
+commands above check it. CI's `web` job does; run it locally when you touch
+the app or `crates/jig-api` (needs `trunk` and the `wasm32-unknown-unknown`
+target):
+```bash
+cd crates/jig-cli/web
+cargo fmt -- --check
+cargo clippy --target wasm32-unknown-unknown -- -D warnings
+trunk build --release
+```
+
 ## Fixing Common Issues
 
 ### Formatting Failures

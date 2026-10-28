@@ -53,6 +53,8 @@ impl Op for Create {
 - **Workspace structure**: Separate crates for different concerns
   - `jig-core` — Pure library: git, GitHub, issues, mux, agents, prompt
   - `jig-cli` — CLI binary with config, daemon, worker, hooks, notify
+  - `jig-api` — The web view's wire types (`/api/v0` paths and JSON). Serde only: it compiles to wasm for the web app, so it must never depend on `jig-core`
+  - `crates/jig-cli/web` — The web view's Yew app, a separate workspace built by Trunk and embedded in `jig-cli` (see `docs/LOCAL-DEV.md`)
 
 - **jig-core modules**: One submodule directory per domain
   - `git/` — Git operations via git2: `Repo`, `Worktree`, `Branch`, `WorktreeRef`
@@ -66,7 +68,8 @@ impl Op for Create {
   - `cli/` — CLI framework: `op.rs` (Op trait + command_enum! macro), `ui/` (rendering primitives: `colors.rs`, `output.rs`), `commands/` (one file/dir per command)
   - `context/` — What a command runs against: `AppPaths`, `AppCtx`, `Ctx`, `RepoCtx`, config loading, `Logs`
   - `worker/` — Worker state, lifecycle, events
-  - `daemon/` — Background daemon with actor threads
+  - `daemon/` — Background daemon with actor threads; `daemon/web/` is the web view (axum)
+  - `runtime.rs` — `Service` + `Supervisor`: the one way async code runs in the daemon, on a thread and tokio runtime of its own. The rest of the daemon stays std threads
   - `hooks/` — Git and agent hook management
   - `notify/` — Notification system
 

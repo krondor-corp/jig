@@ -324,6 +324,9 @@ async fn a_failed_setup_is_in_the_status() {
     assert!(failed.has_log);
 }
 
+// Touches the filesystem, but stays here rather than in `tests/`: it needs
+// the private `Site` with a stand-in backend, which an integration test
+// can't build. `tests/daemon/web.rs` covers the route on a real daemon.
 #[tokio::test]
 async fn the_setup_log_is_fetched_by_worker_not_by_path() {
     let dir = tempfile::tempdir().unwrap();
@@ -390,6 +393,8 @@ async fn every_response_is_hardened() {
     assert!(!csp.contains("unsafe-inline"), "{csp}");
 }
 
+// Touches the filesystem, but `read_tail` is private to the web view, so the
+// test has to live beside it.
 #[test]
 fn a_long_log_returns_its_end() {
     let dir = tempfile::tempdir().unwrap();
