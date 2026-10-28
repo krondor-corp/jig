@@ -22,7 +22,7 @@ Find the right doc by what you're working on. The **Sources** column tells you w
 |----------|---------|---------|
 | [daemon.md](./daemon.md) | Tick loop, actor threads, nudging, auto-spawn, auto-prune, PR monitoring | `crates/jig-cli/src/daemon/` |
 | [STDOUT-FORMATTING.md](./STDOUT-FORMATTING.md) | Op trait pattern, Display impls, comfy-table usage, color conventions | `crates/jig-cli/src/cli/op.rs`, `crates/jig-cli/src/cli/ui/`, `crates/jig-cli/src/cli/commands/*.rs` |
-| [fleet-spec.md](./fleet-spec.md) | jig's identity + fleet direction: delivery loop across machines, peer mesh over a pluggable private network (`Net`: tailscale/static/iroh), mux-agnostic (tmux/herdr per device), setup state, model switching, `ps --fleet` + web view | `crates/jig-core/src/mux/`, `crates/jig-cli/src/daemon/`, `crates/jig-cli/src/context/machine.rs`, `crates/jig-api/`, `crates/jig-cli/web/` |
+| [fleet-spec.md](./fleet-spec.md) | jig's identity + fleet direction: delivery loop across machines, peer mesh over a pluggable private network (`Net`: tailscale/static/iroh), mux-agnostic (tmux/herdr per device), setup state, model switching, `ps --fleet` + web view | `crates/jig-core/src/mux/`, `crates/jig-cli/src/daemon/`, `crates/jig-cli/src/context/machine.rs`, `crates/jig-api/`, `crates/jig-cli/web/`, `crates/jig-core/src/net/`, `crates/jig-cli/src/cli/commands/fleet/` |
 
 ### Product Direction
 
