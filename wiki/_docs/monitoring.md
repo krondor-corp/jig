@@ -220,7 +220,8 @@ Any web page open in your browser can send requests to a localhost port, so the 
 
 - a request whose `Host` isn't `127.0.0.1:<port>` or `localhost:<port>` is refused, which blocks DNS rebinding
 - `GET` requests only read; commands are `POST`s
-- each command must carry a token that is minted when the daemon starts and embedded in the page, so other sites can't learn it
+- each command must carry a token that is minted when the daemon starts; only the page itself can read it, so other sites can't learn it
+- scripts run only from the daemon itself (a strict Content Security Policy)
 
 There's no login. To reach the view from another machine, wait for the fleet's private network (see `docs/fleet-spec.md`); don't put a proxy in front of it.
 

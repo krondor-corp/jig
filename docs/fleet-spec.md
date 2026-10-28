@@ -140,8 +140,9 @@ net = "tailscale"        # "tailscale" | "static" | (later) "iroh"
 - **Headscale needs no backend of its own** — it is Tailscale's control server,
   self-hosted, and clients are the normal `tailscale` client.
 - **`iroh` is the most plug-and-play** (nothing to install) but a browser cannot
-  join it, so the web view needs an IP backend, and it brings tokio into a daemon
-  that is std-threads today. It is designed for, not built first. `zim-peer`
+  join it, so the web view needs an IP backend, and its tokio would reach past
+  the one thread the web view keeps it in today. It is designed for, not built
+  first. `zim-peer`
   (krondor-corp/zim) remains the reference for its accept policy and peer
   registry.
 
@@ -247,14 +248,19 @@ devices; there is no public page and no login.
      over HTTP on `127.0.0.1`. Hardened against browser-borne requests
      (Host-header check, no state change on GET, a per-session token).
      Done: `[fleet] web = true` (`web_port`, default 7477) binds
-     `127.0.0.1` only, on a std-threads server (`crates/jig-cli/src/daemon/web/`,
-     `httparse` for the request head). Rows come from the same
-     `worker_columns` `ps` renders; the page adds PR links, a failed-setups
-     panel (tail plus `GET /setup-log?worker=repo/branch`, which only reads a
-     path the daemon recorded) and buttons that `POST /command` an IPC
-     `Request` with an `X-Jig-Token` header, run through
-     `DaemonShared::run_command`. The URL rides on `DaemonInfo.web`;
-     `jig web` opens it and `jig daemon status` prints it.
+     `127.0.0.1` only. The server is axum (`crates/jig-cli/src/daemon/web/`)
+     on a current-thread tokio runtime that lives in one `jig-web` thread;
+     the rest of the daemon stays std threads, and handlers make their
+     blocking daemon calls on tokio's blocking pool. It serves a JSON API
+     under `/api/v0`, typed by the `jig-api` crate, and a Yew app
+     (`crates/jig-cli/web`, built by Trunk, embedded with `rust-embed`) that
+     both sides compile against those types. Rows come from the same
+     `worker_columns` `ps` renders. The app adds PR links, a failed-setups
+     panel (the tail, plus `GET /api/v0/setup-log?worker=repo/branch`, which
+     only reads a path the daemon recorded) and buttons that `POST
+     /api/v0/command` with an `X-Jig-Token` header, run through
+     `DaemonShared::run_command`. The URL rides on `DaemonInfo.web`; `jig
+     web` opens it and `jig daemon status` prints it.
 4. **Net** — the `Net` trait and `[fleet] net` config with `static` and
    `tailscale` backends; `jig health` checks; `jig fleet join`; the daemon's
    protocol and web view served on the `Net` listener, gated by `accept`
