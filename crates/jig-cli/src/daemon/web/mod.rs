@@ -27,8 +27,9 @@
 mod http;
 mod page;
 
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -335,9 +336,7 @@ impl<B: Backend> Site<B> {
 }
 
 /// The last `max` bytes of `path`.
-fn read_tail(path: &std::path::Path, max: u64) -> std::io::Result<Vec<u8>> {
-    use std::io::{Seek, SeekFrom};
-
+fn read_tail(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     let mut file = std::fs::File::open(path)?;
     let len = file.metadata()?.len();
     if len > max {

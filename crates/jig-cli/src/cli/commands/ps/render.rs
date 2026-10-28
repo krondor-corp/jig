@@ -2,6 +2,8 @@
 
 use comfy_table::{presets, Attribute, Cell, CellAlignment, Color, ContentArrangement, Table};
 
+use jig_core::mux::AgentState;
+
 use crate::cli::ui;
 use crate::daemon::checks::PrHealth;
 use crate::daemon::TriageEntry;
@@ -234,10 +236,10 @@ pub fn worker_columns(w: &WorkerState, now: i64) -> Vec<Column> {
     // When the backend recognizes the agent (herdr), its live read wins:
     // blocked (needs a human) and working are states the event log can't see.
     let mux_color = match (w.mux_status, w.mux_agent_state) {
-        (MuxStatus::Running, Some(jig_core::mux::AgentState::Blocked)) => Color::Red,
-        (MuxStatus::Running, Some(jig_core::mux::AgentState::Working)) => Color::Green,
-        (MuxStatus::Running, Some(jig_core::mux::AgentState::Idle))
-        | (MuxStatus::Running, Some(jig_core::mux::AgentState::Done)) => Color::Yellow,
+        (MuxStatus::Running, Some(AgentState::Blocked)) => Color::Red,
+        (MuxStatus::Running, Some(AgentState::Working)) => Color::Green,
+        (MuxStatus::Running, Some(AgentState::Idle))
+        | (MuxStatus::Running, Some(AgentState::Done)) => Color::Yellow,
         (MuxStatus::Running, _) => Color::Green,
         (MuxStatus::Exited, _) => Color::Yellow,
         (MuxStatus::NotFound, _) => Color::DarkGrey,

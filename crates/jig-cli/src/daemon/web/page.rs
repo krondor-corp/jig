@@ -8,6 +8,7 @@
 use std::fmt::Write;
 
 use comfy_table::Color;
+use url::Url;
 
 use jig_core::git::Branch;
 
@@ -264,7 +265,7 @@ fn class_of(color: Color) -> &'static str {
 }
 
 /// Only link what a browser should follow: never a `javascript:` URL.
-fn is_web_url(url: &url::Url) -> bool {
+fn is_web_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https")
 }
 
@@ -287,8 +288,6 @@ pub fn escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-
-    use url::Url;
 
     use super::*;
     use crate::context::RepoEntry;
