@@ -13,6 +13,7 @@ use crate::context::AppCtx;
 use crate::context::Ctx;
 use crate::daemon::ipc::{IpcError, Server};
 use crate::daemon::pidfile::{PidFile, PidFileError};
+use crate::daemon::web::WebServer;
 use crate::daemon::{Daemon, DaemonError};
 
 /// Run the daemon in the foreground
@@ -81,13 +82,40 @@ impl Op for Start {
         install_signal_handlers(Arc::clone(&quit));
 
         let tick_interval = cfg.config.tick_interval;
+        let fleet = cfg.config.fleet.clone();
         let mut daemon = Daemon::start(cfg)?;
+
+        // The web view is a convenience: a taken port is worth a warning,
+        // not a daemon that refuses to start.
+        let web = fleet
+            .web
+            .then(|| WebServer::bind(fleet.web_port))
+            .and_then(|bound| {
+                bound
+                    .inspect_err(|e| {
+                        tracing::warn!(port = fleet.web_port, "web view not started: {}", e);
+                        ui::warning(&format!(
+                            "web view not started — 127.0.0.1:{}: {e}",
+                            fleet.web_port
+                        ));
+                    })
+                    .ok()
+            });
+        let web_url = web.as_ref().map(WebServer::url);
+        if let Some(url) = &web_url {
+            daemon.set_web_url(url.clone());
+        }
+
         let listener = server.spawn(daemon.shared(), Arc::clone(&quit));
+        let web_listener = web.map(|web| web.spawn(daemon.shared(), Arc::clone(&quit)));
 
         ui::success(&format!(
             "daemon started  {}",
             ui::dim(&format!("pid {}", pid_file.pid()))
         ));
+        if let Some(url) = &web_url {
+            ui::detail(&format!("web view {}", ui::highlight(url)));
+        }
 
         let once = self.once;
         let monitor_wait = self.monitor_wait();
@@ -110,6 +138,9 @@ impl Op for Start {
         // client can connect to a daemon that is already on its way out.
         quit.store(true, Ordering::Relaxed);
         let _ = listener.join();
+        if let Some(web) = web_listener {
+            let _ = web.join();
+        }
         drop(pid_file);
 
         ui::success("daemon stopped");

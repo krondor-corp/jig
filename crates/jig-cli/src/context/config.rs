@@ -76,12 +76,30 @@ pub struct AppConfig {
 }
 
 /// This machine's place in the fleet — see `docs/fleet-spec.md`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FleetConfig {
     /// What the fleet calls this machine. Defaults to the hostname.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Serve the work view over HTTP on `127.0.0.1`. Off by default.
+    pub web: bool,
+    /// The port the web view listens on.
+    pub web_port: u16,
+}
+
+impl FleetConfig {
+    pub const DEFAULT_WEB_PORT: u16 = 7477;
+}
+
+impl Default for FleetConfig {
+    fn default() -> Self {
+        Self {
+            name: None,
+            web: false,
+            web_port: Self::DEFAULT_WEB_PORT,
+        }
+    }
 }
 
 /// How long a `git` fetch or push may take.
@@ -177,6 +195,8 @@ timeout = 600                    # seconds a fetch or push may take, or "none"
 
 # [fleet]
 # name = "devbox"                # machine name in the fleet view (default: hostname)
+# web = true                     # serve the work view on http://127.0.0.1 (`jig web`)
+# web_port = 7477
 
 # [notify]
 # exec = "~/.config/jig/hooks/notify.sh"
@@ -225,5 +245,19 @@ mod tests {
     fn a_config_without_a_git_section_still_gets_the_defaults() {
         let cfg: AppConfig = toml::from_str("tick_interval = 5").unwrap();
         assert_eq!(cfg.git.timeout, GitConfig::default().timeout);
+    }
+
+    #[test]
+    fn the_web_view_is_off_by_default() {
+        let cfg: AppConfig = toml::from_str("[fleet]\nname = \"devbox\"\n").unwrap();
+        assert!(!cfg.fleet.web);
+        assert_eq!(cfg.fleet.web_port, FleetConfig::DEFAULT_WEB_PORT);
+    }
+
+    #[test]
+    fn the_web_view_can_be_turned_on_and_moved() {
+        let cfg: AppConfig = toml::from_str("[fleet]\nweb = true\nweb_port = 9000\n").unwrap();
+        assert!(cfg.fleet.web);
+        assert_eq!(cfg.fleet.web_port, 9000);
     }
 }

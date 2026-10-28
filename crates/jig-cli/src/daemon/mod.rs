@@ -11,6 +11,7 @@ pub mod commands;
 pub mod events;
 pub mod ipc;
 pub mod pidfile;
+pub mod web;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -80,6 +81,8 @@ pub struct DaemonShared {
     tick_interval: u64,
     log: Option<PathBuf>,
     machine: Machine,
+    /// The web view's address, once it is listening.
+    web: Option<String>,
     /// What control verbs run against.
     app: Arc<AppCtx>,
     in_flight: InFlight,
@@ -103,6 +106,7 @@ impl DaemonShared {
             log: self.log.clone(),
             actors: self.probes.iter().map(ActivityProbe::activity).collect(),
             machine: Some(self.machine.clone()),
+            web: self.web.clone(),
         }
     }
 
@@ -177,6 +181,7 @@ impl Daemon {
             tick_interval: app.config.tick_interval,
             log: crate::context::log::session_log().map(|l| l.path().to_path_buf()),
             machine,
+            web: None,
             app: Arc::clone(&app),
             in_flight: InFlight::default(),
         };
@@ -196,6 +201,12 @@ impl Daemon {
 
     pub fn config(&self) -> &AppConfig {
         &self.app.config
+    }
+
+    /// Advertise the web view at `url` in `Ping`/`Status`. Call before
+    /// handing out [`Self::shared`]: earlier handles keep the old value.
+    pub fn set_web_url(&mut self, url: String) {
+        self.shared.web = Some(url);
     }
 
     /// A handle the IPC listener can hold while the tick loop keeps running.

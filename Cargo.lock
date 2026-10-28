@@ -988,6 +988,7 @@ dependencies = [
  "git2",
  "glob",
  "handlebars",
+ "httparse",
  "jig-core",
  "nix",
  "predicates",
@@ -1001,6 +1002,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "urlencoding",
  "uuid",
  "which 8.0.0",
 ]

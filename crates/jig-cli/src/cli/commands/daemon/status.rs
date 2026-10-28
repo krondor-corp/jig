@@ -88,6 +88,9 @@ impl Op for Status {
         if let Some(log) = &info.log {
             ui::detail(&format!("log {}", display_path(log)));
         }
+        if let Some(web) = &info.web {
+            ui::detail(&format!("web view {}", ui::highlight(web)));
+        }
 
         let width = info.actors.iter().map(|a| a.name.len()).max().unwrap_or(0);
         for actor in &info.actors {

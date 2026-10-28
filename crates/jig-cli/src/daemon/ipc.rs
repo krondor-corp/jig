@@ -153,6 +153,9 @@ pub struct DaemonInfo {
     /// read an older daemon's reply.
     #[serde(default)]
     pub machine: Option<Machine>,
+    /// Where the web view is served, when `[fleet] web` turned it on.
+    #[serde(default)]
+    pub web: Option<String>,
 }
 
 /// What the daemon knows right now — the frame `jig ps` renders.
@@ -625,6 +628,7 @@ mod tests {
             log: None,
             actors,
             machine: Some(machine()),
+            web: None,
         }
     }
 
