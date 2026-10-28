@@ -18,7 +18,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{self, disable_raw_mode};
 
 use crate::context::{AppCtx, AppPaths, Ctx};
-use crate::worker::{MuxStatus, Worker};
+use crate::worker::Worker;
 use jig_core::git::Branch;
 
 use crate::daemon::ipc::{self, DaemonStatus};
@@ -133,7 +133,7 @@ impl Frame {
                 state.resolved_branch = state.branch.as_deref().unwrap_or(&name).into();
                 state.mux_status = worker.mux_status(&*mux);
                 state.mux_agent_state = mux.agent_state(&name);
-                if state.status.is_terminal() || matches!(state.mux_status, MuxStatus::NotFound) {
+                if !state.is_displayed() {
                     continue;
                 }
                 workers.push(state);

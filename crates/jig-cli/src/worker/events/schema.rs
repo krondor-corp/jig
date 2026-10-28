@@ -1,5 +1,7 @@
 //! Typed event schema for the worker event log.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use jig_core::issues::issue::IssueRef;
@@ -76,6 +78,35 @@ pub enum EventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+    /// A setup phase began. `log_path` is where its output goes, for the
+    /// phases that have any (`on_create`).
+    SetupStarted {
+        phase: SetupPhase,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        log_path: Option<PathBuf>,
+    },
+    /// A setup phase ended. On failure `exit_code` is the hook's status —
+    /// absent when it was killed, timed out (`timed_out`), or the phase
+    /// isn't a process at all — and `tail` the end of its output, or the
+    /// error, one line per entry.
+    SetupFinished {
+        phase: SetupPhase,
+        ok: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        timed_out: bool,
+        duration_ms: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tail: Vec<String>,
+    },
+    /// The daemon sent a notification of `kind` (a
+    /// [`NotificationEvent::kind`](crate::notify::NotificationEvent::kind))
+    /// for this worker. Recorded so a restarted daemon — whose memory of the
+    /// previous tick is empty — doesn't send it again.
+    Notified {
+        kind: String,
+    },
 }
 
 fn is_false(v: &bool) -> bool {
@@ -90,6 +121,37 @@ pub enum TerminalKind {
     Merged,
     Approved,
     Archived,
+}
+
+/// The steps of bringing a worker up, in order. [`Worker::create`] stops
+/// after `OnCreate`; [`Worker::spawn`] goes on to launch the agent.
+///
+/// [`Worker::create`]: crate::worker::Worker::create
+/// [`Worker::spawn`]: crate::worker::Worker::spawn
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupPhase {
+    Worktree,
+    CopyFiles,
+    OnCreate,
+    AgentLaunch,
+}
+
+impl SetupPhase {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Worktree => "worktree",
+            Self::CopyFiles => "copy_files",
+            Self::OnCreate => "on_create",
+            Self::AgentLaunch => "agent_launch",
+        }
+    }
+}
+
+impl std::fmt::Display for SetupPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// Discriminant-only enum for pattern matching (no payload).
@@ -117,6 +179,9 @@ pub enum EventType {
     PrMerged,
     PrClosed,
     Terminal,
+    SetupStarted,
+    SetupFinished,
+    Notified,
 }
 
 impl EventKind {
@@ -142,6 +207,9 @@ impl EventKind {
             EventKind::PrMerged { .. } => EventType::PrMerged,
             EventKind::PrClosed { .. } => EventType::PrClosed,
             EventKind::Terminal { .. } => EventType::Terminal,
+            EventKind::SetupStarted { .. } => EventType::SetupStarted,
+            EventKind::SetupFinished { .. } => EventType::SetupFinished,
+            EventKind::Notified { .. } => EventType::Notified,
         }
     }
 }
@@ -205,6 +273,52 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["type"], "stop");
+    }
+
+    #[test]
+    fn setup_finished_serializes_flat_and_omits_defaults() {
+        let event = Event::now(EventKind::SetupFinished {
+            phase: SetupPhase::CopyFiles,
+            ok: true,
+            exit_code: None,
+            timed_out: false,
+            duration_ms: 12,
+            tail: vec![],
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["type"], "setup_finished");
+        assert_eq!(parsed["phase"], "copy_files");
+        assert_eq!(parsed["ok"], true);
+        assert!(parsed.get("exit_code").is_none());
+        assert!(parsed.get("timed_out").is_none());
+        assert!(parsed.get("tail").is_none());
+    }
+
+    #[test]
+    fn setup_failure_roundtrips() {
+        let original = Event::now(EventKind::SetupFinished {
+            phase: SetupPhase::OnCreate,
+            ok: false,
+            exit_code: Some(7),
+            timed_out: false,
+            duration_ms: 1500,
+            tail: vec!["ERR_PNPM_OUTDATED_LOCKFILE".into()],
+        });
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: Event = serde_json::from_str(&json).unwrap();
+        let EventKind::SetupFinished {
+            phase,
+            exit_code,
+            tail,
+            ..
+        } = restored.kind
+        else {
+            panic!("wrong variant");
+        };
+        assert_eq!(phase, SetupPhase::OnCreate);
+        assert_eq!(exit_code, Some(7));
+        assert_eq!(tail, vec!["ERR_PNPM_OUTDATED_LOCKFILE".to_string()]);
     }
 
     #[test]

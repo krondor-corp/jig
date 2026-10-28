@@ -5,7 +5,7 @@ use comfy_table::{presets, Attribute, Cell, CellAlignment, Color, ContentArrange
 use crate::cli::ui;
 use crate::daemon::checks::PrHealth;
 use crate::daemon::TriageEntry;
-use crate::worker::events::WorkerState;
+use crate::worker::events::{SetupState, WorkerState};
 use crate::worker::MuxStatus;
 use crate::worker::WorkerStatus;
 
@@ -137,6 +137,34 @@ pub fn worker_state_str(status: &WorkerStatus) -> &'static str {
     }
 }
 
+/// The STATE column: setup, while it is running or once it has failed —
+/// `on_create 42s`, `failed: on_create (exit 1)` — and the worker status
+/// otherwise.
+///
+/// The tail and log path don't fit a column; `jig attach` quotes them.
+pub fn format_state(w: &WorkerState, now: i64) -> (String, Color) {
+    match &w.setup {
+        SetupState::Running { phase, since, .. } => {
+            let elapsed = (now - since).max(0) as u64;
+            (
+                format!("{phase} {}", ui::format_duration_short(elapsed)),
+                Color::Blue,
+            )
+        }
+        SetupState::Failed { phase, exit, .. } => (format!("failed: {phase} ({exit})"), Color::Red),
+        SetupState::Pending | SetupState::Ok { .. } => {
+            if w.status == WorkerStatus::WaitingReview && w.is_draft {
+                ("draft".to_string(), Color::Blue)
+            } else {
+                (
+                    worker_state_str(&w.status).to_string(),
+                    worker_state_color(&w.status),
+                )
+            }
+        }
+    }
+}
+
 /// Format PR health status for display.
 ///
 /// A failed check wins over `has_pr`: when `gh` is broken, PR discovery is
@@ -183,11 +211,7 @@ fn worker_row(w: &WorkerState) -> Vec<Cell> {
         (MuxStatus::NotFound, _) => Color::DarkGrey,
     };
 
-    let (state_text, state_color) = if w.status == WorkerStatus::WaitingReview && w.is_draft {
-        ("draft", Color::Blue)
-    } else {
-        (worker_state_str(&w.status), worker_state_color(&w.status))
-    };
+    let (state_text, state_color) = format_state(w, chrono::Utc::now().timestamp());
 
     let nudge_count = w.nudge_count();
     let (nudge_text, nudge_color) = if nudge_count == 0 {
@@ -255,7 +279,7 @@ fn worker_row(w: &WorkerState) -> Vec<Cell> {
 
     vec![
         Cell::new(&name).fg(mux_color),
-        Cell::new(state_text).fg(state_color),
+        Cell::new(&state_text).fg(state_color),
         Cell::new(&nudge_text)
             .fg(nudge_color)
             .set_alignment(CellAlignment::Right),
@@ -365,6 +389,7 @@ pub fn render_triage_section_grouped(triages: &[TriageEntry], borders: bool) -> 
 mod tests {
     use super::*;
     use crate::cli::ui;
+    use crate::worker::events::{SetupExit, SetupPhase};
 
     /// Serializes the tests that flip the global plain-mode flag and restores
     /// it on drop, so parallel tests cannot observe each other's setting and a
@@ -438,6 +463,50 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(format_health(&health).0, "ok");
+    }
+
+    #[test]
+    fn a_running_setup_shows_its_phase_and_duration() {
+        let w = WorkerState {
+            status: WorkerStatus::Initializing,
+            setup: SetupState::Running {
+                phase: SetupPhase::OnCreate,
+                since: 1000,
+                elapsed_ms: 0,
+                log_path: None,
+            },
+            ..Default::default()
+        };
+        let (text, color) = format_state(&w, 1042);
+        assert_eq!(text, format!("on_create {}", ui::format_duration_short(42)));
+        assert_eq!(color, Color::Blue);
+    }
+
+    #[test]
+    fn a_failed_setup_shows_its_phase_and_exit() {
+        let w = WorkerState {
+            status: WorkerStatus::Failed,
+            setup: SetupState::Failed {
+                phase: SetupPhase::OnCreate,
+                exit: SetupExit::Code(1),
+                tail: vec!["boom".into()],
+                log_path: None,
+            },
+            ..Default::default()
+        };
+        let (text, color) = format_state(&w, 0);
+        assert_eq!(text, "failed: on_create (exit 1)");
+        assert_eq!(color, Color::Red);
+    }
+
+    #[test]
+    fn a_finished_setup_shows_the_worker_status() {
+        let w = WorkerState {
+            status: WorkerStatus::Running,
+            setup: SetupState::Ok { duration_ms: 3000 },
+            ..Default::default()
+        };
+        assert_eq!(format_state(&w, 0).0, "running");
     }
 
     #[test]

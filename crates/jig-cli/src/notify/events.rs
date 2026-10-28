@@ -38,12 +38,38 @@ pub enum NotificationEvent {
     },
 }
 
+impl NotificationEvent {
+    /// The event's type tag, as it is serialized — what a worker's
+    /// `Notified` event records.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::WorkStarted { .. } => "work_started",
+            Self::PrOpened { .. } => "pr_opened",
+            Self::FeedbackReceived { .. } => "feedback_received",
+            Self::FeedbackAddressed { .. } => "feedback_addressed",
+            Self::NeedsIntervention { .. } => "needs_intervention",
+            Self::WorkCompleted { .. } => "work_completed",
+        }
+    }
+}
+
 /// A timestamped notification.
 pub type Notification = jig_core::Event<NotificationEvent>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kind_is_the_serialized_type_tag() {
+        let n = NotificationEvent::NeedsIntervention {
+            repo: "jig".into(),
+            worker: "feat".into(),
+            reason: "x".into(),
+        };
+        let parsed = serde_json::to_value(&n).unwrap();
+        assert_eq!(parsed["type"], n.kind());
+    }
 
     #[test]
     fn notification_serializes_flat() {
