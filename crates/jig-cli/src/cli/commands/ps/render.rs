@@ -192,8 +192,40 @@ pub fn format_health(info: &PrHealth) -> (String, Color) {
     }
 }
 
-/// Build a row of cells for a single worker.
-fn worker_row(w: &WorkerState) -> Vec<Cell> {
+/// The worker table's column headers, shared by `ps` and the web view.
+pub const WORKER_HEADERS: [&str; 7] = [
+    "WORKER", "STATE", "NUDGE", "COMMITS", "PR", "HEALTH", "ISSUE",
+];
+
+/// One cell of a worker row, before it becomes a terminal cell or HTML.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Column {
+    pub text: String,
+    pub color: Color,
+    /// Right-aligned (the numeric columns).
+    pub right: bool,
+}
+
+impl Column {
+    fn new(text: impl Into<String>, color: Color) -> Self {
+        Self {
+            text: text.into(),
+            color,
+            right: false,
+        }
+    }
+
+    fn right(mut self) -> Self {
+        self.right = true;
+        self
+    }
+}
+
+/// A worker's row as text and color, one [`Column`] per [`WORKER_HEADERS`].
+///
+/// NOTE(canonical): `ps` and the daemon's web view both render from this, so
+/// the two can't drift — change a column here, not in either renderer.
+pub fn worker_columns(w: &WorkerState, now: i64) -> Vec<Column> {
     let mux_indicator = match w.mux_status {
         MuxStatus::Running => "●",
         MuxStatus::Exited => "○",
@@ -211,7 +243,7 @@ fn worker_row(w: &WorkerState) -> Vec<Cell> {
         (MuxStatus::NotFound, _) => Color::DarkGrey,
     };
 
-    let (state_text, state_color) = format_state(w, chrono::Utc::now().timestamp());
+    let (state_text, state_color) = format_state(w, now);
 
     let nudge_count = w.nudge_count();
     let (nudge_text, nudge_color) = if nudge_count == 0 {
@@ -278,31 +310,37 @@ fn worker_row(w: &WorkerState) -> Vec<Cell> {
     let name = format!("{} {}", mux_indicator, ui::truncate(&w.name, NAME_MAX));
 
     vec![
-        Cell::new(&name).fg(mux_color),
-        Cell::new(&state_text).fg(state_color),
-        Cell::new(&nudge_text)
-            .fg(nudge_color)
-            .set_alignment(CellAlignment::Right),
-        Cell::new(&commits)
-            .fg(commit_color)
-            .set_alignment(CellAlignment::Right),
-        Cell::new(&pr).fg(pr_color),
-        Cell::new(&health_text).fg(health_color),
-        Cell::new(&issue).fg(issue_color),
+        Column::new(name, mux_color),
+        Column::new(state_text, state_color),
+        Column::new(nudge_text, nudge_color).right(),
+        Column::new(commits, commit_color).right(),
+        Column::new(pr, pr_color),
+        Column::new(health_text, health_color),
+        Column::new(issue, issue_color),
     ]
+}
+
+/// Build a row of cells for a single worker.
+fn worker_row(w: &WorkerState) -> Vec<Cell> {
+    worker_columns(w, chrono::Utc::now().timestamp())
+        .into_iter()
+        .map(|c| {
+            let cell = Cell::new(&c.text).fg(c.color);
+            if c.right {
+                cell.set_alignment(CellAlignment::Right)
+            } else {
+                cell
+            }
+        })
+        .collect()
 }
 
 /// Standard table header cells.
 fn table_header() -> Vec<Cell> {
-    vec![
-        Cell::new("WORKER").add_attribute(Attribute::Bold),
-        Cell::new("STATE").add_attribute(Attribute::Bold),
-        Cell::new("NUDGE").add_attribute(Attribute::Bold),
-        Cell::new("COMMITS").add_attribute(Attribute::Bold),
-        Cell::new("PR").add_attribute(Attribute::Bold),
-        Cell::new("HEALTH").add_attribute(Attribute::Bold),
-        Cell::new("ISSUE").add_attribute(Attribute::Bold),
-    ]
+    WORKER_HEADERS
+        .iter()
+        .map(|h| Cell::new(h).add_attribute(Attribute::Bold))
+        .collect()
 }
 
 /// Render a worker table from display info.
