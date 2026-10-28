@@ -1,0 +1,46 @@
+# jig's confit config: per-worktree ports for the bin/dev fleet. No secrets.
+#
+# confit (https://confit.krondor.org) is required for `./bin/dev`, like
+# cargo. It gives each worktree of this clone a slot (0 on `main`, else
+# the lowest free 1-9) so several worktrees can each run a fleet at once.
+#
+#   ports.services.* = band + lane + slot
+#
+# Band map (17400 + lane):
+#   1741x  alice web view   — 17410 on main, 17411..17419 for slots 1-9
+#   1742x  bob web view
+#   1745x  alice net        — [fleet.static] listen port (`up --net`)
+#   1746x  bob net
+# `make e2e` picks free ports at boot and ignores this file.
+#
+# The slot ledger lives at <git-common-dir>/confit/ports.toml, shared by
+# every worktree; removed worktrees drop out on the next resolve.
+# `./bin/dev ports` prints this worktree's slot and ports.
+
+[project]
+name = "jig"
+
+[ports]
+band = 17400
+
+[ports.services]
+alice_web = 10
+bob_web   = 20
+alice_net = 50
+bob_net   = 60
+
+# The dev nodes: each key IS the node's name (its dir `.dev/<name>/`, its
+# `[fleet] name`), each value its web view port. Adding a node = two lanes
+# above + a line in each table here.
+[dev.nodes]
+alice = "{ports.services.alice_web}"
+bob   = "{ports.services.bob_web}"
+
+# Each node's `[fleet.static]` listen port.
+[dev.net]
+alice = "{ports.services.alice_net}"
+bob   = "{ports.services.bob_net}"
+
+[env.dev]
+JIG_DEV_SLOT = "{ports.slot}"
+JIG_DEV_SLUG = "{ports.slug}"

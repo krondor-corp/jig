@@ -1,0 +1,420 @@
+#!/usr/bin/env bash
+#
+# jig local dev fleet
+#
+# Runs several jig daemons ("nodes") on this machine, each fully isolated
+# from your real jig: its own XDG_CONFIG_HOME / XDG_RUNTIME_DIR (config,
+# socket, state, logs), its own tmux server (TMUX_TMPDIR), a throwaway
+# HOME for `jig init` (so ~/.claude is never rewritten), and a scratch repo
+# to spawn workers in. Every node serves the web view.
+#
+# Nodes and ports come from confit.toml (`[dev.nodes]`, `[dev.net]`):
+# confit gives each worktree its own slot, so several worktrees can run
+# their own dev fleets at once. Requires confit.
+#
+# `up --net` also writes a `[fleet.static]` mesh: each node listens on its
+# own loopback address with the others as peers. The static backend
+# identifies a peer by IP alone, so nodes need distinct addresses —
+# 127.0.0.<11+i>. Linux routes all of 127/8; macOS needs aliases on lo0
+# (`./bin/dev net-setup`). Daemons that predate the Net trait ignore it.
+#
+# Usage: ./bin/dev help
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEV_DIR="$PROJECT_ROOT/.dev"
+JIG_BIN="$PROJECT_ROOT/target/debug/jig"
+CONFIT_INSTALL="curl -fsSL https://raw.githubusercontent.com/krondor-corp/confit/main/install.sh | bash"
+
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+DIM='\033[2m'
+NC='\033[0m'
+
+info() { echo -e "${BLUE}==>${NC} $*" >&2; }
+ok() { echo -e "${GREEN}✓${NC} $*" >&2; }
+warn() { echo -e "${YELLOW}!${NC} $*" >&2; }
+die() {
+    echo -e "${RED}✗${NC} $*" >&2
+    exit 1
+}
+
+# ── Layout ──────────────────────────────────────────────────────────
+
+command -v confit >/dev/null 2>&1 ||
+    die "confit not installed (required, like cargo). Install:\n  $CONFIT_INSTALL"
+
+# Resolve once: this worktree's slot, then each node's ports as
+# `name=port` lines.
+dev_env="$(cd "$PROJECT_ROOT" && confit export --profile dev --format shell)" ||
+    die "confit could not resolve confit.toml — \`[ports]\` needs confit >= 0.5 (confit update)"
+eval "$dev_env"
+unset dev_env
+WEB_PORTS="$(cd "$PROJECT_ROOT" && confit show dev.nodes)" || exit 1
+NET_PORTS="$(cd "$PROJECT_ROOT" && confit show dev.net)" || exit 1
+NODES=($(echo "$WEB_PORTS" | cut -d= -f1))
+
+# The port for node $2 in `name=port` lines $1.
+port_in() { echo "$1" | grep "^$2=" | cut -d= -f2; }
+
+node_index() {
+    local i
+    for i in "${!NODES[@]}"; do
+        if [[ "${NODES[$i]}" == "$1" ]]; then
+            echo "$i"
+            return
+        fi
+    done
+    die "unknown node '$1' (nodes: ${NODES[*]})"
+}
+
+node_dir() { echo "$DEV_DIR/$1"; }
+web_port() { port_in "$WEB_PORTS" "$1"; }
+net_ip() { echo "127.0.0.$((11 + $(node_index "$1")))"; }
+net_port() {
+    local port
+    port=$(port_in "$NET_PORTS" "$1")
+    [[ -n "$port" ]] || die "$1 has no [dev.net] port in confit.toml"
+    echo "$port"
+}
+
+# Run a command as node $1: its env, in its scratch repo.
+as_node() {
+    local node=$1 dir
+    shift
+    dir=$(node_dir "$node")
+    (
+        cd "$dir/repo"
+        env -u TMUX -u HERDR_ENV \
+            XDG_CONFIG_HOME="$dir/config" \
+            XDG_RUNTIME_DIR="$dir/run" \
+            TMUX_TMPDIR="$dir/tmux" \
+            JIG_MUX=tmux \
+            "$@"
+    )
+}
+
+jig_as() {
+    local node=$1
+    shift
+    as_node "$node" "$JIG_BIN" "$@"
+}
+
+daemon_up() { jig_as "$1" daemon status >/dev/null 2>&1; }
+
+# Stop node $1's daemon and wait for its process to exit: its socket goes
+# quiet a moment before it releases the pid file.
+stop_daemon() {
+    local pid i
+    pid=$(jig_as "$1" daemon status --plain 2>&1 | sed -n 's/.*pid \([0-9]*\).*/\1/p' | head -1)
+    jig_as "$1" daemon stop >/dev/null 2>&1 || true
+    [[ -n "$pid" ]] || return 0
+    for i in $(seq 1 100); do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 0.1
+    done
+    warn "$1: daemon pid $pid still running after 10s"
+}
+
+# ── Setup ───────────────────────────────────────────────────────────
+
+build() {
+    info "Building the web view..."
+    (cd "$PROJECT_ROOT" && make -s build-web >"$DEV_DIR/build-web.log" 2>&1) ||
+        die "web view build failed — see $DEV_DIR/build-web.log"
+    info "Building jig..."
+    (cd "$PROJECT_ROOT" && cargo build -q -p jig-cli) || die "build failed"
+}
+
+write_config() {
+    local node=$1 net=$2 dir peer
+    dir=$(node_dir "$node")
+    {
+        echo "# Written by bin/dev on every \`up\` — edit bin/dev, not this."
+        echo "[fleet]"
+        echo "name = \"$node\""
+        echo "web = true"
+        echo "web_port = $(web_port "$node")"
+        if [[ "$net" == 1 ]]; then
+            echo 'net = "static"'
+            echo
+            echo "[fleet.static]"
+            echo "listen = \"$(net_ip "$node"):$(net_port "$node")\""
+            echo "peers = ["
+            for peer in "${NODES[@]}"; do
+                [[ "$peer" == "$node" ]] && continue
+                echo "  { name = \"$peer\", addr = \"$(net_ip "$peer"):$(net_port "$peer")\" },"
+            done
+            echo "]"
+        fi
+    } >"$dir/config/jig/config.toml"
+}
+
+init_repo() {
+    local node=$1 dir
+    dir=$(node_dir "$node")
+    [[ -d "$dir/repo/.git" ]] && return
+    git init -q -b main "$dir/repo"
+    git -C "$dir/repo" config user.email "$node@jig.dev"
+    git -C "$dir/repo" config user.name "$node"
+    git -C "$dir/repo" config commit.gpgsign false
+    echo "# $node's scratch repo" >"$dir/repo/README.md"
+    git -C "$dir/repo" add README.md
+    git -C "$dir/repo" commit -q -m "chore: init"
+    # Agent hooks install under $HOME/.claude: keep them off the real one.
+    as_node "$node" env HOME="$dir/home" "$JIG_BIN" init claude --plain >"$dir/init.log" 2>&1 ||
+        die "jig init failed for $node — see $dir/init.log"
+    git -C "$dir/repo" add -A
+    git -C "$dir/repo" commit -q -m "chore: jig init"
+}
+
+# A bare repo as the node's `origin`: spawn bases worktrees on
+# `origin/main`, and workers have somewhere to push.
+init_origin() {
+    local node=$1 dir
+    dir=$(node_dir "$node")
+    git -C "$dir/repo" remote get-url origin >/dev/null 2>&1 && return
+    git init -q --bare -b main "$dir/origin.git"
+    git -C "$dir/repo" remote add origin "$dir/origin.git"
+    git -C "$dir/repo" push -q -u origin main
+}
+
+start_daemon() {
+    local node=$1 dir i
+    dir=$(node_dir "$node")
+    # Restart a running daemon so it picks up the fresh config and build.
+    # Workers live in the node's tmux server and survive it.
+    if daemon_up "$node"; then
+        stop_daemon "$node"
+    fi
+    as_node "$node" nohup "$JIG_BIN" daemon start >"$dir/daemon.out" 2>&1 &
+    for i in $(seq 1 100); do
+        daemon_up "$node" && break
+        sleep 0.1
+    done
+    daemon_up "$node" || die "$node: daemon did not start — see $dir/daemon.out"
+    if grep -q "web view not started" "$dir/daemon.out"; then
+        warn "$node: web view not started — $(grep "web view not started" "$dir/daemon.out" | tail -1)"
+    fi
+    ok "$node: daemon up  ${DIM}http://127.0.0.1:$(web_port "$node")/${NC}"
+}
+
+# ── Commands ────────────────────────────────────────────────────────
+
+cmd_up() {
+    local net=0 do_build=1 node dir
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --net) net=1 ;;
+        --no-build) do_build=0 ;;
+        *) die "unknown option for up: $1" ;;
+        esac
+        shift
+    done
+    mkdir -p "$DEV_DIR"
+    [[ "$do_build" == 1 ]] && build
+    [[ "$net" == 1 ]] && check_net
+    for node in "${NODES[@]}"; do
+        dir=$(node_dir "$node")
+        mkdir -p "$dir/config/jig" "$dir/run" "$dir/tmux" "$dir/home"
+        chmod 700 "$dir/run" "$dir/tmux"
+        write_config "$node" "$net"
+        init_repo "$node"
+        init_origin "$node"
+        start_daemon "$node"
+    done
+    echo >&2
+    info "Try: ./bin/dev jig ${NODES[0]} spawn hello -c \"say hi, then stop\""
+    info "     ./bin/dev web ${NODES[0]}    ./bin/dev attach ${NODES[0]}"
+}
+
+cmd_down() {
+    local node dir
+    for node in "${NODES[@]}"; do
+        dir=$(node_dir "$node")
+        [[ -d "$dir" ]] || continue
+        if daemon_up "$node"; then
+            stop_daemon "$node"
+            ok "$node: daemon stopped"
+        fi
+        as_node "$node" tmux kill-server 2>/dev/null && ok "$node: tmux server killed" || true
+    done
+}
+
+cmd_clean() {
+    cmd_down
+    rm -rf "$DEV_DIR"
+    ok "removed $DEV_DIR"
+}
+
+cmd_status() {
+    local node
+    for node in "${NODES[@]}"; do
+        echo -e "${BLUE}── $node${NC}"
+        if [[ ! -d "$(node_dir "$node")" ]]; then
+            echo "  not set up (./bin/dev up)"
+        elif daemon_up "$node"; then
+            jig_as "$node" daemon status 2>&1 | sed 's/^/  /'
+            jig_as "$node" ps --plain 2>&1 | sed 's/^/  /'
+        else
+            echo "  daemon down"
+        fi
+    done
+}
+
+cmd_ports() {
+    local node
+    echo "worktree  $PROJECT_ROOT"
+    echo "slot      $JIG_DEV_SLOT  (confit; slug $JIG_DEV_SLUG)"
+    for node in "${NODES[@]}"; do
+        printf "%-8s  web http://127.0.0.1:%s/   net %s:%s   %s\n" \
+            "$node" "$(web_port "$node")" "$(net_ip "$node")" "$(net_port "$node")" "$(node_dir "$node")"
+    done
+}
+
+cmd_env() {
+    local node=${1:?usage: ./bin/dev env <node>} dir
+    dir=$(node_dir "$node")
+    cat <<EOF
+unset TMUX HERDR_ENV
+export XDG_CONFIG_HOME="$dir/config"
+export XDG_RUNTIME_DIR="$dir/run"
+export TMUX_TMPDIR="$dir/tmux"
+export JIG_MUX=tmux
+alias jig="$JIG_BIN"
+cd "$dir/repo"
+EOF
+}
+
+cmd_shell() {
+    local node
+    for node in "${NODES[@]}"; do
+        echo "$node() { \"$SCRIPT_DIR/dev\" jig $node \"\$@\"; }"
+    done
+}
+
+cmd_jig() {
+    local node=${1:?usage: ./bin/dev jig <node> <args...>}
+    shift
+    node_index "$node" >/dev/null
+    jig_as "$node" "$@"
+}
+
+cmd_attach() {
+    local node=${1:?usage: ./bin/dev attach <node>}
+    node_index "$node" >/dev/null
+    as_node "$node" tmux attach
+}
+
+cmd_web() {
+    local node=${1:?usage: ./bin/dev web <node>}
+    shift
+    jig_as "$node" web "$@"
+}
+
+cmd_logs() {
+    local node=${1:?usage: ./bin/dev logs <node> [-f]}
+    shift
+    node_index "$node" >/dev/null
+    jig_as "$node" daemon logs "$@"
+}
+
+cmd_health() {
+    local node
+    for node in "${NODES[@]}"; do
+        echo -e "${BLUE}── $node${NC}"
+        jig_as "$node" health --plain 2>&1 | sed 's/^/  /' || true
+    done
+}
+
+# Loopback addresses the static mesh needs, which this machine lacks.
+missing_ips() {
+    local node ip
+    [[ "$(uname)" == Darwin ]] || return 0
+    for node in "${NODES[@]}"; do
+        ip=$(net_ip "$node")
+        ifconfig lo0 | grep -q "inet $ip " || echo "$ip"
+    done
+}
+
+check_net() {
+    local missing
+    missing=$(missing_ips)
+    [[ -z "$missing" ]] && return
+    warn "loopback aliases missing: $(echo $missing) — the static mesh can't bind them"
+    warn "run ./bin/dev net-setup (sudo), then ./bin/dev up --net again"
+}
+
+cmd_net_setup() {
+    local ip missing
+    missing=$(missing_ips)
+    if [[ -z "$missing" ]]; then
+        ok "every node has its loopback address"
+        return
+    fi
+    for ip in $missing; do
+        info "sudo ifconfig lo0 alias $ip up"
+        sudo ifconfig lo0 alias "$ip" up
+    done
+    ok "added; aliases last until reboot"
+}
+
+cmd_help() {
+    cat <<EOF
+jig local dev fleet — isolated daemons for local e2e testing
+
+Usage: ./bin/dev <command> [args...]
+
+Nodes: ${NODES[*]}  (from confit.toml [dev.nodes])
+
+Commands:
+  up [--net] [--no-build]  Build, then set up and start every node.
+                           --net writes a [fleet.static] mesh of the nodes.
+  down | kill              Stop every daemon and its tmux server.
+  clean                    down, then delete .dev/ (repos, state, logs).
+  status                   Daemon status and \`jig ps\` for each node.
+  ports                    This worktree's slot, web ports, net addresses.
+  jig <node> <args...>     Run jig as that node, in its scratch repo.
+  web <node> [--no-open]   Open that node's web view.
+  attach <node>            Attach to that node's tmux server (workers).
+  logs <node> [-f]         That node's daemon log.
+  health                   \`jig health\` for each node (net checks, kro-251+).
+  env <node>               Print exports to become that node in a shell:
+                             eval "\$(./bin/dev env alice)"
+  shell                    Print alice()/bob()... shell functions:
+                             eval "\$(./bin/dev shell)"
+  net-setup                macOS: add the lo0 aliases --net needs (sudo).
+  help                     Show this help.
+
+Workers launched with \`spawn\` run the real \`claude\` with your real login,
+so give them small tasks. Hermetic checks: \`make e2e\`.
+EOF
+}
+
+main() {
+    local cmd=${1:-help}
+    [[ $# -gt 0 ]] && shift
+    case "$cmd" in
+    up) cmd_up "$@" ;;
+    down | kill) cmd_down ;;
+    clean) cmd_clean ;;
+    status) cmd_status ;;
+    ports) cmd_ports ;;
+    env) cmd_env "$@" ;;
+    shell) cmd_shell ;;
+    jig) cmd_jig "$@" ;;
+    attach | a) cmd_attach "$@" ;;
+    web) cmd_web "$@" ;;
+    logs) cmd_logs "$@" ;;
+    health) cmd_health ;;
+    net-setup) cmd_net_setup ;;
+    help | -h | --help) cmd_help ;;
+    *) die "unknown command '$cmd' — ./bin/dev help" ;;
+    esac
+}
+
+main "$@"
