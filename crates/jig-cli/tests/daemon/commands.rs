@@ -12,6 +12,7 @@ use crate::common::Sandbox;
 use jig_cli::context::{register_globally, AppConfig, AppCtx, Flags, RepoCtx};
 use jig_cli::daemon::commands::{self, Command, CommandError, WorkerKey};
 use jig_cli::daemon::ipc::{self, IpcError, Request, Response};
+use jig_cli::prompts::spawn_task_raw;
 use jig_cli::worker::events::{EventKind, WorkerState};
 use jig_cli::worker::{OnCreate, Worker, WorkerStatus};
 use jig_core::git::Branch;
@@ -25,6 +26,8 @@ struct FakeMux {
     windows: Mutex<HashSet<String>>,
     messages: Mutex<Vec<(String, String)>>,
     keys: Mutex<Vec<(String, String)>>,
+    /// Refuse to open windows, as a mux that isn't running would.
+    broken: bool,
 }
 
 impl FakeMux {
@@ -45,6 +48,9 @@ impl FakeMux {
 
 impl Mux for FakeMux {
     fn create_window(&self, name: &str, _dir: &Path) -> Result<(), MuxError> {
+        if self.broken {
+            return Err(MuxError::SessionNotFound(name.to_string()));
+        }
         self.windows.lock().unwrap().insert(name.to_string());
         Ok(())
     }
@@ -321,6 +327,36 @@ fn a_retry_that_fails_again_stays_failed() {
     assert_eq!(status(&worker), WorkerStatus::Failed);
     assert!(!mux.has(BRANCH), "no agent without a working setup");
     assert_eq!(recorded(&worker), vec![("retry-setup".into(), None)]);
+}
+
+/// The agent launch is a setup phase too: a worker whose mux refused it is
+/// retried like one whose hook failed.
+#[test]
+fn retry_setup_takes_a_worker_whose_agent_failed_to_launch() {
+    let sandbox = configured(None);
+    let repo = repo(&sandbox);
+    let broken = FakeMux {
+        broken: true,
+        ..Default::default()
+    };
+    Worker::spawn(
+        &repo,
+        &Branch::new(BRANCH),
+        &Branch::new("main"),
+        spawn_task_raw("task"),
+        false,
+        None,
+        &broken,
+    )
+    .unwrap_err();
+    let worker = Worker::open(&repo, &Branch::new(BRANCH)).unwrap();
+    assert_eq!(status(&worker), WorkerStatus::Failed);
+
+    let mux = FakeMux::default();
+    apply(&sandbox, &worker, Command::RetrySetup, &mux).unwrap();
+
+    assert!(mux.has(BRANCH));
+    assert_eq!(status(&worker), WorkerStatus::Spawned);
 }
 
 #[test]

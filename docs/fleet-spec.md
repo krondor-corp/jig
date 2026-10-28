@@ -241,8 +241,8 @@ devices; there is no public page and no login.
      runs in-process when no daemon answers. Verbs run on a thread per request
      (never the listener's or the tick loop's), one at a time per worker, and
      each leaves a `command` event in the worker's log. `prune` refuses a
-     worker whose window is still open; `retry-setup` only takes a worker that
-     failed before its agent ever started.
+     worker whose window is still open; `retry-setup` only takes a worker whose
+     setup failed (any phase, the agent launch included), per `WorkerState.setup`.
    - **Local web view** — the daemon serves the work view and command buttons
      over HTTP on `127.0.0.1`. Hardened against browser-borne requests
      (Host-header check, no state change on GET, a per-session token).
