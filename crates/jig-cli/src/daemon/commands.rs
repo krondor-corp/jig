@@ -66,9 +66,13 @@ impl FromStr for WorkerKey {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Keys arrive over the socket and from the web view: a bad branch
+        // name is an error here, not a panic in `Branch::new`.
         match s.split_once('/') {
             Some((repo, branch)) if !repo.is_empty() && !branch.is_empty() => {
-                Ok(Self::new(repo, Branch::new(branch)))
+                let branch = Branch::try_new(branch)
+                    .ok_or_else(|| format!("'{branch}' is not a valid branch name"))?;
+                Ok(Self::new(repo, branch))
             }
             _ => Err(format!("worker key '{s}' is not of the form repo/branch")),
         }
@@ -409,7 +413,15 @@ mod tests {
 
     #[test]
     fn a_key_needs_both_halves() {
-        for bad in ["jig", "/branch", "jig/", ""] {
+        for bad in [
+            "jig",
+            "/branch",
+            "jig/",
+            "",
+            "jig/../etc",
+            "jig/a b",
+            "jig/x..y",
+        ] {
             assert!(bad.parse::<WorkerKey>().is_err(), "{bad:?}");
         }
     }
