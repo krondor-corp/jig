@@ -13,8 +13,9 @@ use crate::context::AppCtx;
 use crate::context::Ctx;
 use crate::daemon::ipc::{IpcError, Server};
 use crate::daemon::pidfile::{PidFile, PidFileError};
-use crate::daemon::web::WebServer;
+use crate::daemon::web::{self, WebServer, WebView};
 use crate::daemon::{Daemon, DaemonError};
+use crate::runtime::Supervisor;
 
 /// Run the daemon in the foreground
 #[derive(Args, Debug, Clone)]
@@ -107,7 +108,14 @@ impl Op for Start {
         }
 
         let listener = server.spawn(daemon.shared(), Arc::clone(&quit));
-        let web_listener = web.map(|web| web.spawn(daemon.shared(), Arc::clone(&quit)));
+        let shared = daemon.shared();
+        let web_view = web.and_then(|web| {
+            Supervisor::start("jig-web", move |services| {
+                services.spawn::<WebView<_>>("web view", web.serve(shared));
+            })
+            .inspect_err(|e| tracing::warn!("web view not started: {}", e))
+            .ok()
+        });
 
         ui::success(&format!(
             "daemon started  {}",
@@ -138,8 +146,8 @@ impl Op for Start {
         // client can connect to a daemon that is already on its way out.
         quit.store(true, Ordering::Relaxed);
         let _ = listener.join();
-        if let Some(web) = web_listener {
-            let _ = web.join();
+        if let Some(web_view) = web_view {
+            web_view.shutdown(web::DRAIN);
         }
         drop(pid_file);
 

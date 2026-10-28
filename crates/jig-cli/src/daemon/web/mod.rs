@@ -13,10 +13,12 @@
 //!
 //! # Threads
 //!
-//! The daemon is std threads. The web view is the only async code in it: one
-//! `jig-web` thread owns a current-thread tokio runtime and serves axum on
-//! it. Daemon calls block, so handlers make them on tokio's blocking pool and
-//! never block the runtime. Nothing else in the daemon knows tokio exists.
+//! The daemon is std threads. The web view is the only async code in it: a
+//! [`Service`] that a [`crate::runtime::Supervisor`] runs on the `jig-web`
+//! thread, which owns a current-thread tokio runtime. Daemon calls block, so
+//! handlers make them on tokio's blocking pool and never block the runtime.
+//! Shutdown is the supervisor's: `daemon start` signals it when it quits, and
+//! in-flight requests get [`DRAIN`] to finish.
 //!
 //! # Hardening
 //!
@@ -41,19 +43,21 @@ mod guard;
 mod spa;
 
 use std::net::{Ipv4Addr, TcpListener};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
+use tokio::sync::watch;
 use uuid::Uuid;
 
 use super::commands::{Command, WorkerKey};
 use super::ipc::{DaemonStatus, Response};
 use super::DaemonShared;
+use crate::runtime::Service;
 
-/// How often the server checks whether the daemon is shutting down.
-const SHUTDOWN_CHECK: Duration = Duration::from_millis(500);
+/// How long a stopping daemon waits for in-flight web requests (a command
+/// someone clicked) before it leaves them behind.
+pub const DRAIN: Duration = Duration::from_secs(10);
 
 /// What the web view needs from the daemon: [`DaemonShared`] in the daemon,
 /// a stand-in in tests. Both calls may block.
@@ -108,48 +112,48 @@ impl WebServer {
         format!("http://127.0.0.1:{}/", self.port)
     }
 
-    /// Serve until `quit` is set, on a `jig-web` thread with its own
-    /// runtime.
-    pub fn spawn<B: Backend>(
-        self,
-        backend: B,
-        quit: Arc<AtomicBool>,
-    ) -> std::thread::JoinHandle<()> {
-        std::thread::Builder::new()
-            .name("jig-web".into())
-            .spawn(move || self.serve(backend, quit))
-            .expect("failed to spawn jig-web thread")
+    /// The web view as a [`Service`]: this port, answering from `backend`.
+    pub fn serve<B: Backend>(self, backend: B) -> WebView<B> {
+        WebView {
+            server: self,
+            backend,
+        }
     }
+}
 
-    fn serve<B: Backend>(self, backend: B, quit: Arc<AtomicBool>) {
-        let url = self.url();
-        let runtime = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
+/// A bound web view and the daemon behind it: what [`Supervisor`] runs.
+///
+/// [`Supervisor`]: crate::runtime::Supervisor
+pub struct WebView<B> {
+    server: WebServer,
+    backend: B,
+}
+
+impl<B: Backend> Service for WebView<B> {
+    type State = Self;
+
+    async fn run(view: Self, mut shutdown: watch::Receiver<()>) {
+        let WebView { server, backend } = view;
+        let url = server.url();
+        let listener = match tokio::net::TcpListener::from_std(server.listener) {
+            Ok(l) => l,
             Err(e) => {
-                tracing::warn!("web view not started: no runtime: {}", e);
+                tracing::warn!("web view not started: {}", e);
                 return;
             }
         };
         let app = router(Site {
             backend,
-            port: self.port,
-            token: self.token,
+            port: server.port,
+            token: server.token,
         });
-        let result = runtime.block_on(async {
-            let listener = tokio::net::TcpListener::from_std(self.listener)?;
-            tracing::info!(url = %url, "web view listening");
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    while !quit.load(Ordering::Relaxed) {
-                        tokio::time::sleep(SHUTDOWN_CHECK).await;
-                    }
-                })
-                .await
-        });
-        match result {
+        tracing::info!(url = %url, "web view listening");
+        let served = axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown.changed().await;
+            })
+            .await;
+        match served {
             Ok(()) => tracing::info!("web view stopped"),
             Err(e) => tracing::warn!("web view failed: {}", e),
         }

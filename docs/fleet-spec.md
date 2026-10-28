@@ -248,10 +248,12 @@ devices; there is no public page and no login.
      over HTTP on `127.0.0.1`. Hardened against browser-borne requests
      (Host-header check, no state change on GET, a per-session token).
      Done: `[fleet] web = true` (`web_port`, default 7477) binds
-     `127.0.0.1` only. The server is axum (`crates/jig-cli/src/daemon/web/`)
-     on a current-thread tokio runtime that lives in one `jig-web` thread;
-     the rest of the daemon stays std threads, and handlers make their
-     blocking daemon calls on tokio's blocking pool. It serves a JSON API
+     `127.0.0.1` only. The server is axum (`crates/jig-cli/src/daemon/web/`),
+     run as a `runtime::Service` (zim's trait) by a `runtime::Supervisor` on
+     one `jig-web` thread with a current-thread tokio runtime. The rest of
+     the daemon stays std threads; handlers make their blocking daemon calls
+     on tokio's blocking pool, and a stopping daemon gives in-flight requests
+     10s before abandoning them. It serves a JSON API
      under `/api/v0`, typed by the `jig-api` crate, and a Yew app
      (`crates/jig-cli/web`, built by Trunk, embedded with `rust-embed`) that
      both sides compile against those types. Rows come from the same
