@@ -1,0 +1,25 @@
+[package]
+name = "jig-web"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Yew (Rust/WASM) web view for the jig daemon. Built by Trunk into dist/, embedded by jig-cli."
+
+# Standalone (own workspace): a wasm32-only Yew app built by Trunk, kept out
+# of the host `cargo build`. The empty [workspace] table below makes it its
+# own root so it doesn't inherit the parent workspace.
+[workspace]
+
+[dependencies]
+yew = { version = "0.21", features = ["csr"] }
+gloo-net = { version = "0.6", default-features = false, features = ["http", "json"] }
+gloo-timers = "0.3"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "Storage", "MediaQueryList", "console"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+console_error_panic_hook = "0.1"
+
+# The wire types the daemon serves: one definition for both sides.
+jig-api = { path = "../../jig-api" }
