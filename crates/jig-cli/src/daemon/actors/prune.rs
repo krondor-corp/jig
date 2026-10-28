@@ -40,7 +40,12 @@ impl Actor for PruneActor {
     }
 }
 
-fn prune_single(paths: &AppPaths, target: &PruneTarget) -> std::result::Result<(), String> {
+/// Remove one worker's worktree and logs — for the actor, and for
+/// `jig prune` through [`crate::daemon::commands`].
+pub(crate) fn prune_single(
+    paths: &AppPaths,
+    target: &PruneTarget,
+) -> std::result::Result<(), String> {
     let worktree_path = crate::context::worktree_path(&target.repo_path, &target.worker_name);
 
     if worktree_path.exists() {

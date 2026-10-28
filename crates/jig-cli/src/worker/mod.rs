@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::context::log::LogFile;
 use crate::context::{worktree_path, RepoCtx, JIG_DIR};
 use crate::prompts::resume_task;
-use events::{Event, EventKind, SetupPhase, TerminalKind, WorkerState};
+use events::{Event, EventKind, SetupPhase, SetupState, TerminalKind, WorkerState};
 use jig_core::exec::ExecError;
 use jig_core::git::{Branch, Repo, Worktree, WorktreeRef};
 
@@ -35,6 +35,9 @@ pub enum WorkerError {
 
     #[error("worker '{branch}' failed during setup: {reason}")]
     SetupFailed { branch: String, reason: String },
+
+    #[error("can't retry setup for worker '{branch}': {why}")]
+    NotRetryable { branch: String, why: String },
 
     #[error(transparent)]
     Setup(#[from] SetupError),
@@ -147,7 +150,7 @@ impl Worker {
         base: &Branch,
         on_create: OnCreate,
     ) -> Result<Self, WorkerError> {
-        let worker = Self::init(repo, branch, base, on_create, false)?;
+        let worker = Self::init(repo, branch, base, on_create, false, None)?;
         let _ = worker.event_log.append(&Event::now(EventKind::Create {
             branch: branch.to_string(),
         }));
@@ -166,7 +169,7 @@ impl Worker {
         issue_ref: Option<IssueRef>,
         mux: &dyn Mux,
     ) -> Result<Self, WorkerError> {
-        let mut worker = Self::init(repo, branch, base, OnCreate::Run, auto)?;
+        let mut worker = Self::init(repo, branch, base, OnCreate::Run, auto, issue_ref.as_ref())?;
         worker.issue_ref = issue_ref.clone();
 
         let issue = issue_ref.unwrap_or_else(|| IssueRef::new(branch.to_string()));
@@ -210,6 +213,7 @@ impl Worker {
         base: &Branch,
         on_create: OnCreate,
         auto: bool,
+        issue: Option<&IssueRef>,
     ) -> Result<Self, WorkerError> {
         let git = Repo::open(&repo.paths.repo_root)?;
         let worker = Self::at(
@@ -225,6 +229,7 @@ impl Worker {
                 branch: branch.to_string(),
                 base: base.to_string(),
                 auto,
+                issue: issue.cloned(),
             }));
 
         worker.phase(SetupPhase::Worktree, None, || {
@@ -283,6 +288,85 @@ impl Worker {
             }));
         }
         result
+    }
+
+    /// Re-run setup in a worktree whose setup failed, and start the agent
+    /// if it succeeds — `jig retry-setup`.
+    ///
+    /// Only for a worker whose setup failed (a failed `SetupFinished` in its
+    /// log, `on_create` or the agent launch alike). One that failed later —
+    /// its window was lost — has history worth keeping and wants
+    /// `jig resume` instead.
+    ///
+    /// A failure is sticky in the event log, so the retry starts it afresh,
+    /// carrying over the base, `auto` flag and issue the first attempt
+    /// recorded. `cause` is appended straight after the new `Initializing`
+    /// event, so the log says what started this setup. `prompt` builds the
+    /// agent's task from the issue, if one was recorded.
+    pub fn retry_setup(
+        &self,
+        repo: &RepoCtx,
+        cause: EventKind,
+        prompt: impl FnOnce(Option<&IssueRef>) -> Prompt,
+        mux: &dyn Mux,
+    ) -> Result<(), WorkerError> {
+        let branch = self.branch.to_string();
+        let state: WorkerState = self.event_log.reduce()?;
+        let not_retryable = |why: String| WorkerError::NotRetryable {
+            branch: branch.clone(),
+            why,
+        };
+        if state.status != WorkerStatus::Failed {
+            return Err(not_retryable(format!(
+                "it is {}, not failed",
+                state.status.as_str()
+            )));
+        }
+        if !matches!(state.setup, SetupState::Failed { .. }) {
+            return Err(not_retryable(
+                "it got past setup — use `jig resume` to relaunch it".into(),
+            ));
+        }
+        if self.has_mux_window(mux) {
+            return Err(not_retryable(
+                "it still has a window — kill it first".into(),
+            ));
+        }
+
+        let (base, auto) = self
+            .event_log
+            .read_all()?
+            .iter()
+            .rev()
+            .find_map(|e| match &e.kind {
+                EventKind::Initializing { base, auto, .. } => Some((base.clone(), *auto)),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let issue = state.issue_ref;
+
+        self.event_log.reset()?;
+        let _ = self.event_log.append(&Event::now(EventKind::Initializing {
+            branch: branch.clone(),
+            base,
+            auto,
+            issue: issue.clone(),
+        }));
+        let _ = self.event_log.append(&Event::now(cause));
+
+        self.setup(repo, OnCreate::Run)?;
+
+        let _ = self.event_log.append(&Event::now(EventKind::Spawn {
+            branch: branch.clone(),
+            repo: repo.name(),
+            issue: issue.clone().unwrap_or_else(|| IssueRef::new(&branch)),
+        }));
+        self.phase(SetupPhase::AgentLaunch, None, || {
+            mux.create_window(&self.branch, &self.path)?;
+            let cmd = repo.config.agent.agent().spawn(prompt(issue.as_ref()))?;
+            mux.send_keys(&self.branch, &[&cmd, "Enter"])?;
+            Ok(())
+        })
     }
 
     pub fn id(&self) -> Uuid {
@@ -387,8 +471,9 @@ impl Worker {
     /// files over from the main checkout, then run the `on_create` hook.
     ///
     /// NOTE(canonical): this is the one place worktree setup happens, and only
-    /// [`Worker::create`] / [`Worker::spawn`] call it. **Do not** copy files
-    /// or run `on_create` anywhere else.
+    /// [`Worker::create`] / [`Worker::spawn`] (and [`Worker::retry_setup`],
+    /// re-running a failed one) call it. **Do not** copy files or run
+    /// `on_create` anywhere else.
     ///
     /// Each is a recorded [`Worker::phase`]. The hook's stdout and stderr go
     /// to the worker's `setup.log`; a failure quotes the end of it and says

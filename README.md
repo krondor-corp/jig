@@ -75,6 +75,10 @@ eval "$(jig shell-init zsh)"
 | `jig attach [branch]` | Attach to tmux session |
 | `jig kill <branch>` | Kill a running tmux window |
 | `jig kill --all` | Kill all workers |
+| `jig nudge <branch> <text>` | Type a message into a worker's agent |
+| `jig model <branch> <model>` | Switch a worker's agent to another model |
+| `jig prune <branch>` | Remove a stopped worker's worktree and logs |
+| `jig retry-setup <branch>` | Re-run `on_create` for a failed worker, then start it |
 | `jig nuke` | Nuke all workers and state (keeps config) |
 | `jig pr` | Push current branch and create a draft PR |
 | `jig pr comments` | Show review feedback on the current PR |

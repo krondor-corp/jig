@@ -235,7 +235,14 @@ devices; there is no public page and no login.
      are skipped once it is in the log.
    - **Daemon commands** — `kill`, `nudge` (with free text), `prune`,
      `retry-setup`, `model` as IPC `Request`s the daemon executes, so the CLI and
-     the web view drive the same code path.
+     the web view drive the same code path. Done: each verb is addressed by
+     worker key (`repo/branch`) and answers `Ok` or `Error(reason)`; the one
+     executor is `crates/jig-cli/src/daemon/commands.rs`, which the CLI also
+     runs in-process when no daemon answers. Verbs run on a thread per request
+     (never the listener's or the tick loop's), one at a time per worker, and
+     each leaves a `command` event in the worker's log. `prune` refuses a
+     worker whose window is still open; `retry-setup` only takes a worker whose
+     setup failed (any phase, the agent launch included), per `WorkerState.setup`.
    - **Local web view** — the daemon serves the work view and command buttons
      over HTTP on `127.0.0.1`. Hardened against browser-borne requests
      (Host-header check, no state change on GET, a per-session token).

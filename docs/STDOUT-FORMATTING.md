@@ -61,7 +61,7 @@ Choose the right context type (see docs/PATTERNS.md for the full list):
 - `()` — no context needed (pure commands: `version`, `which`, `shell-init`)
 - `Ctx` — one repo (`Ctx::here`) or every tracked repo (`Ctx::everywhere`), and
   `Ctx::scoped(app, self.global)` for commands with `-g` (`list`, `ps`, `kill`,
-  `nuke`, `remove`)
+  `nudge`, `prune`, `model`, `retry-setup`, `nuke`, `remove`)
 - `AppPaths` — jig's files but no repo (`daemon`, `notify`, `config`)
 
 Example skeleton:

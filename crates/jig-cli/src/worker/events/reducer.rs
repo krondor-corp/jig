@@ -100,9 +100,12 @@ impl ReducibleKind for EventKind {
             EventKind::Create { .. } => {
                 state.status = WorkerStatus::Created;
             }
-            EventKind::Initializing { branch, .. } => {
+            EventKind::Initializing { branch, issue, .. } => {
                 state.status = WorkerStatus::Initializing;
                 state.branch = Some(branch.clone());
+                if issue.is_some() {
+                    state.issue_ref = issue.clone();
+                }
             }
             EventKind::Spawn { branch, issue, .. } => {
                 state.status = WorkerStatus::Spawned;
@@ -169,6 +172,7 @@ impl ReducibleKind for EventKind {
             EventKind::PrClosed { .. } => {
                 state.status = WorkerStatus::Closed;
             }
+            EventKind::Command { .. } => {}
             EventKind::Terminal { .. }
             | EventKind::SetupStarted { .. }
             | EventKind::SetupFinished { .. }
@@ -348,6 +352,7 @@ mod tests {
                 branch: "main".into(),
                 base: "origin/main".into(),
                 auto: true,
+                issue: None,
             }),
             Event::now(EventKind::Terminal {
                 terminal: TerminalKind::Failed,
@@ -539,8 +544,30 @@ mod tests {
             branch: "main".into(),
             base: "main".into(),
             auto: false,
+            issue: None,
         })];
         let state = reduce(&events, &default_config());
+        assert_eq!(state.status, WorkerStatus::Initializing);
+    }
+
+    /// A setup that fails never writes `Spawn`, so the issue has to come
+    /// from `Initializing` for `retry-setup` to rebuild the task.
+    #[test]
+    fn initializing_carries_the_issue_and_commands_change_nothing() {
+        let events = vec![
+            Event::now(EventKind::Initializing {
+                branch: "feat/x".into(),
+                base: "main".into(),
+                auto: true,
+                issue: Some(IssueRef::new("KRO-249")),
+            }),
+            Event::now(EventKind::Command {
+                command: "nudge".into(),
+                detail: Some("hi".into()),
+            }),
+        ];
+        let state = reduce(&events, &default_config());
+        assert_eq!(state.issue_ref.as_deref(), Some("KRO-249"));
         assert_eq!(state.status, WorkerStatus::Initializing);
     }
 
@@ -551,6 +578,7 @@ mod tests {
                 branch: "feat/my-feature".into(),
                 base: "main".into(),
                 auto: false,
+                issue: None,
             }),
             Event::now(EventKind::Spawn {
                 branch: "feat/my-feature".into(),
@@ -569,6 +597,7 @@ mod tests {
                 branch: "main".into(),
                 base: "main".into(),
                 auto: false,
+                issue: None,
             }),
             Event::now(EventKind::Terminal {
                 terminal: TerminalKind::Failed,
@@ -588,6 +617,7 @@ mod tests {
                 branch: "main".into(),
                 base: "main".into(),
                 auto: false,
+                issue: None,
             },
         }];
         let config = AppConfig {
@@ -699,6 +729,7 @@ mod tests {
                 branch: "feat".into(),
                 base: "main".into(),
                 auto: true,
+                issue: None,
             },
         )
     }
