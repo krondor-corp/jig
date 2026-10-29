@@ -1,6 +1,8 @@
 //! Create subcommand — push current branch and create a draft PR
 
 use std::fmt;
+use std::fs;
+use std::path::PathBuf;
 
 use clap::Args;
 
@@ -20,6 +22,10 @@ pub struct Create {
     /// PR body/description
     #[arg(short, long)]
     pub body: Option<String>,
+
+    /// Read the PR body from a file
+    #[arg(long, conflicts_with = "body")]
+    pub body_file: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -39,6 +45,8 @@ pub enum CreateError {
     Git(#[from] jig_core::GitError),
     #[error(transparent)]
     GitHub(#[from] jig_core::github::GitHubError),
+    #[error("failed to read body file: {0}")]
+    BodyFile(#[from] std::io::Error),
     #[error("could not determine current branch")]
     NoBranch,
 }
@@ -53,12 +61,22 @@ impl Op for Create {
     }
 
     fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        let body = match &self.body_file {
+            Some(path) => Some(fs::read_to_string(path)?),
+            None => self.body.clone(),
+        };
+
         let git_repo = Repo::discover()?;
         let branch = git_repo
             .current_branch()
             .map_err(|_| CreateError::NoBranch)?;
 
-        let base = ctx.repo()?.base_branch(&ctx.config);
+        // Prefer the base jig recorded when it created this worktree, so a
+        // stacked worktree targets its parent rather than the repo default.
+        let base = match git_repo.base_branch() {
+            Ok(base) => base,
+            Err(_) => ctx.repo()?.base_branch(&ctx.config),
+        };
         let base_str: &str = &base;
         let base_for_gh = base_str.strip_prefix("origin/").unwrap_or(base_str);
 
@@ -77,7 +95,7 @@ impl Op for Create {
             base_for_gh,
             Some(&branch_str),
             self.title.as_deref(),
-            self.body.as_deref(),
+            body.as_deref(),
         )?;
 
         ui::success(&format!("Draft PR created: {}", ui::highlight(&url)));

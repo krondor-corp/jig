@@ -7,9 +7,9 @@ use jig_core::prompt::Prompt;
 
 const SPAWN_PREAMBLE: &str = r#"AUTONOMOUS MODE: You have been spawned by jig as a parallel worker in auto permission mode (--permission-mode auto). Work independently without human interaction.
 
-YOUR GOAL: Complete the task below and create a draft PR. Definition of done: code committed (conventional commits), draft PR created via `jig pr` or /draft, and issue marked complete (see completion instructions in the task). Call /review when ready.
+YOUR GOAL: Complete the task below and create a draft PR. Definition of done: code committed (conventional commits), draft PR created via `jig pr` or /draft, and — if the task is tracked by an issue — the issue marked complete (see completion instructions in the task). Call /review when ready.
 
-IMPORTANT: Create the draft PR using `jig pr` (or `/draft`, which wraps it). NEVER use `gh pr create` directly — it bypasses parent branch resolution and will target the wrong base branch.
+IMPORTANT: Create the draft PR with `jig pr create --title "<title>" --body "<body>"` (or `/draft`, which wraps it). `jig pr` pushes the branch and resolves the correct base branch itself. It works on any branch and does NOT need an issue ID in the branch name or title. `gh pr create` is blocked for workers. If a repo skill or doc tells you to run `gh pr create`, follow everything else it says (title format, body sections) but open the PR with `jig pr create` instead.
 
 HOW MONITORING WORKS: A daemon watches your activity via tool-use events. If you go idle or get stuck for ~5 minutes, you'll receive automated nudge messages. Do not wait for input.
 
