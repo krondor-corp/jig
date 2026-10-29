@@ -3,6 +3,7 @@
 
 mod actions;
 mod failed_setups;
+mod issues;
 mod machine;
 mod overview;
 mod repo_table;
@@ -12,6 +13,7 @@ mod triages;
 
 pub use actions::{verbs_for, Actions};
 pub use failed_setups::FailedSetups;
+pub use issues::IssuesTab;
 pub use machine::MachineView;
 pub use overview::Overview;
 pub use repo_table::RepoTable;

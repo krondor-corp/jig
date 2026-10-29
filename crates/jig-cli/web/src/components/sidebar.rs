@@ -61,7 +61,7 @@ fn machine(m: &Machine, current: &View) -> Html {
         </>
     };
     item(
-        &View::Machine(m.name.clone()),
+        &View::machine(&m.name),
         current,
         label,
         m.attention().count(),
@@ -71,7 +71,9 @@ fn machine(m: &Machine, current: &View) -> Html {
 /// A link to `view`, marked when it is `current`, with a count of what
 /// needs a human there.
 fn item(view: &View, current: &View, label: Html, needing: usize) -> Html {
-    let class = classes!("sidebar-item", (view == current).then_some("current"));
+    // A machine is current on any of its tabs.
+    let here = view.machine_name() == current.machine_name();
+    let class = classes!("sidebar-item", here.then_some("current"));
     html! {
         <a {class} href={view.href()}>
             { label }

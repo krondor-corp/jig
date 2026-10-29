@@ -106,7 +106,7 @@ fn app() -> Html {
             };
             banner.set(Some(Banner {
                 ok: true,
-                message: format!("{} {} …", action.name(), action.worker()),
+                message: format!("{} {} …", action.name(), action.target()),
             }));
             pending.set(pending.get() + 1);
             let banner = banner.clone();
@@ -167,11 +167,12 @@ fn pane(fleet: &Fleet, view: &View, on_command: &Callback<Action>, busy: bool) -
         View::Overview => html! {
             <Overview fleet={fleet.clone()} on_command={on_command.clone()} {busy} />
         },
-        View::Machine(name) => match fleet.machines.iter().find(|m| &m.name == name) {
+        View::Machine(name, tab) => match fleet.machines.iter().find(|m| &m.name == name) {
             Some(machine) => html! {
                 <MachineView
                     key={name.clone()}
                     machine={machine.clone()}
+                    tab={*tab}
                     on_command={on_command.clone()}
                     {busy}
                 />

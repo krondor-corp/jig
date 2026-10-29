@@ -5,12 +5,14 @@ use yew::prelude::*;
 
 use jig_api::{Machine, Status};
 
-use super::{FailedSetups, RepoTable, Triages};
+use super::{FailedSetups, IssuesTab, RepoTable, Triages};
 use crate::api::Action;
+use crate::route::{Tab, View};
 
 #[derive(Properties, PartialEq)]
 pub struct MachineViewProps {
     pub machine: Machine,
+    pub tab: Tab,
     pub on_command: Callback<Action>,
     pub busy: bool,
 }
@@ -46,10 +48,37 @@ pub fn machine_view(props: &MachineViewProps) -> Html {
             if let Some(stale) = stale {
                 <p class="c-yellow">{ stale }</p>
             }
-            if let Some(status) = &machine.status {
-                { view(status, machine.is_local(), &on_command, props.busy) }
+            { tabs(&machine.name, props.tab) }
+            {
+                match props.tab {
+                    Tab::Workers => match &machine.status {
+                        Some(status) => view(status, machine.is_local(), &on_command, props.busy),
+                        None => html! {},
+                    },
+                    Tab::Issues => html! {
+                        <IssuesTab
+                            machine={machine.node.clone()}
+                            name={machine.name.clone()}
+                            {on_command}
+                            busy={props.busy}
+                        />
+                    },
+                }
             }
         </section>
+    }
+}
+
+fn tabs(name: &str, current: Tab) -> Html {
+    let link = |tab: Tab, label: &str| {
+        let class = classes!("tab", (tab == current).then_some("current"));
+        html! { <a {class} href={View::Machine(name.to_string(), tab).href()}>{ label.to_string() }</a> }
+    };
+    html! {
+        <nav class="tabs">
+            { link(Tab::Workers, "Workers") }
+            { link(Tab::Issues, "Issues") }
+        </nav>
     }
 }
 

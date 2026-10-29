@@ -59,7 +59,7 @@ pub fn overview(props: &OverviewProps) -> Html {
 }
 
 fn machine_link(m: &Machine) -> Html {
-    html! { <a href={View::Machine(m.name.clone()).href()}>{ &m.name }</a> }
+    html! { <a href={View::machine(&m.name).href()}>{ &m.name }</a> }
 }
 
 fn down_row(m: &Machine) -> Html {

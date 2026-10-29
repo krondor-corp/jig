@@ -6,8 +6,9 @@
 //! requires.
 
 use jig_api::{
-    ApiRequest, Client, Fleet, FleetRequest, KillRequest, ModelRequest, NudgeRequest, PruneRequest,
-    RetrySetupRequest, SessionRequest, SetupLogRequest, Url,
+    ApiRequest, Client, Fleet, FleetRequest, Issues, IssuesRequest, KillRequest, ModelRequest,
+    NudgeRequest, PruneRequest, RefreshIssuesRequest, RetrySetupRequest, SessionRequest,
+    SetupLogRequest, SpawnRequest, Url,
 };
 
 /// This page's origin: the daemon that served it.
@@ -44,6 +45,11 @@ pub async fn fleet() -> Result<Fleet, String> {
     call(reader()?, FleetRequest).await
 }
 
+/// A machine's issues (`machine`: its node id, `None` for this one).
+pub async fn issues(machine: Option<String>) -> Result<Issues, String> {
+    call(reader()?, IssuesRequest { machine }).await
+}
+
 /// The end of a worker's `setup.log`.
 pub async fn setup_log(worker: &str) -> Result<String, String> {
     let request = SetupLogRequest {
@@ -52,7 +58,8 @@ pub async fn setup_log(worker: &str) -> Result<String, String> {
     Ok(call(reader()?, request).await?.text)
 }
 
-/// A verb the page can send: one per `jig_api::workers` request.
+/// Something the page can ask a daemon to do: a `jig_api::workers` verb,
+/// or an `issues` spawn or refresh. All need the session token.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Kill(KillRequest),
@@ -60,6 +67,8 @@ pub enum Action {
     Prune(PruneRequest),
     RetrySetup(RetrySetupRequest),
     Model(ModelRequest),
+    Spawn(SpawnRequest),
+    RefreshIssues(RefreshIssuesRequest),
 }
 
 impl Action {
@@ -71,17 +80,21 @@ impl Action {
             Action::Prune(_) => "prune",
             Action::RetrySetup(_) => "retry-setup",
             Action::Model(_) => "model",
+            Action::Spawn(_) => "spawn",
+            Action::RefreshIssues(_) => "refresh",
         }
     }
 
-    /// `repo/branch`.
-    pub fn worker(&self) -> &str {
+    /// What it acts on: `repo/branch`, an issue, or the issue list.
+    pub fn target(&self) -> &str {
         match self {
             Action::Kill(r) => &r.worker,
             Action::Nudge(r) => &r.worker,
             Action::Prune(r) => &r.worker,
             Action::RetrySetup(r) => &r.worker,
             Action::Model(r) => &r.worker,
+            Action::Spawn(r) => &r.issue,
+            Action::RefreshIssues(_) => "issues",
         }
     }
 
@@ -94,6 +107,8 @@ impl Action {
             Action::Prune(r) => Action::Prune(PruneRequest { machine, ..r }),
             Action::RetrySetup(r) => Action::RetrySetup(RetrySetupRequest { machine, ..r }),
             Action::Model(r) => Action::Model(ModelRequest { machine, ..r }),
+            Action::Spawn(r) => Action::Spawn(SpawnRequest { machine, ..r }),
+            Action::RefreshIssues(_) => Action::RefreshIssues(RefreshIssuesRequest { machine }),
         }
     }
 
@@ -107,6 +122,8 @@ impl Action {
             Action::Prune(r) => call(client, r).await,
             Action::RetrySetup(r) => call(client, r).await,
             Action::Model(r) => call(client, r).await,
+            Action::Spawn(r) => call(client, r).await,
+            Action::RefreshIssues(r) => call(client, r).await,
         }?;
         Ok(outcome.message)
     }
