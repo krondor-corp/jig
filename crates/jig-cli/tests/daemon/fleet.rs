@@ -9,7 +9,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::time::Duration;
 
-use jig_api::{ApiError, Client, Fleet, FleetRequest, KillRequest, SessionRequest};
+use jig_api::{
+    ApiError, Client, Fleet, FleetRequest, IssuesRequest, KillRequest, SessionRequest, SpawnRequest,
+};
 
 use super::web::{web_url, with_client};
 use crate::common::{wait_for, Sandbox};
@@ -220,4 +222,103 @@ fn ps_fleet_asks_every_peer_and_names_the_silent_ones() {
             "No spawned sessions on any machine",
         ))
         .stderr(predicates::str::contains("bob not answering"));
+}
+
+/// Spawn `issue` in `repo` on `machine`, through the web view at `url`.
+fn spawn_on(url: &str, machine: &str, repo: &str, issue: &str) -> Result<String, ApiError> {
+    with_client(url, async |base| {
+        let session = Client::new(base).unwrap().call(SessionRequest).await?;
+        let request = SpawnRequest {
+            repo: repo.into(),
+            issue: issue.into(),
+            machine: Some(machine.into()),
+        };
+        let outcome = Client::with_token(base, &session.token)
+            .unwrap()
+            .call(request)
+            .await?;
+        Ok(outcome.message)
+    })
+}
+
+#[test]
+fn a_spawn_for_another_machine_runs_there() {
+    let (alice, bob, _) = mesh(true);
+    let _a = alice.start_daemon();
+    let _b = bob.start_daemon();
+    let url = web_url(&alice);
+    wait_for(
+        || {
+            fleet(&url)
+                .machines
+                .iter()
+                .any(|m| m.status.is_some() && !m.is_local())
+        },
+        "alice's page to show bob",
+    );
+
+    // bob's executor answering is what its refusal proves; no agent starts.
+    match spawn_on(&url, "127.0.0.1", "no-such-repo", "KRO-1") {
+        Err(ApiError::Refused(code, reason)) => {
+            assert_eq!(code.as_u16(), 409);
+            assert!(
+                reason.contains("no tracked repo named 'no-such-repo'"),
+                "{reason}"
+            );
+        }
+        other => panic!("expected bob's refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_machine_refuses_spawns_from_peers_unless_turned_on() {
+    let (alice, bob, _) = mesh(false);
+    let _a = alice.start_daemon();
+    let _b = bob.start_daemon();
+    let url = web_url(&alice);
+    wait_for(
+        || {
+            fleet(&url)
+                .machines
+                .iter()
+                .any(|m| m.status.is_some() && !m.is_local())
+        },
+        "alice's page to show bob",
+    );
+    match spawn_on(&url, "127.0.0.1", "no-such-repo", "KRO-1") {
+        Err(ApiError::Refused(_, reason)) => assert!(
+            reason.contains("bob does not take commands over the network"),
+            "{reason}"
+        ),
+        other => panic!("expected bob to refuse, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_machine_s_issues_are_listed_by_that_machine() {
+    let (alice, bob, _) = mesh(false);
+    let _a = alice.start_daemon();
+    let _b = bob.start_daemon();
+    let url = web_url(&alice);
+    wait_for(
+        || {
+            fleet(&url)
+                .machines
+                .iter()
+                .any(|m| m.status.is_some() && !m.is_local())
+        },
+        "alice's page to show bob",
+    );
+    // Reads need no `net_commands`. bob tracks no repo with an issue
+    // tracker, so his list is empty, but it is his.
+    let issues = with_client(&url, async |base| {
+        Client::new(base)
+            .unwrap()
+            .call(IssuesRequest {
+                machine: Some("127.0.0.1".into()),
+            })
+            .await
+    })
+    .expect("bob's issues");
+    assert!(issues.repos.is_empty(), "{issues:?}");
 }

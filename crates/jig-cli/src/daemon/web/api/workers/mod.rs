@@ -11,15 +11,12 @@ pub mod retry_setup;
 pub mod setup_log;
 
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use axum::Json;
+use axum::response::Response;
 
-use jig_api::CommandOutcome;
 use jig_core::net::NodeId;
 
-use super::refuse;
+use super::{outcome, refuse};
 use crate::daemon::commands::{Command, WorkerKey};
-use crate::daemon::ipc::Response as IpcResponse;
 use crate::daemon::web::{Backend, Site};
 
 /// Run `cmd` on `worker` through the daemon's executor, on tokio's blocking
@@ -41,21 +38,7 @@ pub async fn run<B: Backend>(
 
     let backend = site.backend.clone();
     let target = key.clone();
-    match tokio::task::spawn_blocking(move || backend.run_command(machine, target, cmd)).await {
-        Ok(IpcResponse::Ok) => Json(CommandOutcome {
-            message: format!("{verb} {key}: done"),
-        })
-        .into_response(),
-        Ok(IpcResponse::Error(reason)) => {
-            refuse(StatusCode::CONFLICT, format!("{verb} {key}: {reason}"))
-        }
-        Ok(other) => refuse(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("unexpected answer: {other:?}"),
-        ),
-        Err(e) => refuse(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("{verb} {key}: {e}"),
-        ),
-    }
+    let answer =
+        tokio::task::spawn_blocking(move || backend.run_command(machine, target, cmd)).await;
+    outcome(&format!("{verb} {key}"), answer)
 }

@@ -55,9 +55,10 @@ use uuid::Uuid;
 
 use jig_core::net::NodeId;
 
+use super::actors::issues::IssueBoard;
 use super::commands::{Command, WorkerKey};
 use super::fleet::PeerStatus;
-use super::ipc::{DaemonStatus, Response};
+use super::ipc::{DaemonStatus, Request, Response};
 use super::DaemonShared;
 use crate::runtime::Service;
 
@@ -76,6 +77,13 @@ pub trait Backend: Clone + Send + Sync + 'static {
     /// Run a control verb on this machine (`machine` is `None`) or on the
     /// peer that owns the worker, blocking until it answers.
     fn run_command(&self, machine: Option<NodeId>, worker: WorkerKey, cmd: Command) -> Response;
+    /// A machine's issues as last fetched, or why they can't be had.
+    fn issues(&self, machine: Option<NodeId>) -> Result<IssueBoard, String>;
+    /// Have a machine fetch its issues again.
+    fn refresh_issues(&self, machine: Option<NodeId>) -> Response;
+    /// Spawn a worker for `issue` in `repo` on a machine, blocking until its
+    /// setup has run.
+    fn spawn(&self, machine: Option<NodeId>, repo: String, issue: String) -> Response;
 }
 
 impl Backend for DaemonShared {
@@ -91,6 +99,34 @@ impl Backend for DaemonShared {
         match machine {
             None => DaemonShared::run_command(self, worker, cmd),
             Some(node) => self.run_command_on(&node, worker, cmd),
+        }
+    }
+
+    fn issues(&self, machine: Option<NodeId>) -> Result<IssueBoard, String> {
+        match machine {
+            None => Ok(DaemonShared::issues(self)),
+            Some(node) => match self.ask_peer(&node, Request::GetIssues) {
+                Response::Issues(board) => Ok(*board),
+                Response::Error(e) => Err(e),
+                other => Err(format!("expected issues, got {other:?}")),
+            },
+        }
+    }
+
+    fn refresh_issues(&self, machine: Option<NodeId>) -> Response {
+        match machine {
+            None => {
+                DaemonShared::refresh_issues(self);
+                Response::Ok
+            }
+            Some(node) => self.ask_peer(&node, Request::RefreshIssues),
+        }
+    }
+
+    fn spawn(&self, machine: Option<NodeId>, repo: String, issue: String) -> Response {
+        match machine {
+            None => self.spawn_issue(&repo, &issue),
+            Some(node) => self.ask_peer(&node, Request::Spawn { repo, issue }),
         }
     }
 }

@@ -48,6 +48,7 @@ pub struct TickContext {
 
 type Worker = crate::worker::Worker;
 
+use actors::issues::{IssueBoard, IssuesActor, IssuesRequest};
 use actors::monitor::MonitorActor;
 use actors::prune::PruneActor;
 use actors::spawn::SpawnActor;
@@ -56,7 +57,7 @@ use actors::triage::TriageActor;
 use actors::{ActivityProbe, ActorHandle};
 use commands::{Command, InFlight, WorkerKey};
 use fleet::{Fleet, PeerStatus};
-use ipc::Response;
+use ipc::{Request, Response};
 
 pub use crate::worker::events::WorkerState;
 pub use actors::triage::TriageEntry;
@@ -75,6 +76,9 @@ pub struct DaemonShared {
     monitor: Arc<MonitorActor>,
     triage: Arc<TriageActor>,
     spawn: Arc<SpawnActor>,
+    issues: Arc<IssuesActor>,
+    /// Set to have the next tick fetch the issues, poll or no poll.
+    refresh_issues: Arc<AtomicBool>,
     probes: Arc<Vec<ActivityProbe>>,
     /// Unix timestamp of the last completed tick.
     ticked_at: Arc<AtomicI64>,
@@ -102,13 +106,39 @@ impl DaemonShared {
 
     /// Run a control verb on the peer `node`, which owns `worker`.
     pub fn run_command_on(&self, node: &NodeId, worker: WorkerKey, cmd: Command) -> Response {
+        self.ask_peer(node, cmd.request(worker))
+    }
+
+    /// Send `request` to the peer `node`: how anything addressed to another
+    /// machine gets there.
+    pub fn ask_peer(&self, node: &NodeId, request: Request) -> Response {
         match &self.fleet {
-            Some(fleet) => fleet.command(node, worker, cmd),
+            Some(fleet) => fleet.ask(node, request),
             None => Response::Error(format!(
                 "{} has no fleet network to reach {node} over (set [fleet] net)",
                 self.machine.name
             )),
         }
+    }
+
+    /// The issues this machine's repos could spawn, as last fetched.
+    pub fn issues(&self) -> IssueBoard {
+        self.issues.board()
+    }
+
+    /// Have the next tick fetch the issues again. Answers at once; the board
+    /// changes when the fetch lands.
+    pub fn refresh_issues(&self) {
+        self.refresh_issues.store(true, Ordering::Relaxed);
+    }
+
+    /// Spawn a worker for `issue` in `repo` — the answer to `Spawn`. Called
+    /// on the request's own thread, like [`Self::run_command`].
+    pub fn spawn_issue(&self, repo: &str, issue: &str) -> Response {
+        let response = commands::spawn_issue(&self.app, &self.in_flight, repo, issue);
+        // Its row on the board now says it is spawned.
+        self.refresh_issues();
+        response
     }
 
     /// Every peer's frame. None without a fleet network.
@@ -173,6 +203,7 @@ pub struct Daemon {
     pub prune: ActorHandle<PruneActor>,
     pub spawn: ActorHandle<SpawnActor>,
     pub triage: ActorHandle<TriageActor>,
+    pub issues: ActorHandle<IssuesActor>,
 
     app: Arc<AppCtx>,
     registry: RepoRegistry,
@@ -207,17 +238,21 @@ impl Daemon {
         let prune = ActorHandle::<PruneActor>::new();
         let spawn = ActorHandle::<SpawnActor>::new();
         let triage = ActorHandle::<TriageActor>::new();
+        let issues = ActorHandle::<IssuesActor>::new();
 
         let shared = DaemonShared {
             monitor: monitor.shared(),
             triage: triage.shared(),
             spawn: spawn.shared(),
+            issues: issues.shared(),
+            refresh_issues: Arc::new(AtomicBool::new(false)),
             probes: Arc::new(vec![
                 monitor.probe(),
                 sync.probe(),
                 prune.probe(),
                 spawn.probe(),
                 triage.probe(),
+                issues.probe(),
             ]),
             ticked_at: Arc::new(AtomicI64::new(started_at)),
             poll_deadline: Arc::new(AtomicI64::new(started_at)),
@@ -237,6 +272,7 @@ impl Daemon {
             prune,
             spawn,
             triage,
+            issues,
             app,
             registry: cfg.registry,
             last_poll,
@@ -355,8 +391,11 @@ impl Daemon {
             });
         }
 
-        // Trigger background sync + spawn + triage if interval elapsed
-        if self.poll_is_due() {
+        // Trigger background sync + spawn + triage + issues if interval
+        // elapsed; issues also whenever someone asked for a refresh.
+        let polling = self.poll_is_due();
+        let refresh_issues = self.shared.refresh_issues.swap(false, Ordering::Relaxed);
+        if polling {
             self.sync
                 .send(actors::sync::SyncRequest { ctx: ctx.clone() });
             self.spawn
@@ -364,6 +403,14 @@ impl Daemon {
             self.triage
                 .send(actors::triage::TriageRequest { ctx: ctx.clone() });
             self.mark_polled();
+        }
+        if (polling || refresh_issues)
+            && !self.issues.send(IssuesRequest { ctx: ctx.clone() })
+            && refresh_issues
+        {
+            // A fetch is already running, and may have started before
+            // whatever the refresh is for (a spawn, say): ask again next tick.
+            self.shared.refresh_issues.store(true, Ordering::Relaxed);
         }
 
         // Published last, so a stale `ticked_at` over IPC means the tick

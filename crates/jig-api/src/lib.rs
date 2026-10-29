@@ -27,6 +27,7 @@
 
 mod error;
 pub mod fleet;
+pub mod issues;
 pub mod session;
 pub mod status;
 pub mod workers;
@@ -37,6 +38,7 @@ use serde::de::DeserializeOwned;
 
 pub use error::{ApiError, ErrorBody};
 pub use fleet::{Fleet, FleetRequest, Machine};
+pub use issues::{Issue, Issues, IssuesRequest, RefreshIssuesRequest, RepoIssues, SpawnRequest};
 /// Re-exported so callers (notably the wasm app) can build a base [`Url`]
 /// without a `url` dependency of their own.
 pub use reqwest::Url;

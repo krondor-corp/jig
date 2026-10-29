@@ -31,6 +31,7 @@ use jig_core::git::Branch;
 use jig_core::issues::issue::IssueRef;
 use jig_core::mux::AgentState;
 
+use super::actors::issues::IssueBoard;
 use super::actors::triage::TriageEntry;
 use super::actors::ActorActivity;
 use super::checks::PrHealth;
@@ -91,6 +92,14 @@ pub enum Request {
     RetrySetup { worker: WorkerKey },
     /// Switch a worker's model.
     Model { worker: WorkerKey, model: String },
+
+    // ── Issues ──────────────────────────────────────────────────────
+    /// The issues this machine's repos could spawn, as last fetched.
+    GetIssues,
+    /// Fetch the issues again on the next tick.
+    RefreshIssues,
+    /// Start a worker for an issue in a tracked repo (its directory name).
+    Spawn { repo: String, issue: String },
 }
 
 impl Request {
@@ -103,15 +112,25 @@ impl Request {
             Self::Prune { worker } => Ok((worker, Command::Prune)),
             Self::RetrySetup { worker } => Ok((worker, Command::RetrySetup)),
             Self::Model { worker, model } => Ok((worker, Command::Model { model })),
-            other @ (Self::Ping | Self::GetStatus | Self::Shutdown) => Err(other),
+            other @ (Self::Ping
+            | Self::GetStatus
+            | Self::Shutdown
+            | Self::GetIssues
+            | Self::RefreshIssues
+            | Self::Spawn { .. }) => Err(other),
         }
     }
 
     /// How long a client waits for the answer.
     pub(super) fn client_timeout(&self) -> Duration {
         match self {
-            Self::Ping | Self::GetStatus | Self::Shutdown => CLIENT_TIMEOUT,
-            Self::RetrySetup { .. } => SETUP_TIMEOUT,
+            Self::Ping
+            | Self::GetStatus
+            | Self::Shutdown
+            | Self::GetIssues
+            | Self::RefreshIssues => CLIENT_TIMEOUT,
+            // A spawn runs `on_create` before it answers.
+            Self::RetrySetup { .. } | Self::Spawn { .. } => SETUP_TIMEOUT,
             Self::Kill { .. } | Self::Nudge { .. } | Self::Prune { .. } | Self::Model { .. } => {
                 COMMAND_TIMEOUT
             }
@@ -129,6 +148,7 @@ pub enum Response {
     Pong(DaemonInfo),
     // Boxed: `Status` is orders of magnitude larger than the other variants.
     Status(Box<DaemonStatus>),
+    Issues(Box<IssueBoard>),
     Ok,
     Error(String),
 }
@@ -573,6 +593,18 @@ fn handle_connection(
     stream.set_write_timeout(Some(SERVER_TIMEOUT))?;
 
     let req: Request = read_message(&stream)?;
+    if let Request::Spawn { repo, issue } = req {
+        let shared = shared.clone();
+        std::thread::Builder::new()
+            .name("jig-spawn".into())
+            .spawn(move || {
+                let response = guarded(|| shared.spawn_issue(&repo, &issue));
+                if let Err(e) = write_message(&stream, &response) {
+                    tracing::warn!("ipc spawn reply failed: {}", e);
+                }
+            })?;
+        return Ok(());
+    }
     match req.into_command() {
         Ok((worker, cmd)) => {
             let shared = shared.clone();
@@ -604,6 +636,11 @@ fn dispatch(req: Request, shared: &DaemonShared, quit: &AtomicBool) -> Response 
     match req {
         Request::Ping => Response::Pong(shared.info()),
         Request::GetStatus => Response::Status(Box::new(shared.status())),
+        Request::GetIssues => Response::Issues(Box::new(shared.issues())),
+        Request::RefreshIssues => {
+            shared.refresh_issues();
+            Response::Ok
+        }
         Request::Shutdown => {
             tracing::info!("shutdown requested over ipc");
             quit.store(true, Ordering::Relaxed);

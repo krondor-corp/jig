@@ -6,6 +6,7 @@
 //! move on one side only.
 
 pub mod fleet;
+pub mod issues;
 pub mod session;
 pub mod status;
 pub mod workers;
@@ -19,16 +20,21 @@ use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use serde::de::DeserializeOwned;
 
-use jig_api::ErrorBody;
+use jig_api::{CommandOutcome, ErrorBody};
+use tokio::task::JoinError;
 
 use super::{Backend, Site};
+use crate::daemon::ipc::Response as IpcResponse;
 
 pub fn router<B: Backend>() -> Router<Arc<Site<B>>> {
-    use jig_api::{fleet as f, session as s, status as st, workers as w};
+    use jig_api::{fleet as f, issues as i, session as s, status as st, workers as w};
     Router::new()
         .route(s::get::PATH, get(session::handler::<B>))
         .route(st::get::PATH, get(status::handler::<B>))
         .route(f::get::PATH, get(fleet::handler::<B>))
+        .route(i::get::PATH, get(issues::get::handler::<B>))
+        .route(i::refresh::PATH, post(issues::refresh::handler::<B>))
+        .route(i::spawn::PATH, post(issues::spawn::handler::<B>))
         .route(w::kill::PATH, post(workers::kill::handler::<B>))
         .route(w::nudge::PATH, post(workers::nudge::handler::<B>))
         .route(w::prune::PATH, post(workers::prune::handler::<B>))
@@ -54,6 +60,24 @@ pub fn refuse(status: StatusCode, error: impl Into<String>) -> Response {
         }),
     )
         .into_response()
+}
+
+/// What a daemon's answer to a command (`what`, e.g. "kill jig/feat")
+/// becomes: a [`CommandOutcome`], or a refusal carrying the daemon's reason
+/// (409) or what went wrong getting one (500).
+pub fn outcome(what: &str, answer: Result<IpcResponse, JoinError>) -> Response {
+    match answer {
+        Ok(IpcResponse::Ok) => Json(CommandOutcome {
+            message: format!("{what}: done"),
+        })
+        .into_response(),
+        Ok(IpcResponse::Error(reason)) => refuse(StatusCode::CONFLICT, format!("{what}: {reason}")),
+        Ok(other) => refuse(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("unexpected answer: {other:?}"),
+        ),
+        Err(e) => refuse(StatusCode::INTERNAL_SERVER_ERROR, format!("{what}: {e}")),
+    }
 }
 
 /// A JSON request body, refused with an [`ErrorBody`] (not axum's plain-text

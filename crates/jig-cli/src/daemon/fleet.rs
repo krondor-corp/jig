@@ -121,7 +121,12 @@ impl Fleet {
     /// Run `cmd` on `worker` on the peer `node`, which owns it. Answers as
     /// the local executor does: `Ok`, or `Error` with the peer's reason.
     pub fn command(&self, node: &NodeId, worker: WorkerKey, cmd: Command) -> Response {
-        let request = cmd.request(worker);
+        self.ask(node, cmd.request(worker))
+    }
+
+    /// Send `request` to the peer `node` and wait as long as that request
+    /// takes. A peer that can't be reached answers `Error`.
+    pub fn ask(&self, node: &NodeId, request: Request) -> Response {
         let timeout = request.client_timeout();
         match self.request(node, &request, timeout) {
             Ok(response) => response,
@@ -212,14 +217,26 @@ impl Fleet {
 
     /// What a peer may have: the security invariant in `docs/fleet-spec.md`.
     fn answer(&self, request: Request, shared: &DaemonShared) -> Response {
-        match request.into_command() {
-            Ok((worker, cmd)) if self.commands => shared.run_command(worker, cmd),
-            Ok(_) => Response::Error(format!(
+        let refused = || {
+            Response::Error(format!(
                 "{} does not take commands over the network (set `net_commands = true` under [fleet] there)",
                 self.name
-            )),
+            ))
+        };
+        match request.into_command() {
+            Ok((worker, cmd)) if self.commands => shared.run_command(worker, cmd),
+            Ok(_) => refused(),
+            Err(Request::Spawn { repo, issue }) if self.commands => {
+                shared.spawn_issue(&repo, &issue)
+            }
+            Err(Request::Spawn { .. }) => refused(),
             Err(Request::Ping) => Response::Pong(shared.info()),
             Err(Request::GetStatus) => Response::Status(Box::new(shared.status())),
+            Err(Request::GetIssues) => Response::Issues(Box::new(shared.issues())),
+            Err(Request::RefreshIssues) => {
+                shared.refresh_issues();
+                Response::Ok
+            }
             Err(Request::Shutdown) => {
                 Response::Error("shutdown is only taken on the local socket".into())
             }

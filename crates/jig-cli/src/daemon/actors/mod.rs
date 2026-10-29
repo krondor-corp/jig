@@ -1,6 +1,7 @@
 //! Actor trait and daemon background workers.
 
 mod actor;
+pub mod issues;
 pub mod monitor;
 pub mod prune;
 pub mod spawn;

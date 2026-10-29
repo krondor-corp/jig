@@ -7,12 +7,13 @@ use serde::Serialize;
 use tower::ServiceExt;
 
 use jig_api::workers::{kill, model, nudge, prune, retry_setup, setup_log};
-use jig_api::{fleet, session, status};
+use jig_api::{fleet, issues, session, status};
 use jig_api::{
     CommandOutcome, ErrorBody, KillRequest, ModelRequest, NudgeRequest, PruneRequest,
     RetrySetupRequest, SetupLog,
 };
 use jig_core::git::Branch;
+use jig_core::issues::{IssuePriority, IssueStatus};
 use jig_core::net::{Node, NodeId};
 use uuid::Uuid;
 
@@ -20,6 +21,7 @@ use super::api::workers::setup_log::read_tail;
 use super::guard::constant_time_eq;
 use super::*;
 use crate::context::{Machine, RepoEntry};
+use crate::daemon::actors::issues::{IssueBoard, IssueEntry, RepoIssues};
 use crate::daemon::fleet::PeerStatus;
 use crate::daemon::ipc::{DaemonInfo, WorkerSnapshot};
 use crate::worker::events::{SetupExit, SetupPhase, SetupState, WorkerState};
@@ -28,6 +30,9 @@ use crate::worker::{MuxStatus, WorkerStatus};
 const PORT: u16 = 7477;
 const HOST: &str = "127.0.0.1:7477";
 const TOKEN: &str = "s3cret";
+
+/// An issue request the stand-in got: what, for which machine, and detail.
+type IssueCall = (&'static str, Option<NodeId>, String);
 
 /// A daemon stand-in: a fixed frame, and a record of every command.
 #[derive(Clone, Default)]
@@ -41,6 +46,8 @@ struct Fake {
     peers: Vec<PeerStatus>,
     /// Set: the peers can't be listed.
     peers_error: Option<String>,
+    board: IssueBoard,
+    issue_calls: Arc<Mutex<Vec<IssueCall>>>,
 }
 
 impl Backend for Fake {
@@ -52,6 +59,33 @@ impl Backend for Fake {
         match &self.peers_error {
             Some(e) => Err(e.clone()),
             None => Ok(self.peers.clone()),
+        }
+    }
+
+    fn issues(&self, machine: Option<NodeId>) -> Result<IssueBoard, String> {
+        self.issue_calls
+            .lock()
+            .unwrap()
+            .push(("list", machine, String::new()));
+        Ok(self.board.clone())
+    }
+
+    fn refresh_issues(&self, machine: Option<NodeId>) -> Response {
+        self.issue_calls
+            .lock()
+            .unwrap()
+            .push(("refresh", machine, String::new()));
+        Response::Ok
+    }
+
+    fn spawn(&self, machine: Option<NodeId>, repo: String, issue: String) -> Response {
+        self.issue_calls
+            .lock()
+            .unwrap()
+            .push(("spawn", machine, format!("{repo} {issue}")));
+        match &self.answer {
+            None => Response::Ok,
+            Some(reason) => Response::Error(reason.clone()),
         }
     }
 
@@ -316,6 +350,121 @@ async fn a_command_goes_to_the_machine_it_names() {
         fake.routed.lock().unwrap().as_slice(),
         &[Some(NodeId::new("127.0.0.12")), None]
     );
+}
+
+fn board() -> IssueBoard {
+    IssueBoard {
+        repos: vec![RepoIssues {
+            repo: "jig".into(),
+            issues: vec![IssueEntry {
+                id: "KRO-285".into(),
+                title: "Spawn from the web view".into(),
+                status: IssueStatus::Backlog,
+                priority: IssuePriority::High,
+                labels: vec!["jig".into()],
+                branch: Branch::new("feature/kro-285"),
+                auto: false,
+                parent: false,
+                spawned: false,
+            }],
+            error: None,
+        }],
+        fetched_at: Some(chrono::Utc::now().timestamp() - 60),
+    }
+}
+
+#[tokio::test]
+async fn a_machine_s_issues_come_from_that_machine() {
+    let fake = Fake {
+        board: board(),
+        ..Default::default()
+    };
+    let app = app(fake.clone());
+    for (path, machine) in [
+        (issues::get::PATH.to_string(), None),
+        (
+            format!("{}?machine=127.0.0.12", issues::get::PATH),
+            Some(NodeId::new("127.0.0.12")),
+        ),
+    ] {
+        let (code, body) = send(&app, get(&path, HOST)).await;
+        assert_eq!(code, StatusCode::OK, "{body}");
+        let list: jig_api::Issues = serde_json::from_str(&body).unwrap();
+        assert_eq!(list.fetched.as_deref(), Some("1m"));
+        let issue = &list.repos[0].issues[0];
+        assert_eq!(
+            (
+                issue.id.as_str(),
+                issue.status.as_str(),
+                issue.priority.as_str()
+            ),
+            ("KRO-285", "backlog", "high")
+        );
+        assert_eq!(fake.issue_calls.lock().unwrap().last().unwrap().1, machine);
+    }
+}
+
+#[tokio::test]
+async fn a_spawn_goes_to_the_machine_it_names_and_needs_the_token() {
+    let fake = Fake::default();
+    let app = app(fake.clone());
+    let spawn = jig_api::SpawnRequest {
+        repo: "jig".into(),
+        issue: "KRO-285".into(),
+        machine: Some("127.0.0.12".into()),
+    };
+    let body = serde_json::to_string(&spawn).unwrap();
+    let (code, _) = send(&app, post_raw(issues::spawn::PATH, &body, &[])).await;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+    assert!(fake.issue_calls.lock().unwrap().is_empty());
+
+    let (code, body) = send(&app, post(issues::spawn::PATH, &spawn)).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let outcome: CommandOutcome = serde_json::from_str(&body).unwrap();
+    assert_eq!(outcome.message, "spawn KRO-285 in jig: done");
+    assert_eq!(
+        fake.issue_calls.lock().unwrap().as_slice(),
+        &[(
+            "spawn",
+            Some(NodeId::new("127.0.0.12")),
+            "jig KRO-285".to_string()
+        )]
+    );
+}
+
+#[tokio::test]
+async fn a_refused_spawn_says_why() {
+    let app = app(Fake {
+        answer: Some("feature/kro-285 is already spawned".into()),
+        ..Default::default()
+    });
+    let spawn = jig_api::SpawnRequest {
+        repo: "jig".into(),
+        issue: "KRO-285".into(),
+        machine: None,
+    };
+    let (code, body) = send(&app, post(issues::spawn::PATH, &spawn)).await;
+    assert_eq!(code, StatusCode::CONFLICT);
+    assert!(body.contains("already spawned"), "{body}");
+}
+
+#[tokio::test]
+async fn a_refresh_needs_the_token() {
+    let fake = Fake::default();
+    let app = app(fake.clone());
+    let refresh = jig_api::RefreshIssuesRequest { machine: None };
+    let body = serde_json::to_string(&refresh).unwrap();
+    assert_eq!(
+        send(&app, post_raw(issues::refresh::PATH, &body, &[]))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(&app, post(issues::refresh::PATH, &refresh)).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(fake.issue_calls.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
