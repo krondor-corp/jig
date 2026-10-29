@@ -101,6 +101,9 @@ node's workers run there: the page's daemon forwards the verb to
 the owner over the mesh. `--net` sets `net_commands = true` on every node,
 which a real machine leaves off unless it wants peers to drive it.
 `tests/daemon/fleet.rs` covers this with two daemons on `127.0.0.1`.
+A machine's Issues tab lists only repos with `[issues.linear]` in their
+`jig.toml`, through a Linear profile in that node's own config, so the
+scratch repos show none until you give a node both.
 
 The static backend identifies a peer by source IP alone, so nodes on one
 machine need distinct addresses. Linux routes all of `127/8`. macOS only

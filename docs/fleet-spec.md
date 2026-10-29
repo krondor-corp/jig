@@ -299,10 +299,21 @@ devices; there is no public page and no login.
    peers trust. Still to come: a peer's `setup.log` (the protocol has no
    request for it); the web view served on the `Net` address for other
    devices' browsers.
-5. **Queue across machines** — assigning queued issues to machines. There is no
-   per-repo worker cap to build on (`max_concurrent_workers` was removed), so a
-   per-machine limit, if wanted, is designed here. `jig spawn --machine <name>`
-   routed like any command.
+5. **Queue across machines** — assigning queued issues to machines.
+   **Spawning from the web view** (KRO-285): issues are per machine (each
+   repo's `jig.toml` names a tracker profile whose key lives in that
+   machine's config), so each daemon lists its own. An `IssuesActor`
+   (`daemon/actors/issues.rs`) caches every repo's planned and backlog
+   issues, fetched on the poll and on an explicit refresh. IPC
+   `GetIssues`/`RefreshIssues` are reads; `Spawn { repo, issue }` is a
+   command (peers need `net_commands`), run by `commands::spawn_issue`
+   through the spawn actor's own `spawn_worker_for_issue`. The web view's
+   `issues/{get,refresh,spawn}` name a `machine` the serving daemon
+   forwards to, and each machine page has an Issues tab with a spawn
+   button. Still open: assigning issues to machines automatically; a
+   per-machine worker limit, if wanted, designed here (there is no
+   per-repo cap to build on: `max_concurrent_workers` was removed); `jig
+   spawn --machine <name>` from the CLI, routed like any command.
 6. **`iroh` backend** — when zero-install enrollment is worth an async runtime.
 
 ## Risks
