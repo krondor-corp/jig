@@ -253,14 +253,18 @@ devices; there is no public page and no login.
      one `jig-web` thread with a current-thread tokio runtime. The rest of
      the daemon stays std threads; handlers make their blocking daemon calls
      on tokio's blocking pool, and a stopping daemon gives in-flight requests
-     10s before abandoning them. It serves a JSON API
-     under `/api/v0`, typed by the `jig-api` crate, and a Yew app
-     (`crates/jig-cli/web`, built by Trunk, embedded with `rust-embed`) that
-     both sides compile against those types. Rows come from the same
-     `worker_columns` `ps` renders. The app adds PR links, a failed-setups
-     panel (the tail, plus `GET /api/v0/setup-log?worker=repo/branch`, which
-     only reads a path the daemon recorded) and buttons that `POST
-     /api/v0/command` with an `X-Jig-Token` header, run through
+     10s before abandoning them. It serves a JSON API under `/api/v0`
+     defined by the `jig-api` crate in zim-api's pattern: an `ApiRequest`
+     trait, a module per subject and a file per request (`session`,
+     `status`, `workers/{kill,nudge,prune,retry-setup,model,setup-log}`),
+     each exporting the `PATH` the daemon mounts its handler on, and a
+     generic `Client` that the Yew app (`crates/jig-cli/web`, built by
+     Trunk, embedded with `rust-embed`) and the daemon tests both call. Rows
+     come from the same `worker_columns` `ps` renders. The app adds PR
+     links, a failed-setups panel (the tail, and the whole `setup.log` on
+     request, read only from a path the daemon recorded) and a button per
+     verb. Verbs need the session token in `X-Jig-Token`, which
+     `Client::with_token` sends, and run through
      `DaemonShared::run_command`. The URL rides on `DaemonInfo.web`; `jig
      web` opens it and `jig daemon status` prints it.
 4. **Net** — the `Net` trait and `[fleet] net` config with `static` and

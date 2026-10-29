@@ -17,8 +17,9 @@ use gloo_timers::callback::Interval;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
+use api::Action;
 use components::{FailedSetups, RepoTable, SiteHeader, Triages};
-use jig_api::{CommandRequest, Status};
+use jig_api::Status;
 
 /// How often the view refreshes.
 const REFRESH_MS: u32 = 5_000;
@@ -59,7 +60,7 @@ fn app() -> Html {
         use_effect_with((), move |_| {
             spawn_local(async move {
                 match api::session().await {
-                    Ok(session) => token.set(Some(session.token)),
+                    Ok(session) => token.set(Some(session)),
                     Err(e) => log_error(&format!("no session: {e}")),
                 }
             });
@@ -74,7 +75,7 @@ fn app() -> Html {
         let banner = banner.clone();
         let refresh = refresh.clone();
         let pending = pending.clone();
-        Callback::from(move |request: CommandRequest| {
+        Callback::from(move |action: Action| {
             let Some(token) = (*token).clone() else {
                 banner.set(Some(Banner {
                     ok: false,
@@ -84,14 +85,14 @@ fn app() -> Html {
             };
             banner.set(Some(Banner {
                 ok: true,
-                message: format!("{} {} …", request.command.name(), request.worker),
+                message: format!("{} {} …", action.name(), action.worker()),
             }));
             pending.set(pending.get() + 1);
             let banner = banner.clone();
             let refresh = refresh.clone();
             let pending = pending.clone();
             spawn_local(async move {
-                let result = api::command(&token, &request).await;
+                let result = action.send(&token).await;
                 pending.set(pending.get() - 1);
                 banner.set(Some(match result {
                     Ok(message) => Banner { ok: true, message },
@@ -128,7 +129,7 @@ fn app() -> Html {
     }
 }
 
-fn view(status: &Status, on_command: &Callback<CommandRequest>, busy: bool) -> Html {
+fn view(status: &Status, on_command: &Callback<Action>, busy: bool) -> Html {
     let workers = status.workers().count();
     html! {
         <>

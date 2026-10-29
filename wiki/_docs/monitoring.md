@@ -214,7 +214,7 @@ jig web              # open it in your browser
 jig web --no-open    # just print the URL
 ```
 
-Each worker row is the same as its `jig ps` row, grouped by repo the way `ps -g` groups it. The page adds a few things a terminal can't: PR numbers link to the PR, a **Failed setups** panel shows the end of each failed `on_create` with a link to the whole `setup.log`, and every worker has buttons for `nudge`, `model`, `kill` and `prune` (and `retry-setup` when its setup failed). The buttons run the same daemon commands as the CLI verbs, and the page shows each result or the daemon's reason for refusing. The page refreshes itself every few seconds.
+Each worker row is the same as its `jig ps` row, grouped by repo the way `ps -g` groups it. The page adds a few things a terminal can't: PR numbers link to the PR, a **Failed setups** panel shows the end of each failed `on_create`, with a button that loads the whole `setup.log`, and every worker has buttons for `nudge`, `model`, `kill` and `prune` (and `retry-setup` when its setup failed). The buttons run the same daemon commands as the CLI verbs, and the page shows each result or the daemon's reason for refusing. The page refreshes itself every few seconds.
 
 Any web page open in your browser can send requests to a localhost port, so the web view protects itself:
 

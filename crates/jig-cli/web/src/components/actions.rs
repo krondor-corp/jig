@@ -2,15 +2,17 @@
 
 use yew::prelude::*;
 
-use jig_api::{Command, CommandRequest};
+use jig_api::{KillRequest, ModelRequest, NudgeRequest, PruneRequest, RetrySetupRequest};
+
+use crate::api::Action;
 
 #[derive(Properties, PartialEq)]
 pub struct ActionsProps {
     /// `repo/branch`.
     pub worker: AttrValue,
-    /// Which verbs to offer, by [`Command::name`].
+    /// Which verbs to offer, by [`Action::name`].
     pub verbs: Vec<&'static str>,
-    pub on_command: Callback<CommandRequest>,
+    pub on_command: Callback<Action>,
     /// A command is in flight: hold off.
     pub busy: bool,
 }
@@ -33,11 +35,8 @@ pub fn actions(props: &ActionsProps) -> Html {
             let worker = props.worker.clone();
             let on_command = props.on_command.clone();
             let onclick = Callback::from(move |_| {
-                if let Some(command) = ask(verb, &worker) {
-                    on_command.emit(CommandRequest {
-                        worker: worker.to_string(),
-                        command,
-                    });
+                if let Some(action) = ask(verb, &worker) {
+                    on_command.emit(action);
                 }
             });
             html! {
@@ -47,10 +46,11 @@ pub fn actions(props: &ActionsProps) -> Html {
         .collect()
 }
 
-/// The command `verb` sends, after asking for its argument or a
+/// The request `verb` sends, after asking for its argument or a
 /// confirmation. `None` when the user backs out.
-fn ask(verb: &str, worker: &str) -> Option<Command> {
+fn ask(verb: &str, worker: &str) -> Option<Action> {
     let window = web_sys::window()?;
+    let key = worker.to_string();
     let prompt = |message: String| {
         window
             .prompt_with_message(&message)
@@ -61,19 +61,19 @@ fn ask(verb: &str, worker: &str) -> Option<Command> {
     };
     let confirm = |message: String| window.confirm_with_message(&message).unwrap_or(false);
     match verb {
-        "nudge" => prompt(format!("Nudge {worker} with:")).map(|text| Command::Nudge { text }),
-        "model" => {
-            prompt(format!("Switch {worker} to model:")).map(|model| Command::Model { model })
-        }
+        "nudge" => prompt(format!("Nudge {worker} with:"))
+            .map(|text| Action::Nudge(NudgeRequest { worker: key, text })),
+        "model" => prompt(format!("Switch {worker} to model:"))
+            .map(|model| Action::Model(ModelRequest { worker: key, model })),
         "kill" => confirm(format!(
             "Kill {worker}? Its window closes; the worktree stays."
         ))
-        .then_some(Command::Kill),
+        .then_some(Action::Kill(KillRequest { worker: key })),
         "prune" => confirm(format!(
             "Prune {worker}? Its worktree is removed, uncommitted changes included."
         ))
-        .then_some(Command::Prune),
-        "retry-setup" => Some(Command::RetrySetup),
+        .then_some(Action::Prune(PruneRequest { worker: key })),
+        "retry-setup" => Some(Action::RetrySetup(RetrySetupRequest { worker: key })),
         _ => None,
     }
 }

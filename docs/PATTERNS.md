@@ -53,7 +53,7 @@ impl Op for Create {
 - **Workspace structure**: Separate crates for different concerns
   - `jig-core` — Pure library: git, GitHub, issues, mux, agents, prompt
   - `jig-cli` — CLI binary with config, daemon, worker, hooks, notify
-  - `jig-api` — The web view's wire types (`/api/v0` paths and JSON). Serde only: it compiles to wasm for the web app, so it must never depend on `jig-core`
+  - `jig-api` — The web view's HTTP API in zim-api's pattern: an `ApiRequest` trait, a module per subject and a file per request (each exporting its route's `PATH`), and a generic `Client`. It compiles to wasm for the web app, so it must never depend on `jig-core`. Add an endpoint as a request file here plus a handler file at the same place under `daemon/web/api/`
   - `crates/jig-cli/web` — The web view's Yew app, a separate workspace built by Trunk and embedded in `jig-cli` (see `docs/LOCAL-DEV.md`)
 
 - **jig-core modules**: One submodule directory per domain

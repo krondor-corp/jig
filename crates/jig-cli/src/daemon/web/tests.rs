@@ -3,11 +3,18 @@ use std::sync::Mutex;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{header, Request, StatusCode};
+use serde::Serialize;
 use tower::ServiceExt;
 
+use jig_api::workers::{kill, model, nudge, prune, retry_setup, setup_log};
+use jig_api::{session, status};
+use jig_api::{
+    CommandOutcome, ErrorBody, KillRequest, ModelRequest, NudgeRequest, PruneRequest,
+    RetrySetupRequest, SetupLog,
+};
 use jig_core::git::Branch;
 
-use super::api::read_tail;
+use super::api::workers::setup_log::read_tail;
 use super::guard::constant_time_eq;
 use super::*;
 use crate::context::RepoEntry;
@@ -74,6 +81,18 @@ fn worker(name: &str) -> WorkerState {
     }
 }
 
+fn failed(name: &str, log_path: Option<PathBuf>) -> WorkerState {
+    let mut w = worker(name);
+    w.status = WorkerStatus::Failed;
+    w.setup = SetupState::Failed {
+        phase: SetupPhase::OnCreate,
+        exit: SetupExit::Code(1),
+        tail: vec!["step 2: boom".into()],
+        log_path,
+    };
+    w
+}
+
 fn app(fake: Fake) -> Router {
     router(Site {
         backend: fake,
@@ -97,8 +116,9 @@ fn get(path: &str, host: &str) -> Request<Body> {
         .unwrap()
 }
 
-fn post(body: &str, headers: &[(&str, &str)]) -> Request<Body> {
-    let mut request = Request::post(jig_api::COMMAND)
+/// A `POST` of a raw body to `path`, with `headers`.
+fn post_raw(path: &str, body: &str, headers: &[(&str, &str)]) -> Request<Body> {
+    let mut request = Request::post(path)
         .header(header::HOST, HOST)
         .header(header::CONTENT_TYPE, "application/json");
     for (k, v) in headers {
@@ -107,8 +127,25 @@ fn post(body: &str, headers: &[(&str, &str)]) -> Request<Body> {
     request.body(Body::from(body.to_string())).unwrap()
 }
 
-const NUDGE: &str =
-    r#"{"worker":"jig/feat/web","command":{"verb":"nudge","text":"rebase please"}}"#;
+/// A `jig_api` request as its route sends it, with the token.
+fn post<R: Serialize>(path: &str, request: &R) -> Request<Body> {
+    post_raw(
+        path,
+        &serde_json::to_string(request).unwrap(),
+        &[(jig_api::TOKEN_HEADER, TOKEN)],
+    )
+}
+
+fn nudge_web() -> NudgeRequest {
+    NudgeRequest {
+        worker: "jig/feat/web".into(),
+        text: "rebase please".into(),
+    }
+}
+
+fn nudge_body() -> String {
+    serde_json::to_string(&nudge_web()).unwrap()
+}
 
 #[tokio::test]
 async fn the_status_is_the_ps_view_as_json() {
@@ -117,8 +154,8 @@ async fn the_status_is_the_ps_view_as_json() {
         ..Default::default()
     });
     for host in [HOST, "localhost:7477"] {
-        let (status, body) = send(&app, get(jig_api::STATUS, host)).await;
-        assert_eq!(status, StatusCode::OK, "{host}");
+        let (code, body) = send(&app, get(status::get::PATH, host)).await;
+        assert_eq!(code, StatusCode::OK, "{host}");
         let view: jig_api::Status = serde_json::from_str(&body).unwrap();
         assert_eq!(view.repos.len(), 1);
         assert_eq!(view.repos[0].name, "jig");
@@ -131,8 +168,8 @@ async fn the_status_is_the_ps_view_as_json() {
 
 #[tokio::test]
 async fn the_session_hands_out_the_token() {
-    let (status, body) = send(&app(Fake::default()), get(jig_api::SESSION, HOST)).await;
-    assert_eq!(status, StatusCode::OK);
+    let (code, body) = send(&app(Fake::default()), get(session::get::PATH, HOST)).await;
+    assert_eq!(code, StatusCode::OK);
     let session: jig_api::Session = serde_json::from_str(&body).unwrap();
     assert_eq!(session.token, TOKEN);
 }
@@ -146,16 +183,18 @@ async fn a_foreign_host_is_refused() {
         "localhost",
         "127.0.0.1.evil:7477",
     ] {
-        for path in ["/", jig_api::SESSION, jig_api::STATUS, "/app.js"] {
-            let (status, body) = send(&app, get(path, host)).await;
-            assert_eq!(status, StatusCode::FORBIDDEN, "{host} {path}");
+        for path in ["/", session::get::PATH, status::get::PATH, "/app.js"] {
+            let (code, body) = send(&app, get(path, host)).await;
+            assert_eq!(code, StatusCode::FORBIDDEN, "{host} {path}");
             assert!(!body.contains(TOKEN));
         }
     }
-    let no_host = Request::get(jig_api::SESSION).body(Body::empty()).unwrap();
+    let no_host = Request::get(session::get::PATH)
+        .body(Body::empty())
+        .unwrap();
     assert_eq!(send(&app, no_host).await.0, StatusCode::FORBIDDEN);
 
-    let mut foreign_post = post(NUDGE, &[(jig_api::TOKEN_HEADER, TOKEN)]);
+    let mut foreign_post = post(nudge::PATH, &nudge_web());
     foreign_post
         .headers_mut()
         .insert(header::HOST, "evil.example:7477".parse().unwrap());
@@ -166,10 +205,11 @@ async fn a_foreign_host_is_refused() {
 async fn a_command_runs_with_the_token() {
     let fake = Fake::default();
     let app = app(fake.clone());
-    let (status, body) = send(
+    let (code, body) = send(
         &app,
-        post(
-            NUDGE,
+        post_raw(
+            nudge::PATH,
+            &nudge_body(),
             &[
                 (jig_api::TOKEN_HEADER, TOKEN),
                 ("origin", "http://127.0.0.1:7477"),
@@ -177,8 +217,8 @@ async fn a_command_runs_with_the_token() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let outcome: jig_api::CommandOutcome = serde_json::from_str(&body).unwrap();
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let outcome: CommandOutcome = serde_json::from_str(&body).unwrap();
     assert_eq!(outcome.message, "nudge jig/feat/web: done");
     assert_eq!(
         fake.ran.lock().unwrap().as_slice(),
@@ -200,9 +240,9 @@ async fn a_command_without_the_right_token_is_refused() {
         &[(jig_api::TOKEN_HEADER, "guess")],
         &[(jig_api::TOKEN_HEADER, "")],
     ] {
-        let (status, body) = send(&app, post(NUDGE, headers)).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{headers:?}");
-        assert!(serde_json::from_str::<jig_api::ApiError>(&body).is_ok());
+        let (code, body) = send(&app, post_raw(nudge::PATH, &nudge_body(), headers)).await;
+        assert_eq!(code, StatusCode::FORBIDDEN, "{headers:?}");
+        assert!(serde_json::from_str::<ErrorBody>(&body).is_ok());
     }
     assert!(fake.ran.lock().unwrap().is_empty());
 }
@@ -210,10 +250,11 @@ async fn a_command_without_the_right_token_is_refused() {
 #[tokio::test]
 async fn a_command_from_a_foreign_origin_is_refused() {
     let fake = Fake::default();
-    let (status, _) = send(
+    let (code, _) = send(
         &app(fake.clone()),
-        post(
-            NUDGE,
+        post_raw(
+            nudge::PATH,
+            &nudge_body(),
             &[
                 (jig_api::TOKEN_HEADER, TOKEN),
                 ("origin", "https://evil.example"),
@@ -221,36 +262,55 @@ async fn a_command_from_a_foreign_origin_is_refused() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(code, StatusCode::FORBIDDEN);
     assert!(fake.ran.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn get_never_runs_a_command() {
     let fake = Fake::default();
-    let mut request = get(jig_api::COMMAND, HOST);
-    request
-        .headers_mut()
-        .insert(jig_api::TOKEN_HEADER, TOKEN.parse().unwrap());
-    let (status, _) = send(&app(fake.clone()), request).await;
-    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    let app = app(fake.clone());
+    for path in [
+        kill::PATH,
+        nudge::PATH,
+        prune::PATH,
+        retry_setup::PATH,
+        model::PATH,
+    ] {
+        let mut request = get(path, HOST);
+        request
+            .headers_mut()
+            .insert(jig_api::TOKEN_HEADER, TOKEN.parse().unwrap());
+        assert_eq!(
+            send(&app, request).await.0,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{path}"
+        );
+    }
     assert!(fake.ran.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
-async fn every_verb_is_accepted() {
+async fn every_verb_reaches_the_daemon() {
     let fake = Fake::default();
     let app = app(fake.clone());
-    for command in [
-        r#"{"verb":"kill"}"#,
-        r#"{"verb":"nudge","text":"rebase please"}"#,
-        r#"{"verb":"prune"}"#,
-        r#"{"verb":"retry-setup"}"#,
-        r#"{"verb":"model","model":"opus"}"#,
-    ] {
-        let body = format!(r#"{{"worker":"jig/feat/web","command":{command}}}"#);
-        let (status, _) = send(&app, post(&body, &[(jig_api::TOKEN_HEADER, TOKEN)])).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+    let worker = || "jig/feat/web".to_string();
+    let requests = [
+        post(kill::PATH, &KillRequest { worker: worker() }),
+        post(nudge::PATH, &nudge_web()),
+        post(prune::PATH, &PruneRequest { worker: worker() }),
+        post(retry_setup::PATH, &RetrySetupRequest { worker: worker() }),
+        post(
+            model::PATH,
+            &ModelRequest {
+                worker: worker(),
+                model: "opus".into(),
+            },
+        ),
+    ];
+    for request in requests {
+        let (code, body) = send(&app, request).await;
+        assert_eq!(code, StatusCode::OK, "{body}");
     }
     let verbs: Vec<_> = fake
         .ran
@@ -263,21 +323,27 @@ async fn every_verb_is_accepted() {
 }
 
 #[tokio::test]
-async fn a_malformed_command_is_refused() {
+async fn a_malformed_command_is_refused_with_a_reason() {
     let fake = Fake::default();
     let app = app(fake.clone());
-    for body in [
-        r#"{"worker":"jig/feat/web","command":{"verb":"shutdown"}}"#,
-        r#"{"worker":"not-a-key","command":{"verb":"kill"}}"#,
-        "nope",
+    let token = &[(jig_api::TOKEN_HEADER, TOKEN)][..];
+    for (path, body) in [
+        (kill::PATH, r#"{"worker":"not-a-key"}"#),
+        (kill::PATH, r#"{"worker":"jig/../etc"}"#),
+        (nudge::PATH, r#"{"worker":"jig/feat/web"}"#),
+        (kill::PATH, "nope"),
     ] {
-        let (status, body) = send(&app, post(body, &[(jig_api::TOKEN_HEADER, TOKEN)])).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert!(
-            serde_json::from_str::<jig_api::ApiError>(&body).is_ok(),
-            "{body}"
-        );
+        let (code, body) = send(&app, post_raw(path, body, token)).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{path} {body}");
+        assert!(serde_json::from_str::<ErrorBody>(&body).is_ok(), "{body}");
     }
+    // A verb the API doesn't have is no route at all.
+    let (code, _) = send(
+        &app,
+        post_raw("/api/v0/workers/shutdown", r#"{"worker":"jig/x"}"#, token),
+    )
+    .await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
     assert!(fake.ran.lock().unwrap().is_empty());
 }
 
@@ -287,41 +353,35 @@ async fn a_refused_command_shows_the_daemons_reason() {
         answer: Some("worker 'feat/web' is still running — kill it first".into()),
         ..Default::default()
     });
-    let (status, body) = send(
+    let (code, body) = send(
         &app,
         post(
-            r#"{"worker":"jig/feat/web","command":{"verb":"prune"}}"#,
-            &[(jig_api::TOKEN_HEADER, TOKEN)],
+            prune::PATH,
+            &PruneRequest {
+                worker: "jig/feat/web".into(),
+            },
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    let error: jig_api::ApiError = serde_json::from_str(&body).unwrap();
+    assert_eq!(code, StatusCode::CONFLICT);
+    let error: ErrorBody = serde_json::from_str(&body).unwrap();
     assert!(error.error.contains("still running"), "{}", error.error);
 }
 
 #[tokio::test]
 async fn a_failed_setup_is_in_the_status() {
-    let mut w = worker("feat/broken");
-    w.status = WorkerStatus::Failed;
-    w.setup = SetupState::Failed {
-        phase: SetupPhase::OnCreate,
-        exit: SetupExit::Code(1),
-        tail: vec!["step 2: boom".into()],
-        log_path: Some(PathBuf::from("/tmp/setup.log")),
-    };
     let (_, body) = send(
         &app(Fake {
-            workers: vec![w],
+            workers: vec![failed("feat/broken", Some(PathBuf::from("/tmp/setup.log")))],
             ..Default::default()
         }),
-        get(jig_api::STATUS, HOST),
+        get(status::get::PATH, HOST),
     )
     .await;
     let view: jig_api::Status = serde_json::from_str(&body).unwrap();
-    let failed = view.repos[0].workers[0].failed_setup.as_ref().unwrap();
-    assert_eq!(failed.tail, ["step 2: boom"]);
-    assert!(failed.has_log);
+    let setup = view.repos[0].workers[0].failed_setup.as_ref().unwrap();
+    assert_eq!(setup.tail, ["step 2: boom"]);
+    assert!(setup.has_log);
 }
 
 // Touches the filesystem, but stays here rather than in `tests/`: it needs
@@ -333,58 +393,42 @@ async fn the_setup_log_is_fetched_by_worker_not_by_path() {
     let log = dir.path().join("setup.log");
     std::fs::write(&log, "step 1\nstep 2: boom\n").unwrap();
 
-    let mut w = worker("feat/broken");
-    w.status = WorkerStatus::Failed;
-    w.setup = SetupState::Failed {
-        phase: SetupPhase::OnCreate,
-        exit: SetupExit::Code(1),
-        tail: vec!["step 2: boom".into()],
-        log_path: Some(log),
-    };
     let app = app(Fake {
-        workers: vec![w, worker("feat/fine")],
+        workers: vec![failed("feat/broken", Some(log)), worker("feat/fine")],
         ..Default::default()
     });
-    let log_of = |query: &str| get(&format!("{}{query}", jig_api::SETUP_LOG), HOST);
+    let log_of = |query: &str| get(&format!("{}{query}", setup_log::PATH), HOST);
 
-    let (status, body) = send(&app, log_of("?worker=jig%2Ffeat%2Fbroken")).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, "step 1\nstep 2: boom\n");
+    let (code, body) = send(&app, log_of("?worker=jig%2Ffeat%2Fbroken")).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let log: SetupLog = serde_json::from_str(&body).unwrap();
+    assert_eq!(log.text, "step 1\nstep 2: boom\n");
 
-    assert_eq!(
-        send(&app, log_of("?worker=jig/feat/fine")).await.0,
-        StatusCode::NOT_FOUND
-    );
-    // A path is not a worker key.
-    assert_eq!(
-        send(&app, log_of("?worker=/etc/passwd")).await.0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        send(&app, log_of("?worker=jig/../../etc")).await.0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        send(&app, log_of("?worker=jig/feat/nobody")).await.0,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(send(&app, log_of("")).await.0, StatusCode::BAD_REQUEST);
+    for (query, expected) in [
+        ("?worker=jig/feat/fine", StatusCode::NOT_FOUND),
+        // A path is not a worker key.
+        ("?worker=/etc/passwd", StatusCode::BAD_REQUEST),
+        ("?worker=jig/../../etc", StatusCode::BAD_REQUEST),
+        ("?worker=jig/feat/nobody", StatusCode::NOT_FOUND),
+        ("", StatusCode::BAD_REQUEST),
+    ] {
+        let (code, body) = send(&app, log_of(query)).await;
+        assert_eq!(code, expected, "{query}");
+        assert!(serde_json::from_str::<ErrorBody>(&body).is_ok(), "{body}");
+    }
 }
 
 #[tokio::test]
 async fn an_unknown_api_route_is_an_api_error_not_the_app() {
-    let (status, body) = send(&app(Fake::default()), get("/api/v0/nope", HOST)).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(
-        serde_json::from_str::<jig_api::ApiError>(&body).is_ok(),
-        "{body}"
-    );
+    let (code, body) = send(&app(Fake::default()), get("/api/v0/nope", HOST)).await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+    assert!(serde_json::from_str::<ErrorBody>(&body).is_ok(), "{body}");
 }
 
 #[tokio::test]
 async fn every_response_is_hardened() {
     let app = app(Fake::default());
-    let response = app.oneshot(get(jig_api::STATUS, HOST)).await.unwrap();
+    let response = app.oneshot(get(status::get::PATH, HOST)).await.unwrap();
     let headers = response.headers();
     assert_eq!(headers[header::CACHE_CONTROL], "no-store");
     assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");

@@ -1,209 +1,109 @@
-//! The web view's API: the JSON the daemon serves and the web app reads.
+//! jig's web view API: what the daemon serves and the web app calls.
 //!
-//! The daemon (`jig_cli::daemon::web`) serializes these; the Yew app
-//! (`crates/jig-cli/web`) deserializes them. Both compile this crate, so a
-//! field can't change on one side only. Route paths are the constants
-//! below. Use them on both sides, never a literal.
+//! ## The pattern
 //!
-//! Everything a row shows is decided by the daemon, from the same columns
-//! `jig ps` prints. The app lays rows out and adds links and buttons; it
-//! never re-derives a state, so the page and the terminal can't drift.
+//! zim-api's (krondor-corp/zim). Every endpoint's **request type** implements
+//! [`ApiRequest`]: it owns its method, path and body by building a
+//! [`reqwest::RequestBuilder`]. The [`Client`] is generic over the trait:
+//! `client.call(KillRequest { .. }).await?` sends it and decodes the typed
+//! [`ApiRequest::Response`].
+//!
+//! A module per subject, a file per request. Each request file also exports
+//! its route's `PATH`, and the daemon mounts the matching handler on it, so a
+//! route can't move on one side only.
+//!
+//! Auth is a property of the client, not the request: commands need the
+//! session token, and [`Client::with_token`] attaches it to every request.
+//!
+//! ## Who depends on what
+//!
+//! - **jig-cli** (daemon): its axum routes (`daemon/web/api/`, laid out like
+//!   this crate) deserialize these requests and serialize their responses.
+//! - **crates/jig-cli/web** (wasm app): calls these requests over `fetch`.
+//! - **jig-cli's tests** drive a real daemon with the same [`Client`].
+//!
+//! Everything here compiles for every consumer, wasm32 included: reqwest
+//! target-gates its native stack.
 
-use serde::{Deserialize, Serialize};
+mod error;
+pub mod session;
+pub mod status;
+pub mod workers;
 
-/// `GET` → [`Session`].
-pub const SESSION: &str = "/api/v0/session";
-/// `GET` → [`Status`].
-pub const STATUS: &str = "/api/v0/status";
-/// `POST` [`CommandRequest`] → [`CommandOutcome`], or [`ApiError`].
-pub const COMMAND: &str = "/api/v0/command";
-/// `GET ?worker=<repo/branch>` → the end of that worker's `setup.log`, as
-/// plain text.
-pub const SETUP_LOG: &str = "/api/v0/setup-log";
+use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::{Client as HttpClient, RequestBuilder};
+use serde::de::DeserializeOwned;
 
-/// The header a command carries its [`Session::token`] in.
+pub use error::{ApiError, ErrorBody};
+/// Re-exported so callers (notably the wasm app) can build a base [`Url`]
+/// without a `url` dependency of their own.
+pub use reqwest::Url;
+pub use session::{Session, SessionRequest};
+pub use status::{Cell, FailedSetup, Repo, Status, StatusRequest, Tone, Triage, Worker};
+pub use workers::{
+    CommandOutcome, KillRequest, ModelRequest, NudgeRequest, PruneRequest, RetrySetupRequest,
+    SetupLog, SetupLogRequest,
+};
+
+/// The header a [`Client::with_token`] client carries the session token in.
 pub const TOKEN_HEADER: &str = "x-jig-token";
 
-/// What the app needs before it can send commands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Session {
-    /// Minted when the daemon starts; required on every command.
-    pub token: String,
+/// A typed HTTP request. The implementor owns everything about how the
+/// request is formed (method, path, query, body) by returning a fully built
+/// [`RequestBuilder`]. The [`Client`] only sends it and decodes
+/// [`Self::Response`].
+pub trait ApiRequest {
+    type Response: DeserializeOwned;
+    fn build_request(self, base_url: &Url, client: &HttpClient) -> RequestBuilder;
 }
 
-/// Everything the daemon knows right now: the frame `jig ps` renders.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct Status {
-    /// This machine's fleet name, when it has one.
-    pub machine: Option<String>,
-    pub pid: u32,
-    pub version: String,
-    /// Time until the next poll, already formatted ("12s").
-    pub next_poll: String,
-    /// Column titles for [`Worker::cells`].
-    pub headers: Vec<String>,
-    /// Workers grouped by repo, in the order repos are first seen.
-    pub repos: Vec<Repo>,
-    pub triages: Vec<Triage>,
-    /// Workers the spawn actor is bringing up right now.
-    pub spawning: Vec<String>,
+/// Generic typed client: a base URL and a reqwest client, executing any
+/// [`ApiRequest`].
+#[derive(Debug, Clone)]
+pub struct Client {
+    base: Url,
+    http: HttpClient,
 }
 
-impl Status {
-    pub fn workers(&self) -> impl Iterator<Item = &Worker> {
-        self.repos.iter().flat_map(|r| r.workers.iter())
+impl Client {
+    /// A client for the read-only routes.
+    pub fn new(base: &Url) -> Result<Self, ApiError> {
+        Ok(Self {
+            base: base.clone(),
+            http: HttpClient::builder().build()?,
+        })
     }
-}
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Repo {
-    pub name: String,
-    pub workers: Vec<Worker>,
-}
+    /// A client that sends `token` (from [`SessionRequest`]) in
+    /// [`TOKEN_HEADER`] on every request, which commands require.
+    pub fn with_token(base: &Url, token: &str) -> Result<Self, ApiError> {
+        let mut value = HeaderValue::from_str(token).map_err(|e| ApiError::Other(e.to_string()))?;
+        value.set_sensitive(true);
+        let mut headers = HeaderMap::new();
+        headers.insert(TOKEN_HEADER, value);
+        Ok(Self {
+            base: base.clone(),
+            http: HttpClient::builder().default_headers(headers).build()?,
+        })
+    }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Worker {
-    /// `repo/branch`: what commands and the setup log are addressed by.
-    pub key: String,
-    /// The full branch name. The first cell may be truncated.
-    pub name: String,
-    /// The agent's live state, when the mux reports one.
-    pub agent: Option<String>,
-    /// The PR, when there is one. Always an `http(s)` URL.
-    pub pr_url: Option<String>,
-    /// One per [`Status::headers`], as `jig ps` shows them.
-    pub cells: Vec<Cell>,
-    /// Set when `on_create` failed.
-    pub failed_setup: Option<FailedSetup>,
-}
+    pub fn base(&self) -> &Url {
+        &self.base
+    }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Cell {
-    pub text: String,
-    pub tone: Tone,
-    /// Right-aligned (the numeric columns).
-    pub right: bool,
-}
-
-/// A cell's color: the `jig ps` palette.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Tone {
-    #[default]
-    Plain,
-    Green,
-    Red,
-    Yellow,
-    Blue,
-    Cyan,
-    Magenta,
-    Dim,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FailedSetup {
-    /// The state cell's text, e.g. "on_create failed (exit 1)".
-    pub state: String,
-    /// The last lines of output.
-    pub tail: Vec<String>,
-    /// Whether [`SETUP_LOG`] has the whole log for this worker.
-    pub has_log: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Triage {
-    pub issue: String,
-    pub model: String,
-    /// Already formatted ("3m").
-    pub elapsed: String,
-    pub repo: String,
-}
-
-/// A control verb: the same five the CLI has.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "verb", rename_all = "kebab-case")]
-pub enum Command {
-    Kill,
-    Nudge { text: String },
-    Prune,
-    RetrySetup,
-    Model { model: String },
-}
-
-impl Command {
-    /// The CLI verb, e.g. `retry-setup`.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Command::Kill => "kill",
-            Command::Nudge { .. } => "nudge",
-            Command::Prune => "prune",
-            Command::RetrySetup => "retry-setup",
-            Command::Model { .. } => "model",
+    /// Send `req` and decode the typed reply. A refusal with an
+    /// [`ErrorBody`] is [`ApiError::Refused`] with the daemon's reason; any
+    /// other non-2xx is [`ApiError::HttpStatus`].
+    pub async fn call<R: ApiRequest>(&self, req: R) -> Result<R::Response, ApiError> {
+        let response = req.build_request(&self.base, &self.http).send().await?;
+        let status = response.status();
+        let body = response.bytes().await?;
+        if status.is_success() {
+            return Ok(serde_json::from_slice(&body)?);
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommandRequest {
-    /// `repo/branch`, as in [`Worker::key`].
-    pub worker: String,
-    pub command: Command,
-}
-
-/// A command the daemon ran.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommandOutcome {
-    pub message: String,
-}
-
-/// Why a request was refused: the body of every non-2xx JSON response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ApiError {
-    pub error: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_command_request_reads_from_json() {
-        let req: CommandRequest = serde_json::from_str(
-            r#"{"worker":"jig/feat/x","command":{"verb":"nudge","text":"rebase"}}"#,
-        )
-        .unwrap();
-        assert_eq!(req.worker, "jig/feat/x");
-        assert_eq!(
-            req.command,
-            Command::Nudge {
-                text: "rebase".into()
-            }
-        );
-
-        let req: CommandRequest =
-            serde_json::from_str(r#"{"worker":"jig/x","command":{"verb":"retry-setup"}}"#).unwrap();
-        assert_eq!(req.command.name(), "retry-setup");
-    }
-
-    #[test]
-    fn every_verb_round_trips() {
-        for command in [
-            Command::Kill,
-            Command::Nudge { text: "hi".into() },
-            Command::Prune,
-            Command::RetrySetup,
-            Command::Model {
-                model: "opus".into(),
-            },
-        ] {
-            let json = serde_json::to_string(&command).unwrap();
-            assert!(json.contains(command.name()), "{json}");
-            assert_eq!(serde_json::from_str::<Command>(&json).unwrap(), command);
-        }
-    }
-
-    #[test]
-    fn tones_are_lowercase_names() {
-        assert_eq!(serde_json::to_string(&Tone::Dim).unwrap(), r#""dim""#);
+        Err(match serde_json::from_slice::<ErrorBody>(&body) {
+            Ok(refusal) => ApiError::Refused(status, refusal.error),
+            Err(_) => ApiError::HttpStatus(status, String::from_utf8_lossy(&body).into_owned()),
+        })
     }
 }

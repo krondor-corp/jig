@@ -2,9 +2,10 @@
 
 use yew::prelude::*;
 
-use jig_api::{CommandRequest, Repo, Worker};
+use jig_api::{Repo, Worker};
 
 use super::{tone_class, verbs_for, Actions};
+use crate::api::Action;
 
 /// The `PR` column, which links to the PR when there is one.
 const PR_COLUMN: usize = 4;
@@ -13,7 +14,7 @@ const PR_COLUMN: usize = 4;
 pub struct RepoTableProps {
     pub repo: Repo,
     pub headers: Vec<String>,
-    pub on_command: Callback<CommandRequest>,
+    pub on_command: Callback<Action>,
     pub busy: bool,
 }
 
@@ -37,7 +38,7 @@ pub fn repo_table(props: &RepoTableProps) -> Html {
     }
 }
 
-fn row(w: &Worker, on_command: &Callback<CommandRequest>, busy: bool) -> Html {
+fn row(w: &Worker, on_command: &Callback<Action>, busy: bool) -> Html {
     let cells = w.cells.iter().enumerate().map(|(i, cell)| {
         let class = classes!(tone_class(cell.tone), cell.right.then_some("right"));
         let content = match i {

@@ -1,11 +1,12 @@
 //! The web view, served by a real daemon process: turned on in config,
-//! found through `jig web`, and answering over HTTP with the daemon's own
-//! command executor behind it.
+//! found through `jig web`, and answering `jig_api`'s typed client with the
+//! daemon's own command executor behind it.
 
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::time::Duration;
 
+use jig_api::{ApiError, Client, KillRequest, SessionRequest, StatusRequest, Url};
 use predicates::prelude::*;
 
 use crate::common::Sandbox;
@@ -57,23 +58,15 @@ fn get(port: u16, path: &str) -> String {
     )
 }
 
-fn post_command(port: u16, token: &str, body: &str) -> String {
-    send(
-        port,
-        &format!(
-            "POST {} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}: {token}\r\n\
-             Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            jig_api::COMMAND,
-            jig_api::TOKEN_HEADER,
-            body.len()
-        ),
-    )
-}
-
-/// The JSON body of a raw HTTP response.
-fn json_body<T: serde::de::DeserializeOwned>(response: &str) -> T {
-    let (_, body) = response.split_once("\r\n\r\n").expect("a body");
-    serde_json::from_str(body).unwrap_or_else(|e| panic!("not JSON ({e}): {body}"))
+/// Run `f` against the web view at `url` on a runtime of its own: the tests
+/// are sync, and `jig_api::Client` is async.
+fn with_client<T>(url: &str, f: impl AsyncFnOnce(&Url) -> T) -> T {
+    let base = Url::parse(url).expect("web view URL");
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime")
+        .block_on(f(&base))
 }
 
 #[test]
@@ -115,15 +108,49 @@ fn a_daemon_serves_its_web_view() {
         .success()
         .stderr(predicate::str::contains(url.as_str()));
 
-    let session = get(port, jig_api::SESSION);
-    assert!(session.starts_with("HTTP/1.1 200 OK"), "{session}");
-    let token = json_body::<jig_api::Session>(&session).token;
-
-    let status = get(port, jig_api::STATUS);
-    assert!(status.starts_with("HTTP/1.1 200 OK"), "{status}");
-    let status: jig_api::Status = json_body(&status);
+    // The same typed client the web app uses.
+    let (status, refused, forged) = with_client(&url, async |base| {
+        let session = Client::new(base)
+            .unwrap()
+            .call(SessionRequest)
+            .await
+            .expect("session");
+        let status = Client::new(base)
+            .unwrap()
+            .call(StatusRequest)
+            .await
+            .expect("status");
+        // Reaching the daemon's executor is what a refusal with its reason
+        // proves: the web layer alone knows nothing about tracked repos.
+        let kill = || KillRequest {
+            worker: "no-such-repo/x".into(),
+        };
+        let refused = Client::with_token(base, &session.token)
+            .unwrap()
+            .call(kill())
+            .await;
+        let forged = Client::with_token(base, "not-the-token")
+            .unwrap()
+            .call(kill())
+            .await;
+        (status, refused, forged)
+    });
     assert!(status.pid > 0);
     assert!(!status.headers.is_empty());
+    match refused {
+        Err(ApiError::Refused(code, reason)) => {
+            assert_eq!(code.as_u16(), 409);
+            assert!(
+                reason.contains("no tracked repo named 'no-such-repo'"),
+                "{reason}"
+            );
+        }
+        other => panic!("expected the daemon's refusal, got {other:?}"),
+    }
+    assert!(
+        matches!(forged, Err(ApiError::Refused(code, _)) if code.as_u16() == 403),
+        "{forged:?}"
+    );
 
     // The app itself, or, in a build without `make build-web`, a page that
     // says so. Either way the daemon answers.
@@ -133,24 +160,12 @@ fn a_daemon_serves_its_web_view() {
         "{app}"
     );
 
+    // A client can't forge `Host`, so this one stays raw.
     let rebound = send(
         port,
         "GET / HTTP/1.1\r\nHost: attacker.example\r\nConnection: close\r\n\r\n",
     );
     assert!(rebound.starts_with("HTTP/1.1 403"), "{rebound}");
-
-    // Reaching the daemon's executor is what a refusal with its reason
-    // proves: the web layer alone knows nothing about tracked repos.
-    let kill = r#"{"worker":"no-such-repo/x","command":{"verb":"kill"}}"#;
-    let refused = post_command(port, &token, kill);
-    assert!(refused.starts_with("HTTP/1.1 409"), "{refused}");
-    assert!(
-        refused.contains("no tracked repo named 'no-such-repo'"),
-        "{refused}"
-    );
-
-    let forged = post_command(port, "not-the-token", kill);
-    assert!(forged.starts_with("HTTP/1.1 403"), "{forged}");
 }
 
 #[test]

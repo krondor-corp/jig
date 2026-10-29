@@ -20,8 +20,8 @@ where it landed, never a fixed port.
 
 | Part | Where |
 |------|-------|
-| Wire types (`/api/v0` paths, request and response JSON) | `crates/jig-api` (serde only, so it compiles to wasm) |
-| Server: axum on its own `jig-web` thread and tokio runtime | `crates/jig-cli/src/daemon/web/` |
+| API: an `ApiRequest` per endpoint, its wire types, and a typed `Client` | `crates/jig-api` (a file per request; compiles to wasm) |
+| Server: axum on its own `jig-web` thread and tokio runtime, a handler file per request | `crates/jig-cli/src/daemon/web/` (`api/` mirrors `jig-api`) |
 | App: Yew, built by Trunk into `web/dist/`, embedded in jig | `crates/jig-cli/web/` (its own workspace) |
 
 `make build-web` builds the app; it needs `trunk` and the `wasm32-unknown-unknown`
