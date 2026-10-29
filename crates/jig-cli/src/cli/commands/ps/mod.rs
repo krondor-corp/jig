@@ -7,6 +7,8 @@
 
 pub mod render;
 
+use render::FleetRow;
+
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,10 +19,12 @@ use clap::Args;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{self, disable_raw_mode};
 
-use crate::context::{AppCtx, AppPaths, Ctx};
+use crate::context::{AppCtx, AppPaths, Ctx, Machine};
 use crate::worker::Worker;
 use jig_core::git::Branch;
+use jig_core::net::NetError;
 
+use crate::daemon::fleet::Fleet;
 use crate::daemon::ipc::{self, DaemonStatus};
 use crate::daemon::{TriageEntry, WorkerState};
 
@@ -37,6 +41,10 @@ pub struct Ps {
     /// Operate on all tracked repos
     #[arg(short = 'g', long)]
     global: bool,
+
+    /// Every machine on the fleet network, with a MACHINE column (implies -g)
+    #[arg(long, conflicts_with = "watch")]
+    fleet: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -45,6 +53,12 @@ pub enum PsError {
     Ctx(#[from] crate::context::ContextError),
     #[error(transparent)]
     Daemon(#[from] crate::daemon::DaemonError),
+    #[error(
+        "this machine has no fleet network — set `net` under [fleet] in ~/.config/jig/config.toml"
+    )]
+    NoNet,
+    #[error("can't list the fleet: {0}")]
+    Net(#[from] NetError),
 }
 
 impl Op for Ps {
@@ -53,10 +67,13 @@ impl Op for Ps {
     type Output = NoOutput;
 
     fn build_context(&self, app: AppCtx) -> Result<Ctx, PsError> {
-        Ok(Ctx::scoped(app, self.global)?)
+        Ok(Ctx::scoped(app, self.global || self.fleet)?)
     }
 
     fn run(&self, ctx: Ctx) -> Result<Self::Output, Self::Error> {
+        if self.fleet {
+            return fleet_ps(&ctx);
+        }
         let global = self.global;
         let cfg = ctx;
 
@@ -189,6 +206,49 @@ fn daemon_frame(paths: &AppPaths, scope: Option<&Path>) -> Option<Frame> {
             None
         }
     }
+}
+
+/// `ps --fleet`: this machine's frame, then every peer's, polled straight
+/// over the fleet network (no daemon needed here), in one table with a
+/// `MACHINE` column. A peer that doesn't answer gets a line saying so.
+fn fleet_ps(ctx: &Ctx) -> Result<NoOutput, PsError> {
+    let name = Machine::name(&ctx.config);
+    let net = ctx.config.fleet.net(&name)?.ok_or(PsError::NoNet)?;
+    // Only ever a client here: whether peers may command us is moot.
+    let peers = Fleet::new(net, &name, false).poll()?;
+
+    let local = daemon_frame(&ctx.paths, None).unwrap_or_else(|| Frame::from_disk(ctx, None));
+    let mut rows: Vec<FleetRow> = local
+        .workers
+        .into_iter()
+        .map(|worker| FleetRow {
+            machine: name.clone(),
+            worker,
+        })
+        .collect();
+    let mut silent = Vec::new();
+    for peer in peers {
+        match (peer.frame, peer.error) {
+            (Some(frame), None) => rows.extend(frame.workers.iter().map(|w| FleetRow {
+                machine: peer.node.name.clone(),
+                worker: w.to_display_state(),
+            })),
+            (_, error) => silent.push((peer.node.name, error.unwrap_or_default())),
+        }
+    }
+
+    if rows.is_empty() {
+        eprintln!("No spawned sessions on any machine");
+    } else {
+        eprintln!("{}", render::render_fleet_grouped(&rows, false));
+    }
+    if !silent.is_empty() {
+        eprintln!();
+        for (machine, error) in silent {
+            ui::warning(&format!("{machine} not answering: {error}"));
+        }
+    }
+    Ok(NoOutput)
 }
 
 fn print_frame(frame: &Frame, global: bool) {

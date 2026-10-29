@@ -29,15 +29,32 @@ pub struct Machine {
     /// Its node id on the network: the `machine` a verb request names to
     /// reach it. `None` for the machine serving the page.
     pub node: Option<String>,
-    /// Its frame, when it answered.
+    /// Its frame: this poll's, or, when [`Self::error`] is set, the last
+    /// one it gave. `None` if it has never answered.
     pub status: Option<Status>,
-    /// Why it did not answer, when it did not.
+    /// Why it did not answer this poll, when it did not.
     pub error: Option<String>,
+    /// How long ago [`Self::status`] was had ("3m"), when it is stale.
+    #[serde(default)]
+    pub last_seen: Option<String>,
 }
 
 impl Machine {
     /// Whether this is the machine serving the page.
     pub fn is_local(&self) -> bool {
         self.node.is_none()
+    }
+
+    /// Answering right now, as opposed to stale or never seen.
+    pub fn is_up(&self) -> bool {
+        self.error.is_none() && self.status.is_some()
+    }
+
+    /// Its workers that need a human, as [`crate::Worker::attention`] says.
+    pub fn attention(&self) -> impl Iterator<Item = &crate::Worker> {
+        self.status
+            .iter()
+            .flat_map(|s| s.workers())
+            .filter(|w| w.attention.is_some())
     }
 }

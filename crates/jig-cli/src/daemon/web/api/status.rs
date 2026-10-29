@@ -13,7 +13,7 @@ use jig_api as api;
 use jig_core::git::Branch;
 
 use super::refuse;
-use crate::cli::commands::ps::render::{format_state, worker_columns, WORKER_HEADERS};
+use crate::cli::commands::ps::render::{attention, format_state, worker_columns, WORKER_HEADERS};
 use crate::cli::ui;
 use crate::daemon::ipc::DaemonStatus;
 use crate::daemon::web::{Backend, Site};
@@ -102,6 +102,7 @@ fn worker(w: &WorkerState, now: i64) -> api::Worker {
             })
             .collect(),
         failed_setup,
+        attention: attention(w),
     }
 }
 

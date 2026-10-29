@@ -15,7 +15,8 @@
 //! Nothing here goes through a peer to a third machine: a peer only ever
 //! answers for itself. See `docs/fleet-spec.md`, "Topology".
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use jig_core::net::{Net, NetError, Node, NodeId, Stream};
@@ -35,8 +36,14 @@ const ACCEPT_BACKOFF: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone)]
 pub struct PeerStatus {
     pub node: Node,
-    /// Its frame, or why it could not be had (down, refused, too slow).
-    pub status: Result<DaemonStatus, String>,
+    /// Its frame: this poll's, or when [`Self::error`] is set the last one
+    /// it gave, so a peer that drops out stays on the page, marked stale.
+    /// `None` if it has never answered.
+    pub frame: Option<DaemonStatus>,
+    /// When [`Self::frame`] was had, in unix seconds.
+    pub seen_at: Option<i64>,
+    /// Why it did not answer this poll (down, refused, too slow).
+    pub error: Option<String>,
 }
 
 /// This machine on the fleet network.
@@ -46,6 +53,9 @@ pub struct Fleet {
     name: String,
     /// `[fleet] net_commands`: whether peers may run verbs here.
     commands: bool,
+    /// Each peer's last good frame and when it came: what a peer that
+    /// stops answering is shown as.
+    seen: Mutex<HashMap<NodeId, (DaemonStatus, i64)>>,
 }
 
 impl Fleet {
@@ -54,36 +64,58 @@ impl Fleet {
             net,
             name: name.into(),
             commands,
+            seen: Mutex::default(),
         }
     }
 
     // ── Client ──────────────────────────────────────────────────────
 
     /// Every peer's frame, polled in parallel. A peer that does not answer
-    /// is in the list with its error, never left out: the page says it is
-    /// unreachable rather than pretending it has no workers.
+    /// is in the list with its error (and its last frame, if it ever gave
+    /// one), never left out: the page says it is unreachable rather than
+    /// pretending it has no workers.
     pub fn poll(&self) -> Result<Vec<PeerStatus>, NetError> {
         let peers = self.net.peers()?;
         Ok(std::thread::scope(|scope| {
             let polls: Vec<_> = peers
                 .into_iter()
-                .map(|node| {
-                    scope.spawn(move || {
-                        let status = match self.request(&node.id, &Request::GetStatus, POLL_TIMEOUT)
-                        {
-                            Ok(Response::Status(status)) => Ok(*status),
-                            Ok(other) => Err(format!("expected status, got {other:?}")),
-                            Err(e) => Err(e.to_string()),
-                        };
-                        PeerStatus { node, status }
-                    })
-                })
+                .map(|node| scope.spawn(move || self.poll_one(node)))
                 .collect();
             polls
                 .into_iter()
                 .map(|poll| poll.join().expect("peer poll panicked"))
                 .collect()
         }))
+    }
+
+    fn poll_one(&self, node: Node) -> PeerStatus {
+        let answer = match self.request(&node.id, &Request::GetStatus, POLL_TIMEOUT) {
+            Ok(Response::Status(status)) => Ok(*status),
+            Ok(other) => Err(format!("expected status, got {other:?}")),
+            Err(e) => Err(e.to_string()),
+        };
+        let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        match answer {
+            Ok(frame) => {
+                let now = chrono::Utc::now().timestamp();
+                seen.insert(node.id.clone(), (frame.clone(), now));
+                PeerStatus {
+                    node,
+                    frame: Some(frame),
+                    seen_at: Some(now),
+                    error: None,
+                }
+            }
+            Err(error) => {
+                let last = seen.get(&node.id).cloned();
+                PeerStatus {
+                    node,
+                    frame: last.as_ref().map(|(frame, _)| frame.clone()),
+                    seen_at: last.map(|(_, at)| at),
+                    error: Some(error),
+                }
+            }
+        }
     }
 
     /// Run `cmd` on `worker` on the peer `node`, which owns it. Answers as

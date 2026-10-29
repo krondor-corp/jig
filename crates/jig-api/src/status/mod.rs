@@ -54,6 +54,10 @@ pub struct Worker {
     pub cells: Vec<Cell>,
     /// Set when `on_create` failed.
     pub failed_setup: Option<FailedSetup>,
+    /// Why it needs a human right now, as the daemon judges it ("agent
+    /// blocked: needs approval"). `None` when it doesn't.
+    #[serde(default)]
+    pub attention: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

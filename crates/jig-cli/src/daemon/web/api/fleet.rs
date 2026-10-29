@@ -11,6 +11,7 @@ use axum::Json;
 use jig_api as api;
 
 use super::{refuse, status};
+use crate::cli::ui;
 use crate::daemon::fleet::PeerStatus;
 use crate::daemon::ipc::DaemonStatus;
 use crate::daemon::web::{Backend, Site};
@@ -42,19 +43,22 @@ pub fn view(local: &DaemonStatus, peers: Result<Vec<PeerStatus>, String>, now: i
         node: None,
         status: Some(this),
         error: None,
+        last_seen: None,
     }];
     let peers_error = match peers {
         Ok(peers) => {
             machines.extend(peers.into_iter().map(|peer| {
-                let (status, error) = match peer.status {
-                    Ok(frame) => (Some(status::view(&frame, now)), None),
-                    Err(e) => (None, Some(e)),
-                };
+                let last_seen = peer
+                    .error
+                    .as_ref()
+                    .and(peer.seen_at)
+                    .map(|at| ui::format_duration_short((now - at).max(0) as u64));
                 api::Machine {
                     name: peer.node.name,
                     node: Some(peer.node.id.to_string()),
-                    status,
-                    error,
+                    status: peer.frame.as_ref().map(|frame| status::view(frame, now)),
+                    error: peer.error,
+                    last_seen,
                 }
             }));
             None

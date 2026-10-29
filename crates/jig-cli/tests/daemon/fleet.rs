@@ -192,3 +192,32 @@ fn a_peer_cannot_stop_a_daemon() {
 
     bob.jig().args(["daemon", "status"]).assert().success();
 }
+
+#[test]
+fn ps_fleet_needs_a_fleet_network() {
+    let sandbox = Sandbox::new();
+    sandbox
+        .jig()
+        .args(["ps", "--fleet"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("no fleet network"));
+}
+
+#[test]
+fn ps_fleet_asks_every_peer_and_names_the_silent_ones() {
+    let (alice, bob, _) = mesh(true);
+    let _a = alice.start_daemon();
+    // bob is configured but never started.
+    drop(bob);
+
+    alice
+        .jig()
+        .args(["ps", "--fleet"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "No spawned sessions on any machine",
+        ))
+        .stderr(predicates::str::contains("bob not answering"));
+}

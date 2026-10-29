@@ -198,14 +198,18 @@ fn peer(name: &str, node: &str, workers: &[WorkerState]) -> PeerStatus {
             name: name.into(),
             id: NodeId::new(node),
         },
-        status: Ok(frame(Some(name), workers)),
+        frame: Some(frame(Some(name), workers)),
+        seen_at: Some(chrono::Utc::now().timestamp()),
+        error: None,
     }
 }
 
 #[tokio::test]
 async fn the_fleet_is_this_machine_then_every_peer() {
     let mut down = peer("carol", "127.0.0.13", &[]);
-    down.status = Err("connection refused".into());
+    down.frame = None;
+    down.seen_at = None;
+    down.error = Some("connection refused".into());
     let app = app(Fake {
         workers: vec![worker("feat/web")],
         peers: vec![peer("bob", "127.0.0.12", &[worker("feat/net")]), down],
@@ -240,6 +244,42 @@ async fn the_fleet_is_this_machine_then_every_peer() {
     assert_eq!(carol.name, "carol");
     assert!(carol.status.is_none());
     assert_eq!(carol.error.as_deref(), Some("connection refused"));
+}
+
+#[tokio::test]
+async fn a_peer_that_stops_answering_keeps_its_last_frame_marked_stale() {
+    let mut gone = peer("bob", "127.0.0.12", &[worker("feat/net")]);
+    gone.seen_at = Some(chrono::Utc::now().timestamp() - 120);
+    gone.error = Some("connection refused".into());
+    let app = app(Fake {
+        peers: vec![gone],
+        ..Default::default()
+    });
+    let (_, body) = send(&app, get(fleet::get::PATH, HOST)).await;
+    let fleet: jig_api::Fleet = serde_json::from_str(&body).unwrap();
+    let bob = &fleet.machines[1];
+    assert!(!bob.is_up());
+    assert_eq!(bob.error.as_deref(), Some("connection refused"));
+    assert_eq!(bob.last_seen.as_deref(), Some("2m"));
+    assert_eq!(bob.status.as_ref().unwrap().workers().count(), 1);
+}
+
+#[tokio::test]
+async fn a_worker_that_needs_a_human_says_why() {
+    let app = app(Fake {
+        workers: vec![worker("feat/web"), failed("feat/broken", None)],
+        ..Default::default()
+    });
+    let (_, body) = send(&app, get(fleet::get::PATH, HOST)).await;
+    let fleet: jig_api::Fleet = serde_json::from_str(&body).unwrap();
+    let flagged: Vec<_> = fleet.machines[0]
+        .attention()
+        .map(|w| (w.key.as_str(), w.attention.as_deref()))
+        .collect();
+    assert_eq!(
+        flagged,
+        [("jig/feat/broken", Some("setup failed: on_create (exit 1)"))]
+    );
 }
 
 #[tokio::test]

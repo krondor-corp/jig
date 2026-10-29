@@ -194,6 +194,30 @@ pub fn format_health(info: &PrHealth) -> (String, Color) {
     }
 }
 
+/// Why `w` needs a human right now, or `None`: the one question the web
+/// view's overview asks of every worker on every machine.
+///
+/// NOTE(canonical): the overview and anything else that flags workers ask
+/// this, so "needs attention" means one thing everywhere.
+pub fn attention(w: &WorkerState) -> Option<String> {
+    if let SetupState::Failed { phase, exit, .. } = &w.setup {
+        return Some(format!("setup failed: {phase} ({exit})"));
+    }
+    if w.mux_status == MuxStatus::Running && w.mux_agent_state == Some(AgentState::Blocked) {
+        return Some("agent blocked: needs approval".into());
+    }
+    match w.status {
+        WorkerStatus::WaitingInput => return Some("waiting for input".into()),
+        WorkerStatus::Stalled => return Some("stalled: no activity".into()),
+        WorkerStatus::Failed => return Some("failed".into()),
+        // The work is over; a red check on a merged PR is nobody's job.
+        WorkerStatus::Merged | WorkerStatus::Closed | WorkerStatus::Archived => return None,
+        _ => {}
+    }
+    let problems = w.pr_health.pr_checks.problems();
+    (w.pr_health.has_pr && !problems.is_empty()).then(|| format!("PR: {}", problems.join(", ")))
+}
+
 /// The worker table's column headers, shared by `ps` and the web view.
 pub const WORKER_HEADERS: [&str; 7] = [
     "WORKER", "STATE", "NUDGE", "COMMITS", "PR", "HEALTH", "ISSUE",
@@ -365,6 +389,37 @@ pub fn render_worker_table_grouped(workers: &[WorkerState], borders: bool) -> St
     )
 }
 
+/// A worker on some machine of the fleet: a row of `ps --fleet`.
+pub struct FleetRow {
+    pub machine: String,
+    pub worker: WorkerState,
+}
+
+fn fleet_header() -> Vec<Cell> {
+    std::iter::once("MACHINE")
+        .chain(WORKER_HEADERS)
+        .map(|h| Cell::new(h).add_attribute(Attribute::Bold))
+        .collect()
+}
+
+fn fleet_row(row: &FleetRow) -> Vec<Cell> {
+    std::iter::once(Cell::new(&row.machine).fg(Color::Cyan))
+        .chain(worker_row(&row.worker))
+        .collect()
+}
+
+/// `ps --fleet`: every machine's workers grouped by repo, with a `MACHINE`
+/// column before `ps`'s own.
+pub fn render_fleet_grouped(rows: &[FleetRow], borders: bool) -> String {
+    render_grouped(
+        rows,
+        |r| r.worker.repo_name(),
+        fleet_header,
+        fleet_row,
+        borders,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Triage table
 // ---------------------------------------------------------------------------
@@ -458,6 +513,80 @@ mod tests {
             spawned_at: chrono::Utc::now().timestamp() - ago_secs,
             repo_name: repo.to_string(),
         }
+    }
+
+    fn running(name: &str) -> WorkerState {
+        WorkerState {
+            name: name.into(),
+            status: WorkerStatus::Running,
+            mux_status: MuxStatus::Running,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_healthy_worker_needs_no_one() {
+        assert_eq!(attention(&running("feat")), None);
+    }
+
+    #[test]
+    fn attention_says_why() {
+        let mut setup = running("feat");
+        setup.setup = SetupState::Failed {
+            phase: SetupPhase::OnCreate,
+            exit: SetupExit::Code(1),
+            tail: vec![],
+            log_path: None,
+        };
+        assert_eq!(
+            attention(&setup).unwrap(),
+            "setup failed: on_create (exit 1)"
+        );
+
+        let mut blocked = running("feat");
+        blocked.mux_agent_state = Some(AgentState::Blocked);
+        assert_eq!(
+            attention(&blocked).unwrap(),
+            "agent blocked: needs approval"
+        );
+
+        let mut stalled = running("feat");
+        stalled.status = WorkerStatus::Stalled;
+        assert!(attention(&stalled).unwrap().starts_with("stalled"));
+
+        let mut red = running("feat");
+        red.pr_health.has_pr = true;
+        red.pr_health.pr_checks.ci = Some(true);
+        assert_eq!(attention(&red).unwrap(), "PR: ci");
+    }
+
+    #[test]
+    fn finished_work_needs_no_one_even_with_a_red_check() {
+        let mut merged = running("feat");
+        merged.status = WorkerStatus::Merged;
+        merged.pr_health.has_pr = true;
+        merged.pr_health.pr_checks.ci = Some(true);
+        assert_eq!(attention(&merged), None);
+    }
+
+    #[test]
+    fn the_fleet_table_names_each_row_s_machine() {
+        let _plain = PlainGuard::new(true);
+        let rows = [
+            FleetRow {
+                machine: "alice".into(),
+                worker: running("feat/a"),
+            },
+            FleetRow {
+                machine: "bob".into(),
+                worker: running("feat/b"),
+            },
+        ];
+        let out = render_fleet_grouped(&rows, false);
+        assert!(out.contains("MACHINE"), "{out}");
+        let line = |w: &str| out.lines().find(|l| l.contains(w)).unwrap().to_string();
+        assert!(line("feat/a").contains("alice"), "{out}");
+        assert!(line("feat/b").contains("bob"), "{out}");
     }
 
     #[test]
