@@ -28,19 +28,13 @@ use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
 use api::Action;
-use components::{MachineView, Overview, Sidebar, SiteHeader};
+use components::toasts::{self, Tone};
+use components::{MachineView, Overview, Sidebar, SiteHeader, ToastStack, Toasts};
 use jig_api::Fleet;
 use route::View;
 
 /// How often the view refreshes.
 const REFRESH_MS: u32 = 5_000;
-
-/// The last command's result, shown above the view.
-#[derive(Clone, PartialEq)]
-struct Banner {
-    ok: bool,
-    message: String,
-}
 
 #[function_component(App)]
 fn app() -> Html {
@@ -57,7 +51,7 @@ fn app() -> Html {
             move || drop(listener)
         });
     }
-    let banner = use_state(|| None::<Banner>);
+    let toasts = use_reducer(Toasts::default);
     // Commands in flight. A refresh that lands mid-command would show the
     // old state, so refreshes wait. Shared with the interval, which only
     // sees the value from the first render.
@@ -93,32 +87,34 @@ fn app() -> Html {
 
     let on_command = {
         let token = token.clone();
-        let banner = banner.clone();
+        let toasts = toasts.clone();
         let refresh = refresh.clone();
         let pending = pending.clone();
         Callback::from(move |action: Action| {
             let Some(token) = (*token).clone() else {
-                banner.set(Some(Banner {
-                    ok: false,
-                    message: "no session with the daemon yet — reload the page".into(),
-                }));
+                toasts::show(
+                    &toasts,
+                    Tone::Err,
+                    "no session with the daemon yet — reload the page".into(),
+                );
                 return;
             };
-            banner.set(Some(Banner {
-                ok: true,
-                message: format!("{} {} …", action.name(), action.target()),
-            }));
+            let id = toasts::show(
+                &toasts,
+                Tone::Pending,
+                format!("{} {} …", action.name(), action.target()),
+            );
             pending.set(pending.get() + 1);
-            let banner = banner.clone();
+            let toasts = toasts.clone();
             let refresh = refresh.clone();
             let pending = pending.clone();
             spawn_local(async move {
                 let result = action.send(&token).await;
                 pending.set(pending.get() - 1);
-                banner.set(Some(match result {
-                    Ok(message) => Banner { ok: true, message },
-                    Err(message) => Banner { ok: false, message },
-                }));
+                match result {
+                    Ok(message) => toasts::settle(&toasts, id, true, message),
+                    Err(message) => toasts::settle(&toasts, id, false, message),
+                }
                 refresh.emit(());
             });
         })
@@ -151,10 +147,8 @@ fn app() -> Html {
     html! {
         <>
             <SiteHeader {machine} />
+            <ToastStack toasts={toasts.clone()} />
             <main>
-                if let Some(b) = &*banner {
-                    <div id="result" role="status" class={if b.ok { "ok" } else { "err" }}>{ &b.message }</div>
-                }
                 { body }
             </main>
         </>

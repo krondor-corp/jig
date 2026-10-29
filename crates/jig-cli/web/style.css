@@ -173,7 +173,7 @@ tbody tr:hover td { background: hsl(var(--card)); }
 td.actions { text-align: right; }
 
 /* === Buttons: the site's copy-button look === */
-button[type="button"]:not(.theme-toggle) {
+button[type="button"]:not(.theme-toggle):not(.toast-close) {
   font-family: var(--font-mono);
   font-size: 0.7rem;
   padding: 0.15rem 0.55rem;
@@ -185,7 +185,7 @@ button[type="button"]:not(.theme-toggle) {
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
 }
-button[type="button"]:not(.theme-toggle):hover {
+button[type="button"]:not(.theme-toggle):not(.toast-close):hover {
   color: hsl(var(--brand));
   border-color: hsl(var(--brand));
 }
@@ -201,7 +201,7 @@ button:disabled { opacity: 0.5; cursor: progress; }
   margin-bottom: 0.75rem;
 }
 .failed article p { margin-top: 0.5rem; font-size: 0.8rem; }
-.failed article button[type="button"]:not(.theme-toggle) { margin: 0 0.25rem 0 0; }
+.failed article button[type="button"]:not(.theme-toggle):not(.toast-close) { margin: 0 0.25rem 0 0; }
 
 pre {
   background-color: hsl(var(--muted));
@@ -215,14 +215,22 @@ pre {
   line-height: 1.55;
 }
 
-/* === The command result === */
-#result {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  max-width: 1200px;
-  margin: 0 auto 1rem;
-  padding: 0.5rem 1rem;
+/* === Toasts: command results, in the corner === */
+.toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: min(26rem, calc(100vw - 2rem));
+}
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem 0.625rem 1rem;
   font-family: var(--font-mono);
   font-size: 0.8rem;
   white-space: pre-wrap;
@@ -230,8 +238,27 @@ pre {
   border: 1px solid hsl(var(--border));
   border-left: 3px solid hsl(var(--brand));
   border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+  animation: toast-in 0.15s ease-out;
 }
-#result.err { border-left-color: var(--red); color: var(--red); }
+.toast.pending { border-left-color: hsl(var(--muted-foreground)); color: hsl(var(--muted-foreground)); }
+.toast.ok { border-left-color: var(--green); }
+.toast.err { border-left-color: var(--red); color: var(--red); }
+.toast-message { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.toast-close {
+  border: none;
+  background: none;
+  color: hsl(var(--muted-foreground));
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.toast-close:hover { color: hsl(var(--foreground)); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
 .empty { color: hsl(var(--muted-foreground)); margin-top: 1.5rem; }
 .spawning { font-family: var(--font-mono); font-size: 0.8rem; margin-top: 1rem; }

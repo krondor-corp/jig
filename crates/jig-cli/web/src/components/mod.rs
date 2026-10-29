@@ -9,6 +9,7 @@ mod overview;
 mod repo_table;
 mod sidebar;
 mod site_header;
+pub mod toasts;
 mod triages;
 
 pub use actions::{verbs_for, Actions};
@@ -19,6 +20,7 @@ pub use overview::Overview;
 pub use repo_table::RepoTable;
 pub use sidebar::Sidebar;
 pub use site_header::SiteHeader;
+pub use toasts::{ToastStack, Toasts};
 pub use triages::Triages;
 
 use jig_api::Tone;
