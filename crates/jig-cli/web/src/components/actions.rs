@@ -47,7 +47,8 @@ pub fn actions(props: &ActionsProps) -> Html {
 }
 
 /// The request `verb` sends, after asking for its argument or a
-/// confirmation. `None` when the user backs out.
+/// confirmation. `None` when the user backs out. Addressed to the machine
+/// serving the page; [`Action::on`] readdresses it.
 fn ask(verb: &str, worker: &str) -> Option<Action> {
     let window = web_sys::window()?;
     let key = worker.to_string();
@@ -61,19 +62,38 @@ fn ask(verb: &str, worker: &str) -> Option<Action> {
     };
     let confirm = |message: String| window.confirm_with_message(&message).unwrap_or(false);
     match verb {
-        "nudge" => prompt(format!("Nudge {worker} with:"))
-            .map(|text| Action::Nudge(NudgeRequest { worker: key, text })),
-        "model" => prompt(format!("Switch {worker} to model:"))
-            .map(|model| Action::Model(ModelRequest { worker: key, model })),
+        "nudge" => prompt(format!("Nudge {worker} with:")).map(|text| {
+            Action::Nudge(NudgeRequest {
+                worker: key,
+                machine: None,
+                text,
+            })
+        }),
+        "model" => prompt(format!("Switch {worker} to model:")).map(|model| {
+            Action::Model(ModelRequest {
+                worker: key,
+                machine: None,
+                model,
+            })
+        }),
         "kill" => confirm(format!(
             "Kill {worker}? Its window closes; the worktree stays."
         ))
-        .then_some(Action::Kill(KillRequest { worker: key })),
+        .then_some(Action::Kill(KillRequest {
+            worker: key,
+            machine: None,
+        })),
         "prune" => confirm(format!(
             "Prune {worker}? Its worktree is removed, uncommitted changes included."
         ))
-        .then_some(Action::Prune(PruneRequest { worker: key })),
-        "retry-setup" => Some(Action::RetrySetup(RetrySetupRequest { worker: key })),
+        .then_some(Action::Prune(PruneRequest {
+            worker: key,
+            machine: None,
+        })),
+        "retry-setup" => Some(Action::RetrySetup(RetrySetupRequest {
+            worker: key,
+            machine: None,
+        })),
         _ => None,
     }
 }

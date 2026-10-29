@@ -243,3 +243,15 @@ pre {
 .c-dim { color: hsl(var(--muted-foreground)); }
 
 ::selection { background-color: hsl(var(--muted)); }
+
+/* === One section per fleet machine === */
+.machine + .machine {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid hsl(var(--border));
+}
+.machine-name {
+  font-size: 1.25rem;
+  margin-top: 1rem;
+}
+.machine-name span { font-size: 0.8rem; font-weight: 400; font-family: var(--font-mono); }

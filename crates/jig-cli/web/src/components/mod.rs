@@ -1,14 +1,16 @@
-//! The work view's pieces. Each renders a slice of [`jig_api::Status`];
+//! The work view's pieces. Each renders a slice of [`jig_api::Fleet`];
 //! none of them fetch.
 
 mod actions;
 mod failed_setups;
+mod machine;
 mod repo_table;
 mod site_header;
 mod triages;
 
 pub use actions::{verbs_for, Actions};
 pub use failed_setups::FailedSetups;
+pub use machine::MachineView;
 pub use repo_table::RepoTable;
 pub use site_header::SiteHeader;
 pub use triages::Triages;

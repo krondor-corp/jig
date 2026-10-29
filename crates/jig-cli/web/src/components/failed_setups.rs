@@ -11,6 +11,8 @@ use crate::api::{self, Action};
 #[derive(Properties, PartialEq)]
 pub struct FailedSetupsProps {
     pub status: Status,
+    /// The machine serving the page: only its logs can be fetched.
+    pub local: bool,
     pub on_command: Callback<Action>,
     pub busy: bool,
 }
@@ -33,6 +35,7 @@ pub fn failed_setups(props: &FailedSetupsProps) -> Html {
                     worker={key.clone()}
                     key={key}
                     {setup}
+                    local={props.local}
                     on_command={props.on_command.clone()}
                     busy={props.busy}
                 />
@@ -45,6 +48,7 @@ pub fn failed_setups(props: &FailedSetupsProps) -> Html {
 struct FailedWorkerProps {
     worker: AttrValue,
     setup: FailedSetup,
+    local: bool,
     on_command: Callback<Action>,
     busy: bool,
 }
@@ -84,7 +88,9 @@ fn failed_worker(props: &FailedWorkerProps) -> Html {
                 }
             }
             <p>
-                if setup.has_log && log.is_none() {
+                // A peer's log stays on the peer for now: the fleet
+                // protocol has no request for it.
+                if setup.has_log && props.local && log.is_none() {
                     <button type="button" onclick={show_log}>{ "full setup.log" }</button>
                 }
                 <Actions

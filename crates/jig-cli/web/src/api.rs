@@ -6,8 +6,8 @@
 //! requires.
 
 use jig_api::{
-    ApiRequest, Client, KillRequest, ModelRequest, NudgeRequest, PruneRequest, RetrySetupRequest,
-    SessionRequest, SetupLogRequest, Status, StatusRequest, Url,
+    ApiRequest, Client, Fleet, FleetRequest, KillRequest, ModelRequest, NudgeRequest, PruneRequest,
+    RetrySetupRequest, SessionRequest, SetupLogRequest, Url,
 };
 
 /// This page's origin: the daemon that served it.
@@ -39,8 +39,9 @@ pub async fn session() -> Result<String, String> {
     Ok(call(reader()?, SessionRequest).await?.token)
 }
 
-pub async fn status() -> Result<Status, String> {
-    call(reader()?, StatusRequest).await
+/// Every machine's frame, this one first.
+pub async fn fleet() -> Result<Fleet, String> {
+    call(reader()?, FleetRequest).await
 }
 
 /// The end of a worker's `setup.log`.
@@ -81,6 +82,18 @@ impl Action {
             Action::Prune(r) => &r.worker,
             Action::RetrySetup(r) => &r.worker,
             Action::Model(r) => &r.worker,
+        }
+    }
+
+    /// The same verb, for the machine whose node id is `machine` (`None`:
+    /// the machine serving the page).
+    pub fn on(self, machine: Option<String>) -> Self {
+        match self {
+            Action::Kill(r) => Action::Kill(KillRequest { machine, ..r }),
+            Action::Nudge(r) => Action::Nudge(NudgeRequest { machine, ..r }),
+            Action::Prune(r) => Action::Prune(PruneRequest { machine, ..r }),
+            Action::RetrySetup(r) => Action::RetrySetup(RetrySetupRequest { machine, ..r }),
+            Action::Model(r) => Action::Model(ModelRequest { machine, ..r }),
         }
     }
 

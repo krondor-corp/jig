@@ -2,7 +2,9 @@
 //!
 //! The daemon owns the data: every row, cell and color in
 //! [`jig_api::Status`] is what `jig ps` would print. This app lays it out,
-//! adds links and command buttons, and polls for a fresh frame.
+//! adds links and command buttons, and polls for a fresh frame. It polls the
+//! fleet: the daemon that served the page answers for itself and every peer,
+//! so any machine's page shows (and drives) all of them.
 //!
 //! Structure: `api` (typed calls to `/api/v0`) · `components` (the view's
 //! pieces). `main.rs` loads the session, polls, and runs commands.
@@ -18,8 +20,8 @@ use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
 use api::Action;
-use components::{FailedSetups, RepoTable, SiteHeader, Triages};
-use jig_api::Status;
+use components::{MachineView, SiteHeader};
+use jig_api::Fleet;
 
 /// How often the view refreshes.
 const REFRESH_MS: u32 = 5_000;
@@ -34,7 +36,7 @@ struct Banner {
 #[function_component(App)]
 fn app() -> Html {
     // `None` until the first frame arrives.
-    let status = use_state(|| None::<Result<Status, String>>);
+    let fleet = use_state(|| None::<Result<Fleet, String>>);
     let token = use_state(|| None::<String>);
     let banner = use_state(|| None::<Banner>);
     // Commands in flight. A refresh that lands mid-command would show the
@@ -43,14 +45,14 @@ fn app() -> Html {
     let pending: Rc<Cell<u32>> = use_memo((), |_| Cell::new(0));
 
     let refresh = {
-        let status = status.clone();
+        let fleet = fleet.clone();
         let pending = pending.clone();
         Callback::from(move |_: ()| {
             if pending.get() > 0 {
                 return;
             }
-            let status = status.clone();
-            spawn_local(async move { status.set(Some(api::status().await)) });
+            let fleet = fleet.clone();
+            spawn_local(async move { fleet.set(Some(api::fleet().await)) });
         })
     };
 
@@ -104,16 +106,31 @@ fn app() -> Html {
     };
     let busy = pending.get() > 0;
 
-    let body = match &*status {
+    let body = match &*fleet {
         None => html! { <p class="empty">{ "Loading…" }</p> },
         Some(Err(e)) => html! {
             <p class="c-red">{ format!("Can't reach the daemon: {e}. Retrying…") }</p>
         },
-        Some(Ok(status)) => view(status, &on_command, busy),
+        Some(Ok(fleet)) => html! {
+            <>
+                if let Some(e) = &fleet.peers_error {
+                    <p class="c-yellow">{ format!("Can't list the other machines: {e}") }</p>
+                }
+                { for fleet.machines.iter().map(|machine| html! {
+                    <MachineView
+                        key={machine.node.clone().unwrap_or_default()}
+                        machine={machine.clone()}
+                        on_command={on_command.clone()}
+                        {busy}
+                    />
+                }) }
+            </>
+        },
     };
 
-    let machine = match &*status {
-        Some(Ok(s)) => s.machine.clone().map(AttrValue::from),
+    // The machine serving the page is always first.
+    let machine = match &*fleet {
+        Some(Ok(f)) => f.machines.first().map(|m| AttrValue::from(m.name.clone())),
         _ => None,
     };
     html! {
@@ -125,38 +142,6 @@ fn app() -> Html {
                 }
                 { body }
             </main>
-        </>
-    }
-}
-
-fn view(status: &Status, on_command: &Callback<Action>, busy: bool) -> Html {
-    let workers = status.workers().count();
-    html! {
-        <>
-            <p class="summary">{ format!(
-                "{workers} workers · {} triages · next poll in {} · daemon pid {} · v{}",
-                status.triages.len(), status.next_poll, status.pid, status.version,
-            ) }</p>
-            <FailedSetups status={status.clone()} on_command={on_command.clone()} {busy} />
-            if workers == 0 && status.triages.is_empty() {
-                <p class="empty">{ "No spawned sessions" }</p>
-            }
-            { for status.repos.iter().map(|repo| html! {
-                <RepoTable
-                    key={repo.name.clone()}
-                    repo={repo.clone()}
-                    headers={status.headers.clone()}
-                    on_command={on_command.clone()}
-                    {busy}
-                />
-            }) }
-            <Triages triages={status.triages.clone()} />
-            if !status.spawning.is_empty() {
-                <p class="spawning">
-                    <span class="c-dim">{ "spawning: " }</span>
-                    <span class="c-yellow">{ status.spawning.join(", ") }</span>
-                </p>
-            }
         </>
     }
 }
