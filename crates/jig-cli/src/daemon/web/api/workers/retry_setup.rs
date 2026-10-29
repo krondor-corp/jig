@@ -18,5 +18,11 @@ pub async fn handler<B: Backend>(
     _: Authorized,
     ApiJson(request): ApiJson<RetrySetupRequest>,
 ) -> Response {
-    run(&site, &request.worker, Command::RetrySetup).await
+    run(
+        &site,
+        request.machine.as_deref(),
+        &request.worker,
+        Command::RetrySetup,
+    )
+    .await
 }

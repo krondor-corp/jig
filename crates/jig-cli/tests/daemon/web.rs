@@ -19,7 +19,7 @@ fn with_web(port: u16) -> Sandbox {
 }
 
 /// The URL `jig web --no-open` prints.
-fn web_url(sandbox: &Sandbox) -> String {
+pub fn web_url(sandbox: &Sandbox) -> String {
     let out = sandbox
         .jig()
         .args(["web", "--no-open"])
@@ -60,7 +60,7 @@ fn get(port: u16, path: &str) -> String {
 
 /// Run `f` against the web view at `url` on a runtime of its own: the tests
 /// are sync, and `jig_api::Client` is async.
-fn with_client<T>(url: &str, f: impl AsyncFnOnce(&Url) -> T) -> T {
+pub fn with_client<T>(url: &str, f: impl AsyncFnOnce(&Url) -> T) -> T {
     let base = Url::parse(url).expect("web view URL");
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -124,6 +124,7 @@ fn a_daemon_serves_its_web_view() {
         // proves: the web layer alone knows nothing about tracked repos.
         let kill = || KillRequest {
             worker: "no-such-repo/x".into(),
+            machine: None,
         };
         let refused = Client::with_token(base, &session.token)
             .unwrap()

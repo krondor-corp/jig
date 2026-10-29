@@ -16,7 +16,7 @@
 //!   thread per request, so a slow one never holds up the listener either.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -57,7 +57,7 @@ const SETUP_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// How long the server waits for a client that connected and went quiet, so
 /// one wedged client cannot stall the accept loop.
-const SERVER_TIMEOUT: Duration = Duration::from_secs(2);
+pub(super) const SERVER_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The longest the listener thread waits before re-checking `quit`.
 ///
@@ -108,7 +108,7 @@ impl Request {
     }
 
     /// How long a client waits for the answer.
-    fn client_timeout(&self) -> Duration {
+    pub(super) fn client_timeout(&self) -> Duration {
         match self {
             Self::Ping | Self::GetStatus | Self::Shutdown => CLIENT_TIMEOUT,
             Self::RetrySetup { .. } => SETUP_TIMEOUT,
@@ -422,7 +422,8 @@ pub fn is_running(paths: &AppPaths) -> bool {
 
 // ── Framing ─────────────────────────────────────────────────────────
 
-fn write_message<T: Serialize>(mut stream: &UnixStream, msg: &T) -> Result<(), IpcError> {
+/// Write one message. Any stream: the unix socket, or a `Net` connection.
+pub(super) fn write_message<T: Serialize>(mut stream: impl Write, msg: &T) -> Result<(), IpcError> {
     let mut line = serde_json::to_vec(msg).map_err(|e| IpcError::Protocol(e.to_string()))?;
     line.push(b'\n');
     stream.write_all(&line)?;
@@ -430,7 +431,7 @@ fn write_message<T: Serialize>(mut stream: &UnixStream, msg: &T) -> Result<(), I
     Ok(())
 }
 
-fn read_message<T: for<'de> Deserialize<'de>>(stream: &UnixStream) -> Result<T, IpcError> {
+pub(super) fn read_message<T: for<'de> Deserialize<'de>>(stream: impl Read) -> Result<T, IpcError> {
     let mut line = String::new();
     let read = BufReader::new(stream).read_line(&mut line)?;
     if read == 0 {
@@ -594,7 +595,7 @@ fn handle_connection(
 
 /// A panic while answering must not take the listener down with it — the
 /// daemon would go mute but keep ticking.
-fn guarded(answer: impl FnOnce() -> Response) -> Response {
+pub(super) fn guarded(answer: impl FnOnce() -> Response) -> Response {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(answer))
         .unwrap_or_else(|_| Response::Error("daemon panicked while answering".into()))
 }

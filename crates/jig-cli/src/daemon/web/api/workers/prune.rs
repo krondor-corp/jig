@@ -18,5 +18,11 @@ pub async fn handler<B: Backend>(
     _: Authorized,
     ApiJson(request): ApiJson<PruneRequest>,
 ) -> Response {
-    run(&site, &request.worker, Command::Prune).await
+    run(
+        &site,
+        request.machine.as_deref(),
+        &request.worker,
+        Command::Prune,
+    )
+    .await
 }

@@ -6,6 +6,7 @@ mod common;
 mod actors;
 mod commands;
 mod events;
+mod fleet;
 mod ipc;
 mod pidfile;
 mod web;

@@ -26,6 +26,7 @@
 //! target-gates its native stack.
 
 mod error;
+pub mod fleet;
 pub mod session;
 pub mod status;
 pub mod workers;
@@ -35,6 +36,7 @@ use reqwest::{Client as HttpClient, RequestBuilder};
 use serde::de::DeserializeOwned;
 
 pub use error::{ApiError, ErrorBody};
+pub use fleet::{Fleet, FleetRequest, Machine};
 /// Re-exported so callers (notably the wasm app) can build a base [`Url`]
 /// without a `url` dependency of their own.
 pub use reqwest::Url;

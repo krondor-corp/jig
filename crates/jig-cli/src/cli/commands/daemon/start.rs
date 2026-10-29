@@ -108,6 +108,10 @@ impl Op for Start {
         }
 
         let listener = server.spawn(daemon.shared(), Arc::clone(&quit));
+        // Never joined: it blocks in `accept` and ends with the process.
+        if let Some(fleet) = daemon.shared().fleet() {
+            fleet.spawn(daemon.shared());
+        }
         let shared = daemon.shared();
         let web_view = web.and_then(|web| {
             Supervisor::start("jig-web", move |services| {

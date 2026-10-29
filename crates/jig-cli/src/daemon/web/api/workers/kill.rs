@@ -18,5 +18,11 @@ pub async fn handler<B: Backend>(
     _: Authorized,
     ApiJson(request): ApiJson<KillRequest>,
 ) -> Response {
-    run(&site, &request.worker, Command::Kill).await
+    run(
+        &site,
+        request.machine.as_deref(),
+        &request.worker,
+        Command::Kill,
+    )
+    .await
 }

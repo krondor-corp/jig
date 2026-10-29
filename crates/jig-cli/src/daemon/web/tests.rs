@@ -7,17 +7,20 @@ use serde::Serialize;
 use tower::ServiceExt;
 
 use jig_api::workers::{kill, model, nudge, prune, retry_setup, setup_log};
-use jig_api::{session, status};
+use jig_api::{fleet, session, status};
 use jig_api::{
     CommandOutcome, ErrorBody, KillRequest, ModelRequest, NudgeRequest, PruneRequest,
     RetrySetupRequest, SetupLog,
 };
 use jig_core::git::Branch;
+use jig_core::net::{Node, NodeId};
+use uuid::Uuid;
 
 use super::api::workers::setup_log::read_tail;
 use super::guard::constant_time_eq;
 use super::*;
-use crate::context::RepoEntry;
+use crate::context::{Machine, RepoEntry};
+use crate::daemon::fleet::PeerStatus;
 use crate::daemon::ipc::{DaemonInfo, WorkerSnapshot};
 use crate::worker::events::{SetupExit, SetupPhase, SetupState, WorkerState};
 use crate::worker::{MuxStatus, WorkerStatus};
@@ -31,37 +34,58 @@ const TOKEN: &str = "s3cret";
 struct Fake {
     workers: Vec<WorkerState>,
     ran: Arc<Mutex<Vec<(WorkerKey, Command)>>>,
+    /// The machine each command in `ran` was sent to.
+    routed: Arc<Mutex<Vec<Option<NodeId>>>>,
     /// What every command answers.
     answer: Option<String>,
+    peers: Vec<PeerStatus>,
+    /// Set: the peers can't be listed.
+    peers_error: Option<String>,
 }
 
 impl Backend for Fake {
     fn status(&self) -> DaemonStatus {
-        DaemonStatus {
-            info: DaemonInfo {
-                pid: 1,
-                version: "0.0.0".into(),
-                started_at: 0,
-                ticked_at: 0,
-                tick_interval: 2,
-                log: None,
-                actors: vec![],
-                machine: None,
-                web: None,
-            },
-            workers: self.workers.iter().map(WorkerSnapshot::from).collect(),
-            triages: vec![],
-            spawning: vec![],
-            poll_remaining: 0,
+        frame(None, &self.workers)
+    }
+
+    fn peers(&self) -> Result<Vec<PeerStatus>, String> {
+        match &self.peers_error {
+            Some(e) => Err(e.clone()),
+            None => Ok(self.peers.clone()),
         }
     }
 
-    fn run_command(&self, worker: WorkerKey, cmd: Command) -> Response {
+    fn run_command(&self, machine: Option<NodeId>, worker: WorkerKey, cmd: Command) -> Response {
         self.ran.lock().unwrap().push((worker, cmd));
+        self.routed.lock().unwrap().push(machine);
         match &self.answer {
             None => Response::Ok,
             Some(reason) => Response::Error(reason.clone()),
         }
+    }
+}
+
+/// A daemon's frame: `machine` names it, `workers` are its workers.
+fn frame(machine: Option<&str>, workers: &[WorkerState]) -> DaemonStatus {
+    DaemonStatus {
+        info: DaemonInfo {
+            pid: 1,
+            version: "0.0.0".into(),
+            started_at: 0,
+            ticked_at: 0,
+            tick_interval: 2,
+            log: None,
+            actors: vec![],
+            machine: machine.map(|name| Machine {
+                name: name.into(),
+                node_id: Uuid::nil(),
+            }),
+            web: None,
+        },
+        workers: workers.iter().map(WorkerSnapshot::from).collect(),
+        triages: vec![],
+        spawning: vec![],
+        poll_remaining: 0,
     }
 }
 
@@ -139,6 +163,7 @@ fn post<R: Serialize>(path: &str, request: &R) -> Request<Body> {
 fn nudge_web() -> NudgeRequest {
     NudgeRequest {
         worker: "jig/feat/web".into(),
+        machine: None,
         text: "rebase please".into(),
     }
 }
@@ -164,6 +189,93 @@ async fn the_status_is_the_ps_view_as_json() {
         assert_eq!(w.cells.len(), view.headers.len());
         assert!(w.failed_setup.is_none());
     }
+}
+
+/// A peer named `name`, at node `node`, answering with `workers`.
+fn peer(name: &str, node: &str, workers: &[WorkerState]) -> PeerStatus {
+    PeerStatus {
+        node: Node {
+            name: name.into(),
+            id: NodeId::new(node),
+        },
+        status: Ok(frame(Some(name), workers)),
+    }
+}
+
+#[tokio::test]
+async fn the_fleet_is_this_machine_then_every_peer() {
+    let mut down = peer("carol", "127.0.0.13", &[]);
+    down.status = Err("connection refused".into());
+    let app = app(Fake {
+        workers: vec![worker("feat/web")],
+        peers: vec![peer("bob", "127.0.0.12", &[worker("feat/net")]), down],
+        ..Default::default()
+    });
+    let (code, body) = send(&app, get(fleet::get::PATH, HOST)).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let fleet: jig_api::Fleet = serde_json::from_str(&body).unwrap();
+    assert_eq!(fleet.peers_error, None);
+
+    let [here, bob, carol] = fleet.machines.as_slice() else {
+        panic!("expected three machines: {fleet:?}");
+    };
+    assert!(here.is_local());
+    let keys = |m: &jig_api::Machine| -> Vec<String> {
+        m.status
+            .iter()
+            .flat_map(|s| s.workers())
+            .map(|w| w.key.clone())
+            .collect()
+    };
+    assert_eq!(keys(here), ["jig/feat/web"]);
+
+    assert_eq!(
+        (bob.name.as_str(), bob.node.as_deref()),
+        ("bob", Some("127.0.0.12"))
+    );
+    assert_eq!(keys(bob), ["jig/feat/net"]);
+    assert_eq!(bob.error, None);
+
+    // Shown with its reason, not left out.
+    assert_eq!(carol.name, "carol");
+    assert!(carol.status.is_none());
+    assert_eq!(carol.error.as_deref(), Some("connection refused"));
+}
+
+#[tokio::test]
+async fn the_fleet_still_shows_this_machine_when_peers_cannot_be_listed() {
+    let app = app(Fake {
+        workers: vec![worker("feat/web")],
+        peers_error: Some("tailscale is not running".into()),
+        ..Default::default()
+    });
+    let (code, body) = send(&app, get(fleet::get::PATH, HOST)).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let fleet: jig_api::Fleet = serde_json::from_str(&body).unwrap();
+    assert_eq!(fleet.machines.len(), 1);
+    assert!(fleet.machines[0].is_local());
+    assert_eq!(
+        fleet.peers_error.as_deref(),
+        Some("tailscale is not running")
+    );
+}
+
+#[tokio::test]
+async fn a_command_goes_to_the_machine_it_names() {
+    let fake = Fake::default();
+    let app = app(fake.clone());
+    let kill = |machine: Option<&str>| KillRequest {
+        worker: "jig/feat/net".into(),
+        machine: machine.map(Into::into),
+    };
+    for request in [kill(Some("127.0.0.12")), kill(None)] {
+        let (code, body) = send(&app, post(kill::PATH, &request)).await;
+        assert_eq!(code, StatusCode::OK, "{body}");
+    }
+    assert_eq!(
+        fake.routed.lock().unwrap().as_slice(),
+        &[Some(NodeId::new("127.0.0.12")), None]
+    );
 }
 
 #[tokio::test]
@@ -296,14 +408,33 @@ async fn every_verb_reaches_the_daemon() {
     let app = app(fake.clone());
     let worker = || "jig/feat/web".to_string();
     let requests = [
-        post(kill::PATH, &KillRequest { worker: worker() }),
+        post(
+            kill::PATH,
+            &KillRequest {
+                worker: worker(),
+                machine: None,
+            },
+        ),
         post(nudge::PATH, &nudge_web()),
-        post(prune::PATH, &PruneRequest { worker: worker() }),
-        post(retry_setup::PATH, &RetrySetupRequest { worker: worker() }),
+        post(
+            prune::PATH,
+            &PruneRequest {
+                worker: worker(),
+                machine: None,
+            },
+        ),
+        post(
+            retry_setup::PATH,
+            &RetrySetupRequest {
+                worker: worker(),
+                machine: None,
+            },
+        ),
         post(
             model::PATH,
             &ModelRequest {
                 worker: worker(),
+                machine: None,
                 model: "opus".into(),
             },
         ),
@@ -359,6 +490,7 @@ async fn a_refused_command_shows_the_daemons_reason() {
             prune::PATH,
             &PruneRequest {
                 worker: "jig/feat/web".into(),
+                machine: None,
             },
         ),
     )

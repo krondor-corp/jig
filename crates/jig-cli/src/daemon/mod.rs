@@ -9,6 +9,7 @@ pub mod actors;
 pub mod checks;
 pub mod commands;
 pub mod events;
+pub mod fleet;
 pub mod ipc;
 pub mod pidfile;
 pub mod web;
@@ -23,6 +24,7 @@ use crate::context::{
     AppConfig, AppCtx, AppPaths, ContextError, Ctx, Machine, RepoEntry, RepoRegistry,
 };
 use jig_core::mux;
+use jig_core::net::{NetError, NodeId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
@@ -53,6 +55,7 @@ use actors::sync::SyncActor;
 use actors::triage::TriageActor;
 use actors::{ActivityProbe, ActorHandle};
 use commands::{Command, InFlight, WorkerKey};
+use fleet::{Fleet, PeerStatus};
 use ipc::Response;
 
 pub use crate::worker::events::WorkerState;
@@ -83,6 +86,8 @@ pub struct DaemonShared {
     machine: Machine,
     /// The web view's address, once it is listening.
     web: Option<String>,
+    /// This machine on the fleet network, when `[fleet] net` is set.
+    fleet: Option<Arc<Fleet>>,
     /// What control verbs run against.
     app: Arc<AppCtx>,
     in_flight: InFlight,
@@ -93,6 +98,30 @@ impl DaemonShared {
     /// command's own thread, never the listener's or the tick loop's.
     pub fn run_command(&self, worker: WorkerKey, cmd: Command) -> Response {
         commands::serve(&self.app, &self.in_flight, worker, cmd)
+    }
+
+    /// Run a control verb on the peer `node`, which owns `worker`.
+    pub fn run_command_on(&self, node: &NodeId, worker: WorkerKey, cmd: Command) -> Response {
+        match &self.fleet {
+            Some(fleet) => fleet.command(node, worker, cmd),
+            None => Response::Error(format!(
+                "{} has no fleet network to reach {node} over (set [fleet] net)",
+                self.machine.name
+            )),
+        }
+    }
+
+    /// Every peer's frame. None without a fleet network.
+    pub fn peers(&self) -> Result<Vec<PeerStatus>, NetError> {
+        match &self.fleet {
+            Some(fleet) => fleet.poll(),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// This machine on the fleet network, for `daemon start` to serve.
+    pub fn fleet(&self) -> Option<Arc<Fleet>> {
+        self.fleet.clone()
     }
 
     /// Identity and liveness — the answer to `Request::Ping`.
@@ -119,6 +148,20 @@ impl DaemonShared {
             triages: self.triage.active_entries(),
             spawning: self.spawn.spawning_workers(),
             poll_remaining: (self.poll_deadline.load(Ordering::Relaxed) - now).max(0) as u64,
+        }
+    }
+}
+
+/// This machine on the fleet network, when `[fleet] net` is set. A network
+/// that is misconfigured is worth a warning, not a daemon that won't start:
+/// `jig health` says what is wrong with it.
+fn fleet(config: &AppConfig, machine: &Machine) -> Option<Arc<Fleet>> {
+    let fleet = &config.fleet;
+    match fleet.net(&machine.name) {
+        Ok(net) => net.map(|net| Arc::new(Fleet::new(net, &machine.name, fleet.net_commands))),
+        Err(e) => {
+            tracing::warn!("fleet network off: {}", e);
+            None
         }
     }
 }
@@ -157,6 +200,7 @@ impl Daemon {
 
         let last_poll = Instant::now() - Duration::from_secs(app.config.poll_interval + 1);
         let started_at = chrono::Utc::now().timestamp();
+        let fleet = fleet(&app.config, &machine);
 
         let sync = ActorHandle::<SyncActor>::new();
         let monitor = ActorHandle::<MonitorActor>::new();
@@ -182,6 +226,7 @@ impl Daemon {
             log: crate::context::log::session_log().map(|l| l.path().to_path_buf()),
             machine,
             web: None,
+            fleet,
             app: Arc::clone(&app),
             in_flight: InFlight::default(),
         };

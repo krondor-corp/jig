@@ -5,6 +5,7 @@
 //! web app sends) and is mounted on that request's `PATH`, so a route can't
 //! move on one side only.
 
+pub mod fleet;
 pub mod session;
 pub mod status;
 pub mod workers;
@@ -23,10 +24,11 @@ use jig_api::ErrorBody;
 use super::{Backend, Site};
 
 pub fn router<B: Backend>() -> Router<Arc<Site<B>>> {
-    use jig_api::{session as s, status as st, workers as w};
+    use jig_api::{fleet as f, session as s, status as st, workers as w};
     Router::new()
         .route(s::get::PATH, get(session::handler::<B>))
         .route(st::get::PATH, get(status::handler::<B>))
+        .route(f::get::PATH, get(fleet::handler::<B>))
         .route(w::kill::PATH, post(workers::kill::handler::<B>))
         .route(w::nudge::PATH, post(workers::nudge::handler::<B>))
         .route(w::prune::PATH, post(workers::prune::handler::<B>))

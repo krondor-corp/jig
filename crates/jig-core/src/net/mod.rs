@@ -19,7 +19,7 @@ pub use tailscale::TailscaleNet;
 
 use std::fmt;
 use std::io::{Read, Write};
-use std::net::IpAddr;
+use std::net::{IpAddr, TcpStream};
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -34,9 +34,18 @@ pub const DEFAULT_PORT: u16 = 7473;
 pub const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A byte stream to or from a peer.
-pub trait Stream: Read + Write + Send {}
+pub trait Stream: Read + Write + Send {
+    /// Bound every read and write from here on: a peer that stops answering
+    /// must not hold the caller forever. `None` waits indefinitely.
+    fn set_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()>;
+}
 
-impl<T: Read + Write + Send> Stream for T {}
+impl Stream for TcpStream {
+    fn set_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        self.set_read_timeout(timeout)?;
+        self.set_write_timeout(timeout)
+    }
+}
 
 /// Who a machine is on the network.
 ///

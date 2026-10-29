@@ -3,7 +3,9 @@
 //! The verbs are the CLI's (`jig kill`, `nudge`, `prune`, `retry-setup`,
 //! `model`), and run through the same daemon executor. Each needs a
 //! [`crate::Client::with_token`] client, and answers [`CommandOutcome`] or
-//! refuses with the daemon's reason ([`crate::ApiError::Refused`]).
+//! refuses with the daemon's reason ([`crate::ApiError::Refused`]). A verb
+//! naming another `machine` is forwarded to it by the daemon serving the
+//! page.
 
 pub mod kill;
 pub mod model;

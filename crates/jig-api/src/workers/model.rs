@@ -14,6 +14,10 @@ pub const PATH: &str = "/api/v0/workers/model";
 pub struct ModelRequest {
     /// `repo/branch`, as in [`crate::Worker::key`].
     pub worker: String,
+    /// The owning machine's [`crate::Machine::node`]; `None` for the
+    /// machine serving the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
     /// As the agent's `/model` command takes it, e.g. `opus`.
     pub model: String,
 }

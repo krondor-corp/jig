@@ -7,7 +7,10 @@
 //!   [`jig_api`] wire types. Handlers read the same [`DaemonStatus`] `jig ps`
 //!   renders and run commands through the same executor the IPC socket does
 //!   ([`DaemonShared::run_command`]). The web view is a third client of one
-//!   daemon, not a second implementation of it.
+//!   daemon, not a second implementation of it. With a fleet network, the
+//!   fleet route adds every peer's frame and a verb naming another machine
+//!   is forwarded to it (`daemon::fleet`), so any machine's page drives the
+//!   whole fleet.
 //! * **App** (`spa`) is the Yew app in `crates/jig-cli/web`, built by Trunk
 //!   into `web/dist/` and embedded in the binary.
 //!
@@ -50,7 +53,10 @@ use axum::Router;
 use tokio::sync::watch;
 use uuid::Uuid;
 
+use jig_core::net::NodeId;
+
 use super::commands::{Command, WorkerKey};
+use super::fleet::PeerStatus;
 use super::ipc::{DaemonStatus, Response};
 use super::DaemonShared;
 use crate::runtime::Service;
@@ -60,12 +66,16 @@ use crate::runtime::Service;
 pub const DRAIN: Duration = Duration::from_secs(10);
 
 /// What the web view needs from the daemon: [`DaemonShared`] in the daemon,
-/// a stand-in in tests. Both calls may block.
+/// a stand-in in tests. Every call may block.
 pub trait Backend: Clone + Send + Sync + 'static {
     /// The frame `jig ps` renders.
     fn status(&self) -> DaemonStatus;
-    /// Run a control verb, blocking until it answers.
-    fn run_command(&self, worker: WorkerKey, cmd: Command) -> Response;
+    /// Every peer's frame, or why the peers could not be listed. Empty
+    /// without a fleet network.
+    fn peers(&self) -> Result<Vec<PeerStatus>, String>;
+    /// Run a control verb on this machine (`machine` is `None`) or on the
+    /// peer that owns the worker, blocking until it answers.
+    fn run_command(&self, machine: Option<NodeId>, worker: WorkerKey, cmd: Command) -> Response;
 }
 
 impl Backend for DaemonShared {
@@ -73,8 +83,15 @@ impl Backend for DaemonShared {
         DaemonShared::status(self)
     }
 
-    fn run_command(&self, worker: WorkerKey, cmd: Command) -> Response {
-        DaemonShared::run_command(self, worker, cmd)
+    fn peers(&self) -> Result<Vec<PeerStatus>, String> {
+        DaemonShared::peers(self).map_err(|e| e.to_string())
+    }
+
+    fn run_command(&self, machine: Option<NodeId>, worker: WorkerKey, cmd: Command) -> Response {
+        match machine {
+            None => DaemonShared::run_command(self, worker, cmd),
+            Some(node) => self.run_command_on(&node, worker, cmd),
+        }
     }
 }
 

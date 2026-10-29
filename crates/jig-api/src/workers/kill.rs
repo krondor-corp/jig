@@ -14,6 +14,10 @@ pub const PATH: &str = "/api/v0/workers/kill";
 pub struct KillRequest {
     /// `repo/branch`, as in [`crate::Worker::key`].
     pub worker: String,
+    /// The owning machine's [`crate::Machine::node`]; `None` for the
+    /// machine serving the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
 }
 
 impl ApiRequest for KillRequest {

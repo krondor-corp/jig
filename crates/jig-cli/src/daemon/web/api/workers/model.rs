@@ -20,6 +20,7 @@ pub async fn handler<B: Backend>(
 ) -> Response {
     run(
         &site,
+        request.machine.as_deref(),
         &request.worker,
         Command::Model {
             model: request.model,

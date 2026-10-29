@@ -93,6 +93,9 @@ pub struct FleetConfig {
     pub net: Option<NetKind>,
     /// Port jig uses on every tailnet node (`net = "tailscale"`).
     pub net_port: u16,
+    /// Let peers run control verbs (`kill`, `nudge`, …) on this machine's
+    /// workers. Off by default: with `net` set, peers can only read.
+    pub net_commands: bool,
     /// `[fleet.static]` — listen address, peers and allowlist for
     /// `net = "static"`.
     #[serde(rename = "static", skip_serializing_if = "Option::is_none")]
@@ -107,6 +110,7 @@ impl Default for FleetConfig {
             web_port: Self::DEFAULT_WEB_PORT,
             net: None,
             net_port: net::DEFAULT_PORT,
+            net_commands: false,
             static_net: None,
         }
     }
@@ -307,6 +311,15 @@ mod tests {
         let cfg = AppConfig::default();
         assert_eq!(cfg.fleet.net, None);
         assert!(cfg.fleet.net("devbox").unwrap().is_none());
+    }
+
+    #[test]
+    fn peers_may_only_read_unless_commands_are_turned_on() {
+        let cfg: AppConfig = toml::from_str("[fleet]\nnet = \"tailscale\"\n").unwrap();
+        assert!(!cfg.fleet.net_commands);
+        let cfg: AppConfig =
+            toml::from_str("[fleet]\nnet = \"tailscale\"\nnet_commands = true\n").unwrap();
+        assert!(cfg.fleet.net_commands);
     }
 
     #[test]
