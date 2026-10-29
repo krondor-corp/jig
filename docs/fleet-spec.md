@@ -287,9 +287,18 @@ devices; there is no public page and no login.
    answer is listed with its error), and each verb request takes an
    optional `machine` (a peer's node id) that the serving daemon forwards
    to that peer. So any machine's page shows and drives the whole fleet;
-   the browser only ever talks to `127.0.0.1`. Still to come: `jig ps
-   --fleet`; a peer's `setup.log` (the protocol has no request for it);
-   the web view served on the `Net` address for other devices' browsers.
+   the browser only ever talks to `127.0.0.1`. A peer that stops answering
+   keeps its last frame, marked stale with when it was last seen. The page
+   is a sidebar of machines (up / stale / not answering, with a count of
+   what needs attention) beside the selected view; it lands on an overview
+   of every worker on every machine that needs a human, by
+   `ps::render::attention` (setup failed, agent blocked, waiting, stalled,
+   failed, a PR problem), carried as `Worker::attention`. `jig ps --fleet`
+   polls the peers directly (no daemon needed) and adds a `MACHINE`
+   column. Static peers dial from their own listen address, the one their
+   peers trust. Still to come: a peer's `setup.log` (the protocol has no
+   request for it); the web view served on the `Net` address for other
+   devices' browsers.
 5. **Queue across machines** — assigning queued issues to machines. There is no
    per-repo worker cap to build on (`max_concurrent_workers` was removed), so a
    per-machine limit, if wanted, is designed here. `jig spawn --machine <name>`

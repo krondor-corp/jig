@@ -94,8 +94,10 @@ peers = [{ name = "bob", addr = "127.0.0.12:<port>" }]
 
 (plus `net_commands = true` under `[fleet]`)
 
-With the mesh up, every node's web view shows every node, and the buttons
-on another node's workers run there: the page's daemon forwards the verb to
+With the mesh up, every node's web view shows every node (a sidebar of
+machines, landing on an overview of what needs attention anywhere), and
+`./bin/dev jig alice ps --fleet` prints them all. The buttons on another
+node's workers run there: the page's daemon forwards the verb to
 the owner over the mesh. `--net` sets `net_commands = true` on every node,
 which a real machine leaves off unless it wants peers to drive it.
 `tests/daemon/fleet.rs` covers this with two daemons on `127.0.0.1`.
