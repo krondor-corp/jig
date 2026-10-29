@@ -17,6 +17,8 @@
 # identifies a peer by IP alone, so nodes need distinct addresses —
 # 127.0.0.<11+i>. Linux routes all of 127/8; macOS needs aliases on lo0
 # (`./bin/dev net-setup`). Daemons that predate the Net trait ignore it.
+# Every node takes commands from its peers (`net_commands = true`), so
+# each node's web view shows and drives the whole fleet.
 #
 # Usage: ./bin/dev help
 
@@ -141,6 +143,8 @@ write_config() {
         echo "web_port = $(web_port "$node")"
         if [[ "$net" == 1 ]]; then
             echo 'net = "static"'
+            # The point of a dev mesh: drive any node from any node's page.
+            echo 'net_commands = true'
             echo
             echo "[fleet.static]"
             echo "listen = \"$(net_ip "$node"):$(net_port "$node")\""

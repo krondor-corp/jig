@@ -92,6 +92,14 @@ listen = "127.0.0.11:<port>"
 peers = [{ name = "bob", addr = "127.0.0.12:<port>" }]
 ```
 
+(plus `net_commands = true` under `[fleet]`)
+
+With the mesh up, every node's web view shows every node, and the buttons
+on another node's workers run there: the page's daemon forwards the verb to
+the owner over the mesh. `--net` sets `net_commands = true` on every node,
+which a real machine leaves off unless it wants peers to drive it.
+`tests/daemon/fleet.rs` covers this with two daemons on `127.0.0.1`.
+
 The static backend identifies a peer by source IP alone, so nodes on one
 machine need distinct addresses. Linux routes all of `127/8`. macOS only
 has `127.0.0.1`: `./bin/dev net-setup` adds the `lo0` aliases (sudo,

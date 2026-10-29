@@ -276,10 +276,20 @@ devices; there is no public page and no login.
    nothing binds until `accept` is first called, and nothing calls it yet.
    `jig health` shows a `Net` section (installed, connected, enrolled);
    `jig fleet join <authkey> [--login-server URL]` runs `tailscale up`.
-   Still to come: the daemon's
-   protocol and web view served on the `Net` listener, gated by `accept`
-   identity; `jig ps --fleet` and a fleet web view that poll every peer;
-   commands routed to the owning peer.
+   **Serving the fleet** (KRO-252): with `[fleet] net` set, the daemon runs
+   a `jig-net` listener (`crates/jig-cli/src/daemon/fleet.rs`) that answers
+   peers in the unix socket's protocol over `Net` streams, a thread per
+   connection. Reads (`Ping`, `GetStatus`) go to any trusted peer; verbs
+   only when the receiving machine sets `net_commands = true`, and are
+   refused with its reason otherwise; `Shutdown` never. The web view's
+   `GET /api/v0/fleet` (`jig_api::FleetRequest`) returns this machine's
+   frame and every peer's (polled in parallel, 3s each; a peer that doesn't
+   answer is listed with its error), and each verb request takes an
+   optional `machine` (a peer's node id) that the serving daemon forwards
+   to that peer. So any machine's page shows and drives the whole fleet;
+   the browser only ever talks to `127.0.0.1`. Still to come: `jig ps
+   --fleet`; a peer's `setup.log` (the protocol has no request for it);
+   the web view served on the `Net` address for other devices' browsers.
 5. **Queue across machines** — assigning queued issues to machines. There is no
    per-repo worker cap to build on (`max_concurrent_workers` was removed), so a
    per-machine limit, if wanted, is designed here. `jig spawn --machine <name>`

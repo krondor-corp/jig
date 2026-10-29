@@ -69,7 +69,7 @@ impl Op for Create {
   - `cli/` — CLI framework: `op.rs` (Op trait + command_enum! macro), `ui/` (rendering primitives: `colors.rs`, `output.rs`), `commands/` (one file/dir per command)
   - `context/` — What a command runs against: `AppPaths`, `AppCtx`, `Ctx`, `RepoCtx`, config loading, `Logs`
   - `worker/` — Worker state, lifecycle, events
-  - `daemon/` — Background daemon with actor threads; `daemon/web/` is the web view (axum)
+  - `daemon/` — Background daemon with actor threads; `daemon/web/` is the web view (axum); `daemon/fleet.rs` serves peers over `Net` and polls them
   - `runtime.rs` — `Service` + `Supervisor`: the one way async code runs in the daemon, on a thread and tokio runtime of its own. The rest of the daemon stays std threads
   - `hooks/` — Git and agent hook management
   - `notify/` — Notification system
