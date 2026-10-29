@@ -809,6 +809,7 @@ name = "jig-web"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "gloo-events 0.2.0",
  "gloo-timers 0.3.0",
  "jig-api",
  "wasm-bindgen-futures",

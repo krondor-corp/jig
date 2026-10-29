@@ -4,14 +4,18 @@
 mod actions;
 mod failed_setups;
 mod machine;
+mod overview;
 mod repo_table;
+mod sidebar;
 mod site_header;
 mod triages;
 
 pub use actions::{verbs_for, Actions};
 pub use failed_setups::FailedSetups;
 pub use machine::MachineView;
+pub use overview::Overview;
 pub use repo_table::RepoTable;
+pub use sidebar::Sidebar;
 pub use site_header::SiteHeader;
 pub use triages::Triages;
 

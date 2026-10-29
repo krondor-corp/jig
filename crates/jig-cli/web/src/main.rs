@@ -6,22 +6,31 @@
 //! fleet: the daemon that served the page answers for itself and every peer,
 //! so any machine's page shows (and drives) all of them.
 //!
+//! Layout: a sidebar of machines (`Sidebar`) beside the selected view: the
+//! overview of what needs a human anywhere (`Overview`, where the page
+//! lands), or one machine (`MachineView`). The selection is in the URL hash
+//! (`route`).
+//!
 //! Structure: `api` (typed calls to `/api/v0`) · `components` (the view's
-//! pieces). `main.rs` loads the session, polls, and runs commands.
+//! pieces) · `route` (which view). `main.rs` loads the session, polls, and
+//! runs commands.
 
 mod api;
 mod components;
+mod route;
 
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gloo_events::EventListener;
 use gloo_timers::callback::Interval;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
 use api::Action;
-use components::{MachineView, SiteHeader};
+use components::{MachineView, Overview, Sidebar, SiteHeader};
 use jig_api::Fleet;
+use route::View;
 
 /// How often the view refreshes.
 const REFRESH_MS: u32 = 5_000;
@@ -38,6 +47,16 @@ fn app() -> Html {
     // `None` until the first frame arrives.
     let fleet = use_state(|| None::<Result<Fleet, String>>);
     let token = use_state(|| None::<String>);
+    let view = use_state(View::current);
+    {
+        let view = view.clone();
+        use_effect_with((), move |_| {
+            let listener = web_sys::window().map(|window| {
+                EventListener::new(&window, "hashchange", move |_| view.set(View::current()))
+            });
+            move || drop(listener)
+        });
+    }
     let banner = use_state(|| None::<Banner>);
     // Commands in flight. A refresh that lands mid-command would show the
     // old state, so refreshes wait. Shared with the interval, which only
@@ -112,19 +131,15 @@ fn app() -> Html {
             <p class="c-red">{ format!("Can't reach the daemon: {e}. Retrying…") }</p>
         },
         Some(Ok(fleet)) => html! {
-            <>
-                if let Some(e) = &fleet.peers_error {
-                    <p class="c-yellow">{ format!("Can't list the other machines: {e}") }</p>
-                }
-                { for fleet.machines.iter().map(|machine| html! {
-                    <MachineView
-                        key={machine.node.clone().unwrap_or_default()}
-                        machine={machine.clone()}
-                        on_command={on_command.clone()}
-                        {busy}
-                    />
-                }) }
-            </>
+            <div class="layout">
+                <Sidebar fleet={fleet.clone()} view={(*view).clone()} />
+                <div class="pane">
+                    if let Some(e) = &fleet.peers_error {
+                        <p class="c-yellow">{ format!("Can't list the other machines: {e}") }</p>
+                    }
+                    { pane(fleet, &view, &on_command, busy) }
+                </div>
+            </div>
         },
     };
 
@@ -143,6 +158,31 @@ fn app() -> Html {
                 { body }
             </main>
         </>
+    }
+}
+
+/// The selected view.
+fn pane(fleet: &Fleet, view: &View, on_command: &Callback<Action>, busy: bool) -> Html {
+    match view {
+        View::Overview => html! {
+            <Overview fleet={fleet.clone()} on_command={on_command.clone()} {busy} />
+        },
+        View::Machine(name) => match fleet.machines.iter().find(|m| &m.name == name) {
+            Some(machine) => html! {
+                <MachineView
+                    key={name.clone()}
+                    machine={machine.clone()}
+                    on_command={on_command.clone()}
+                    {busy}
+                />
+            },
+            None => html! {
+                <p class="empty">
+                    { format!("No machine called {name} in this fleet. ") }
+                    <a href={View::Overview.href()}>{ "Back to the overview" }</a>
+                </p>
+            },
+        },
     }
 }
 

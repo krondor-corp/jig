@@ -30,18 +30,24 @@ pub fn machine_view(props: &MachineViewProps) -> Html {
         None => "this machine".to_string(),
         Some(node) => node.clone(),
     };
+    let stale = match (&machine.error, &machine.last_seen) {
+        (Some(e), Some(ago)) => Some(format!(
+            "Not answering: {e}. Showing what it said {ago} ago."
+        )),
+        (Some(e), None) => Some(format!("Not answering: {e}")),
+        (None, _) => None,
+    };
     html! {
-        <section class="machine">
+        <section class={classes!("machine", stale.is_some().then_some("stale"))}>
             <h2 class="machine-name">
                 { &machine.name }
                 <span class="c-dim">{ format!(" · {whose}") }</span>
             </h2>
-            {
-                match (&machine.status, &machine.error) {
-                    (Some(status), _) => view(status, machine.is_local(), &on_command, props.busy),
-                    (None, Some(e)) => html! { <p class="c-red">{ format!("Not answering: {e}") }</p> },
-                    (None, None) => html! { <p class="empty">{ "No answer" }</p> },
-                }
+            if let Some(stale) = stale {
+                <p class="c-yellow">{ stale }</p>
+            }
+            if let Some(status) = &machine.status {
+                { view(status, machine.is_local(), &on_command, props.busy) }
             }
         </section>
     }
