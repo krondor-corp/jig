@@ -6,14 +6,22 @@ use serde::{Deserialize, Serialize};
 pub struct Branch(String);
 
 impl Branch {
+    /// Panics on a name git would reject — for names jig made or git gave
+    /// it. Untrusted input goes through [`Self::try_new`].
     pub fn new(s: impl Into<String>) -> Self {
         let name = s.into();
-        let refname = format!("refs/heads/{name}");
-        assert!(
-            git2::Reference::is_valid_name(&refname),
-            "invalid git branch name: {name:?}"
-        );
+        assert!(Self::is_valid(&name), "invalid git branch name: {name:?}");
         Self(name)
+    }
+
+    /// The branch called `s`, or `None` if git would reject the name.
+    pub fn try_new(s: impl Into<String>) -> Option<Self> {
+        let name = s.into();
+        Self::is_valid(&name).then_some(Self(name))
+    }
+
+    fn is_valid(name: &str) -> bool {
+        git2::Reference::is_valid_name(&format!("refs/heads/{name}"))
     }
 
     /// Returns the segment before the first `/`, or `None` if the branch name

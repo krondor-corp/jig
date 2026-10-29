@@ -32,8 +32,18 @@ clap_complete = "4"
 colored = "3"
 comfy-table = "7"
 
-# Async
+# Async — only the web view's own thread runs a runtime (daemon/web)
 tokio = { version = "1", features = ["full"] }
+
+# Web view server
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["set-header"] }
+rust-embed = "8"
+mime_guess = "2"
+# The web view API client (jig-api). No TLS: it only talks to 127.0.0.1.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+base64 = "0.22"
 
 # Utilities
 dirs = "6"
@@ -58,5 +68,6 @@ assert_cmd = "2"
 predicates = "3"
 
 # Internal crates
+jig-api = { path = "crates/jig-api" }
 jig-core = { path = "crates/jig-core" }
 jig-cli = { path = "crates/jig-cli" }

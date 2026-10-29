@@ -1,0 +1,6 @@
+# `trunk build` (via `make build-web`) emits to dist/, which jig-cli embeds
+# and the daemon serves at `/`. See crates/jig-cli/src/daemon/web/spa.rs.
+[build]
+target = "index.html"
+dist = "dist"
+public_url = "/"

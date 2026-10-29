@@ -12,3 +12,6 @@ jig.local.toml
 # Added by cargo
 
 /target
+
+# bin/dev fleet
+.dev/

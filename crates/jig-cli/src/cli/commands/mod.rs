@@ -30,6 +30,7 @@ pub mod spawn;
 pub mod update;
 mod verb;
 pub mod version;
+pub mod web;
 pub mod which;
 
 // Re-export command structs
@@ -62,4 +63,5 @@ pub use shell_setup::ShellSetup;
 pub use spawn::Spawn;
 pub use update::Update;
 pub use version::Version;
+pub use web::Web;
 pub use which::Which;

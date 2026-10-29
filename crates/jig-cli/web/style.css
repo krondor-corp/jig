@@ -1,0 +1,245 @@
+/* jig web view: jig.krondor.org's tokens (wiki/assets/css/main.css), with the
+ * `jig ps` palette in the gruvbox colors the brand orange comes from.
+ * JetBrains Mono is used when installed; the page loads nothing remote. */
+
+:root {
+  --background: 40 20% 97%;
+  --foreground: 30 10% 12%;
+  --muted: 40 12% 92%;
+  --muted-foreground: 30 5% 50%;
+  --card: 40 15% 95%;
+  --border: 35 10% 86%;
+  --destructive: 0 60% 45%;
+  --radius: 0.25rem;
+  --brand: 22 88% 45%;
+
+  /* ps palette — gruvbox light */
+  --green: #79740e; --red: #9d0006; --yellow: #b57614; --blue: #076678;
+  --cyan: #427b58; --magenta: #8f3f71;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: 30 8% 8%;
+    --foreground: 35 15% 88%;
+    --muted: 30 6% 14%;
+    --muted-foreground: 30 5% 52%;
+    --card: 30 6% 11%;
+    --border: 30 5% 18%;
+    --destructive: 0 50% 40%;
+    --brand: 24 99% 55%;
+    --green: #b8bb26; --red: #fb4934; --yellow: #fabd2f; --blue: #83a598;
+    --cyan: #8ec07c; --magenta: #d3869b;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --background: 30 8% 8%;
+  --foreground: 35 15% 88%;
+  --muted: 30 6% 14%;
+  --muted-foreground: 30 5% 52%;
+  --card: 30 6% 11%;
+  --border: 30 5% 18%;
+  --destructive: 0 50% 40%;
+  --brand: 24 99% 55%;
+  --green: #b8bb26; --red: #fb4934; --yellow: #fabd2f; --blue: #83a598;
+  --cyan: #8ec07c; --magenta: #d3869b;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { font-size: 15px; -webkit-text-size-adjust: 100%; }
+
+body {
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  min-height: 100vh;
+}
+
+main, .header-inner {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+main { padding-bottom: 2rem; }
+
+a {
+  color: hsl(var(--foreground));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--border));
+  text-underline-offset: 3px;
+}
+a:hover { text-decoration-color: hsl(var(--foreground)); }
+
+/* === Header (the site's) === */
+.header-inner {
+  padding-top: 1.5rem;
+  padding-bottom: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.site-title {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  color: hsl(var(--brand));
+}
+
+.site-title-text {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+.site-title-machine {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: hsl(var(--foreground));
+}
+
+.site-nav { display: flex; align-items: center; gap: 1.25rem; }
+
+.theme-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: hsl(var(--muted-foreground));
+  display: flex;
+  width: 20px;
+  height: 20px;
+  transition: color 0.15s;
+}
+.theme-toggle:hover { color: hsl(var(--foreground)); }
+
+/* === Summary line === */
+.summary {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 0.5rem;
+}
+
+h2 {
+  font-size: 1.075rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 2rem 0 0.5rem;
+}
+h3 { font-size: 0.95rem; font-weight: 600; font-family: var(--font-mono); }
+
+/* === The ps tables === */
+.table-wrap { overflow-x: auto; }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+th {
+  text-align: left;
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid hsl(var(--border));
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+td {
+  padding: 0.45rem 0.75rem;
+  border-bottom: 1px solid hsl(var(--border));
+  white-space: nowrap;
+}
+
+tbody tr:hover td { background: hsl(var(--card)); }
+
+.right { text-align: right; }
+td.actions { text-align: right; }
+
+/* === Buttons: the site's copy-button look === */
+button[type="button"]:not(.theme-toggle) {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 0.15rem 0.55rem;
+  margin-left: 0.25rem;
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+button[type="button"]:not(.theme-toggle):hover {
+  color: hsl(var(--brand));
+  border-color: hsl(var(--brand));
+}
+button:disabled { opacity: 0.5; cursor: progress; }
+
+/* === Failed setups === */
+.failed article {
+  border: 1px solid hsl(var(--border));
+  border-left: 3px solid var(--red);
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+}
+.failed article p { margin-top: 0.5rem; font-size: 0.8rem; }
+.failed article button[type="button"]:not(.theme-toggle) { margin: 0 0.25rem 0 0; }
+
+pre {
+  background-color: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  margin-top: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.775rem;
+  line-height: 1.55;
+}
+
+/* === The command result === */
+#result {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  max-width: 1200px;
+  margin: 0 auto 1rem;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-left: 3px solid hsl(var(--brand));
+  border-radius: var(--radius);
+}
+#result.err { border-left-color: var(--red); color: var(--red); }
+
+.empty { color: hsl(var(--muted-foreground)); margin-top: 1.5rem; }
+.spawning { font-family: var(--font-mono); font-size: 0.8rem; margin-top: 1rem; }
+
+/* === ps palette === */
+.c-green { color: var(--green); } .c-red { color: var(--red); }
+.c-yellow { color: var(--yellow); } .c-blue { color: var(--blue); }
+.c-cyan { color: var(--cyan); } .c-magenta { color: var(--magenta); }
+.c-dim { color: hsl(var(--muted-foreground)); }
+
+::selection { background-color: hsl(var(--muted)); }

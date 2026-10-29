@@ -8,3 +8,4 @@ mod commands;
 mod events;
 mod ipc;
 mod pidfile;
+mod web;

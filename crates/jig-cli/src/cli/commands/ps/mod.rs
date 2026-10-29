@@ -5,7 +5,7 @@
 //! own. With no daemon listening it falls back to driving a daemon
 //! in-process, which is what every `jig ps` used to do.
 
-mod render;
+pub mod render;
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};

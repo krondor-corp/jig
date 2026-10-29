@@ -43,3 +43,34 @@ jobs:
 
       - name: Run tests
         run: cargo test --all-targets
+
+  # The web view's Yew app is its own workspace (crates/jig-cli/web), so the
+  # jobs above don't see it.
+  web:
+    name: Web view
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/jig-cli/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Build
+        run: trunk build --release

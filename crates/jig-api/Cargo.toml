@@ -1,0 +1,29 @@
+# jig's web view HTTP API: the request types, their wire types, and a typed
+# client.
+#
+# The `ApiRequest`/`Client` pattern from zim-api (krondor-corp/zim): each
+# request owns its method, path and body; the client only sends it and
+# decodes the reply. Consumers:
+#
+#   - jig-cli (daemon): its axum routes (`daemon/web/api/`) deserialize the
+#     same request types, serialize the same responses, and mount each
+#     handler on the request's `PATH`.
+#   - crates/jig-cli/web (wasm app): calls the same requests through
+#     reqwest's fetch backend.
+#   - jig-cli's tests: drive a real daemon with the same `Client`.
+#
+# reqwest target-gates its native stack, so this builds on wasm32 too. No
+# TLS: the web view is only ever http://127.0.0.1.
+[package]
+name = "jig-api"
+description = "jig's web view API: request types, wire types and a typed client"
+version = "0.15.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true

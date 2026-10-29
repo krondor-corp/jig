@@ -15,6 +15,7 @@ name = "jig"
 path = "src/main.rs"
 
 [dependencies]
+jig-api.workspace = true
 jig-core.workspace = true
 clap.workspace = true
 serde.workspace = true
@@ -39,12 +40,19 @@ url.workspace = true
 flume.workspace = true
 sha2.workspace = true
 handlebars.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+rust-embed.workspace = true
+mime_guess.workspace = true
+base64.workspace = true
 which.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["hostname", "process", "signal", "user"] }
 
 [dev-dependencies]
+tower.workspace = true
 tempfile.workspace = true
 assert_cmd.workspace = true
 predicates.workspace = true
