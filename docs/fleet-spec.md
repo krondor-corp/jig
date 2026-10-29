@@ -268,7 +268,15 @@ devices; there is no public page and no login.
      `DaemonShared::run_command`. The URL rides on `DaemonInfo.web`; `jig
      web` opens it and `jig daemon status` prints it.
 4. **Net** — the `Net` trait and `[fleet] net` config with `static` and
-   `tailscale` backends; `jig health` checks; `jig fleet join`; the daemon's
+   `tailscale` backends; `jig health` checks; `jig fleet join`. Done: the
+   trait and both backends live in `crates/jig-core/src/net/`, built from
+   `FleetConfig::net` (`[fleet] net`, `net_port`, `[fleet.static]`). `accept`
+   drops untrusted callers itself (no `tag:jig` on `whois`, or not on the
+   static allowlist / peer list), so callers only ever see trusted peers;
+   nothing binds until `accept` is first called, and nothing calls it yet.
+   `jig health` shows a `Net` section (installed, connected, enrolled);
+   `jig fleet join <authkey> [--login-server URL]` runs `tailscale up`.
+   Still to come: the daemon's
    protocol and web view served on the `Net` listener, gated by `accept`
    identity; `jig ps --fleet` and a fleet web view that poll every peer;
    commands routed to the owning peer.

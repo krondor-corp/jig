@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::paths::AppPaths;
 use jig_core::exec::{Hook, Timeout};
+use jig_core::net::{self, Net, NetKind, StaticConfig, StaticNet, TailscaleNet};
 
 use super::ContextError;
 
@@ -86,10 +87,16 @@ pub struct FleetConfig {
     pub web: bool,
     /// The port the web view listens on.
     pub web_port: u16,
-}
-
-impl FleetConfig {
-    pub const DEFAULT_WEB_PORT: u16 = 7477;
+    /// The private network peers reach this machine over. Unset means no
+    /// fleet networking at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net: Option<NetKind>,
+    /// Port jig uses on every tailnet node (`net = "tailscale"`).
+    pub net_port: u16,
+    /// `[fleet.static]` — listen address, peers and allowlist for
+    /// `net = "static"`.
+    #[serde(rename = "static", skip_serializing_if = "Option::is_none")]
+    pub static_net: Option<StaticConfig>,
 }
 
 impl Default for FleetConfig {
@@ -98,7 +105,34 @@ impl Default for FleetConfig {
             name: None,
             web: false,
             web_port: Self::DEFAULT_WEB_PORT,
+            net: None,
+            net_port: net::DEFAULT_PORT,
+            static_net: None,
         }
+    }
+}
+
+impl FleetConfig {
+    pub const DEFAULT_WEB_PORT: u16 = 7477;
+
+    /// The configured network backend, or `None` when `net` is unset.
+    ///
+    /// Builds it only — no backend binds anything until it is asked to
+    /// accept. `name` is this machine's fleet name.
+    pub fn net(&self, name: &str) -> Result<Option<Box<dyn Net>>, ContextError> {
+        Ok(match self.net {
+            None => None,
+            Some(NetKind::Tailscale) => Some(Box::new(TailscaleNet::new(self.net_port))),
+            Some(NetKind::Static) => {
+                let config = self.static_net.clone().ok_or_else(|| {
+                    ContextError::Config(
+                        "[fleet] net = \"static\" needs a [fleet.static] section with `listen`"
+                            .into(),
+                    )
+                })?;
+                Some(Box::new(StaticNet::new(name, config)))
+            }
+        })
     }
 }
 
@@ -197,6 +231,13 @@ timeout = 600                    # seconds a fetch or push may take, or "none"
 # name = "devbox"                # machine name in the fleet view (default: hostname)
 # web = true                     # serve the work view on http://127.0.0.1 (`jig web`)
 # web_port = 7477
+# net = "tailscale"              # private network for the fleet: "tailscale" | "static"
+# net_port = 7473                # jig's port on each tailnet node
+#
+# [fleet.static]                 # only for net = "static"
+# listen = "10.0.0.2:7473"
+# peers = [{ name = "laptop", addr = "10.0.0.3:7473" }]
+# allow = ["10.0.0.4"]           # trusted callers besides the peers
 
 # [notify]
 # exec = "~/.config/jig/hooks/notify.sh"
@@ -259,5 +300,54 @@ mod tests {
         let cfg: AppConfig = toml::from_str("[fleet]\nweb = true\nweb_port = 9000\n").unwrap();
         assert!(cfg.fleet.web);
         assert_eq!(cfg.fleet.web_port, 9000);
+    }
+
+    #[test]
+    fn fleet_networking_is_off_by_default() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.fleet.net, None);
+        assert!(cfg.fleet.net("devbox").unwrap().is_none());
+    }
+
+    #[test]
+    fn the_net_backend_is_chosen_in_config() {
+        let cfg: AppConfig = toml::from_str("[fleet]\nnet = \"tailscale\"\n").unwrap();
+        assert_eq!(cfg.fleet.net_port, net::DEFAULT_PORT);
+        let net = cfg.fleet.net("devbox").unwrap().unwrap();
+        assert_eq!(net.kind(), NetKind::Tailscale);
+
+        let cfg: AppConfig = toml::from_str(
+            r#"
+[fleet]
+net = "static"
+
+[fleet.static]
+listen = "127.0.0.1:7473"
+peers = [{ name = "laptop", addr = "127.0.0.2:7473" }]
+"#,
+        )
+        .unwrap();
+        let net = cfg.fleet.net("devbox").unwrap().unwrap();
+        assert_eq!(net.kind(), NetKind::Static);
+        assert_eq!(net.local().unwrap().name, "devbox");
+        assert_eq!(net.peers().unwrap()[0].name, "laptop");
+    }
+
+    #[test]
+    fn a_static_net_without_its_section_says_what_is_missing() {
+        let cfg: AppConfig = toml::from_str("[fleet]\nnet = \"static\"\n").unwrap();
+        let err = cfg.fleet.net("devbox").err().unwrap();
+        assert!(err.to_string().contains("[fleet.static]"), "{err}");
+    }
+
+    #[test]
+    fn fleet_config_round_trips() {
+        let cfg: AppConfig = toml::from_str(
+            "[fleet]\nnet = \"static\"\n[fleet.static]\nlisten = \"10.0.0.2:7473\"\n",
+        )
+        .unwrap();
+        let back: AppConfig = toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+        assert_eq!(back.fleet.net, Some(NetKind::Static));
+        assert_eq!(back.fleet.static_net, cfg.fleet.static_net);
     }
 }

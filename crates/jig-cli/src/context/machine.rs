@@ -35,9 +35,17 @@ impl Machine {
     /// Resolve the name and load the node id, minting it on first use.
     pub fn load(paths: &AppPaths, config: &AppConfig) -> io::Result<Self> {
         Ok(Self {
-            name: machine_name(config.fleet.name.as_deref(), hostname()),
+            name: Self::name(config),
             node_id: load_or_create_node_id(&paths.node_id_file())?,
         })
+    }
+}
+
+impl Machine {
+    /// This machine's fleet name: `[fleet] name`, else the hostname. Needs
+    /// no node id, so it never touches disk.
+    pub fn name(config: &AppConfig) -> String {
+        machine_name(config.fleet.name.as_deref(), hostname())
     }
 }
 
