@@ -117,7 +117,14 @@ impl Net for StaticNet {
             .find(|p| &node_id(&p.addr) == peer)
             .ok_or_else(|| NetError::UnknownPeer(peer.clone()))?
             .addr;
-        listener::connect(addr)
+        // Peers trust our listen address, so that is where we call from,
+        // unless it is a wildcard, which is no address to call from.
+        let source = self.config.listen.ip();
+        if source.is_unspecified() {
+            listener::connect(addr)
+        } else {
+            listener::connect_from(source, addr)
+        }
     }
 
     fn health(&self) -> NetHealth {

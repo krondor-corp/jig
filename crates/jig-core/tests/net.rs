@@ -2,8 +2,9 @@
 
 use std::io::{Read, Write};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::thread;
+use std::time::Duration;
 
 use jig_core::net::{Net, NodeId, StaticConfig, StaticNet, StaticPeer};
 
@@ -84,4 +85,43 @@ fn an_untrusted_caller_is_dropped_inside_accept() {
     // The server closed it without a word (EOF, or a reset).
     assert_eq!(stream.read(&mut buf).unwrap_or(0), 0);
     assert!(!accepted.is_finished(), "a stranger got through accept");
+}
+
+#[test]
+fn a_peer_calls_from_its_own_listen_address() {
+    // Needs a second loopback address: Linux routes all of 127/8, macOS
+    // only has the ones `./bin/dev net-setup` adds.
+    let ours = "127.0.0.2".parse().unwrap();
+    if std::net::TcpListener::bind(SocketAddr::new(ours, 0)).is_err() {
+        eprintln!("skipped: 127.0.0.2 is not an address of this machine");
+        return;
+    }
+    // Trusts only 127.0.0.2: the OS's own choice of source (127.0.0.1, or on
+    // macOS the destination's address) would be dropped.
+    let (server, addr) = server(&["127.0.0.2"]);
+    // A dropped caller leaves `accept` waiting forever, so wait for it with
+    // a deadline: a failure, not a hung test.
+    let (accepted, from) = mpsc::channel();
+    {
+        let server = Arc::clone(&server);
+        thread::spawn(move || {
+            let _ = accepted.send(server.accept().map(|(_, from)| from).unwrap());
+        });
+    }
+    let client = StaticNet::new(
+        "client",
+        StaticConfig {
+            listen: SocketAddr::new(ours, 0),
+            peers: vec![StaticPeer {
+                name: "server".into(),
+                addr,
+            }],
+            allow: vec![],
+        },
+    );
+    let _stream = client.dial(&NodeId::new("127.0.0.1")).unwrap();
+    let from = from
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the server dropped us: we called from an address it doesn't trust");
+    assert_eq!(from, NodeId::new("127.0.0.2"));
 }

@@ -3,6 +3,8 @@
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Mutex;
 
+use socket2::{Domain, Protocol, Socket, Type};
+
 use super::{NetError, NodeId, Stream, DIAL_TIMEOUT};
 
 /// A listener that does not exist until something asks to accept on it.
@@ -49,4 +51,18 @@ impl LazyListener {
 
 pub(super) fn connect(addr: SocketAddr) -> Result<Box<dyn Stream>, NetError> {
     Ok(Box::new(TcpStream::connect_timeout(&addr, DIAL_TIMEOUT)?))
+}
+
+/// Connect to `addr` from `source`, this machine's own address on the
+/// network, when identity is the caller's address.
+///
+/// Left to itself the OS picks the source address, and not necessarily
+/// ours: with several addresses on one interface (a host on two overlays,
+/// or loopback aliases, where macOS sends from the destination's own
+/// address) the peer would see an address it does not trust.
+pub(super) fn connect_from(source: IpAddr, addr: SocketAddr) -> Result<Box<dyn Stream>, NetError> {
+    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+    socket.bind(&SocketAddr::new(source, 0).into())?;
+    socket.connect_timeout(&addr.into(), DIAL_TIMEOUT)?;
+    Ok(Box::new(TcpStream::from(socket)))
 }

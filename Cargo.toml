@@ -17,6 +17,7 @@ toml = "1"
 # Time and IDs
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
+socket2 = "0.6"
 
 # Error handling
 thiserror = "2"
