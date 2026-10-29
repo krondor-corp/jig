@@ -60,7 +60,10 @@ impl Prompt {
     }
 
     pub fn render(self) -> Result<String, handlebars::RenderError> {
-        let hbs = Handlebars::new();
+        // Prompts are plain text for an agent, not HTML — Handlebars' default
+        // escaping would turn backticks, quotes and `&` into entities.
+        let mut hbs = Handlebars::new();
+        hbs.register_escape_fn(handlebars::no_escape);
         let rendered = hbs.render_template(&self.template, &self.vars)?;
         Ok(rendered)
     }
@@ -106,5 +109,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, "a b ");
+    }
+
+    #[test]
+    fn render_does_not_html_escape() {
+        let result = Prompt::new("TASK: {{task_context}}")
+            .var("task_context", "run `jig pr` & check <docs/\"x\">'s")
+            .render()
+            .unwrap();
+
+        assert_eq!(result, "TASK: run `jig pr` & check <docs/\"x\">'s");
     }
 }
