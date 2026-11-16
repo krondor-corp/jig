@@ -7,7 +7,12 @@ of this spec — the daemon-to-service refactor — shipped in v0.9.0; it lives 
 The 2026-10-22 revision replaces the hub-and-spoke iroh transport with a peer
 mesh over a **pluggable private network** (`Net`), chosen per machine the way
 `mux` is. Tailscale is the first backend; iroh becomes a later backend rather
-than the only one. The web view moves from stretch goal to core.
+than the only one. The fleet view moves from stretch goal to core.
+
+2026-11-16: the fleet view is a terminal UI (plain `jig`, KRO-295), not a
+web page. A web view was built (KRO-250, 252, 285) and removed in favor of
+it; what it needed from the daemon (the fleet listener, routing to the
+owning peer, the issue cache, spawn) stayed.
 
 ## The problem
 
@@ -39,10 +44,11 @@ plane.** Not a multiplexer, not a terminal UI, not a network.
   reachability and identity come from a private network the operator already
   trusts.
 - **Terminal viewing/attach is delegated**, always: `jig attach` locally,
-  `herdr --remote` across machines. jig builds no terminal UI, ever.
+  `herdr --remote` across machines. jig never renders an agent's terminal;
+  its TUI is a work view that hands off to these to attach.
 - **The fleet view is a *work* view** — branches, pipeline state, setup state,
   PR/CI/review health, issue linkage, stuck-ness — joined across every machine,
-  as `jig ps --fleet` and as a web page on the private network.
+  as `jig ps --fleet` and in jig's TUI.
 
 ## Why the distributed problem is small
 
@@ -67,15 +73,15 @@ that has to be up for anything to work.
      │ daemon   │        │  daemon  │        │  daemon  │   · local monitor loop, unchanged
      └────▲─────┘        └────▲─────┘        └────▲─────┘   · answer Status for own workers
           └───────────────────┴───────────────────┘         · execute commands for own workers
-                    private network (Net)                    · serve the fleet view
+                    private network (Net)
                           ▲
-                          │ browser on any enrolled device (phone included,
-                          │ for IP-based backends)
+                          │ jig's TUI on any enrolled machine (a phone over
+                          │ SSH included)
 ```
 
 - **Every daemon is a peer.** It answers `Status` for its own workers over the
   private network and executes commands for its own workers. Nothing else.
-- **Any peer can render the fleet.** `jig ps --fleet` (or the web page) asks
+- **Any peer can render the fleet.** `jig ps --fleet` (or the TUI) asks
   `Net::peers()` who is out there, requests `Status` from each, and joins the
   results with a `MACHINE` column. A peer that doesn't answer is rendered stale,
   never guessed at.
@@ -132,17 +138,15 @@ net = "tailscale"        # "tailscale" | "static" | (later) "iroh"
 
 - **`tailscale` is the first backend.** Like the `tmux` and `herdr` backends it
   shells out through `Exec` — no new dependencies, no async runtime. It gives
-  automatic discovery by tag, per-connection identity, and a fleet page any
-  enrolled device's browser can open, phone included.
+  automatic discovery by tag and per-connection identity.
 - **`static` is the escape hatch** for any private IP network. Address-based
   identity is sound on WireGuard-family networks, where an address can only be
   used by the holder of its key; on a plain LAN it is only as good as the LAN.
 - **Headscale needs no backend of its own** — it is Tailscale's control server,
   self-hosted, and clients are the normal `tailscale` client.
-- **`iroh` is the most plug-and-play** (nothing to install) but a browser cannot
-  join it, so the web view needs an IP backend, and its tokio would reach past
-  the one thread the web view keeps it in today. It is designed for, not built
-  first. `zim-peer`
+- **`iroh` is the most plug-and-play** (nothing to install), but it brings an
+  async runtime into a daemon that is std threads throughout. It is designed
+  for, not built first. `zim-peer`
   (krondor-corp/zim) remains the reference for its accept policy and peer
   registry.
 
@@ -201,11 +205,9 @@ The same routing carries the rest of the control verbs: `kill`, `nudge`,
 `MACHINE · WORKER · STATE · SETUP · AGENT (live mux state) · MODEL · PR · CI · REVIEW · ISSUE`.
 "Genuinely stuck" and "setup failed" are first-class filters.
 
-The web view serves the same table over HTTP on the `Net` listen address (IP
-backends only), with a failed-setups panel and buttons for the command verbs. It
-renders work state only — attach links can deep-link to `herdr --remote`
-targets, but terminals never render in jig. It is reachable only from enrolled
-devices; there is no public page and no login.
+jig's TUI shows the same rows, with a failed-setups view and a key per
+command verb. It renders work state only; attaching hands the terminal to
+`jig attach` or `herdr --remote`.
 
 ## Phases
 
@@ -236,7 +238,7 @@ devices; there is no public page and no login.
      are skipped once it is in the log.
    - **Daemon commands** — `kill`, `nudge` (with free text), `prune`,
      `retry-setup`, `model` as IPC `Request`s the daemon executes, so the CLI and
-     the web view drive the same code path. Done: each verb is addressed by
+     the TUI drive the same code path. Done: each verb is addressed by
      worker key (`repo/branch`) and answers `Ok` or `Error(reason)`; the one
      executor is `crates/jig-cli/src/daemon/commands.rs`, which the CLI also
      runs in-process when no daemon answers. Verbs run on a thread per request
@@ -244,29 +246,8 @@ devices; there is no public page and no login.
      each leaves a `command` event in the worker's log. `prune` refuses a
      worker whose window is still open; `retry-setup` only takes a worker whose
      setup failed (any phase, the agent launch included), per `WorkerState.setup`.
-   - **Local web view** — the daemon serves the work view and command buttons
-     over HTTP on `127.0.0.1`. Hardened against browser-borne requests
-     (Host-header check, no state change on GET, a per-session token).
-     Done: `[fleet] web = true` (`web_port`, default 7477) binds
-     `127.0.0.1` only. The server is axum (`crates/jig-cli/src/daemon/web/`),
-     run as a `runtime::Service` (zim's trait) by a `runtime::Supervisor` on
-     one `jig-web` thread with a current-thread tokio runtime. The rest of
-     the daemon stays std threads; handlers make their blocking daemon calls
-     on tokio's blocking pool, and a stopping daemon gives in-flight requests
-     10s before abandoning them. It serves a JSON API under `/api/v0`
-     defined by the `jig-api` crate in zim-api's pattern: an `ApiRequest`
-     trait, a module per subject and a file per request (`session`,
-     `status`, `workers/{kill,nudge,prune,retry-setup,model,setup-log}`),
-     each exporting the `PATH` the daemon mounts its handler on, and a
-     generic `Client` that the Yew app (`crates/jig-cli/web`, built by
-     Trunk, embedded with `rust-embed`) and the daemon tests both call. Rows
-     come from the same `worker_columns` `ps` renders. The app adds PR
-     links, a failed-setups panel (the tail, and the whole `setup.log` on
-     request, read only from a path the daemon recorded) and a button per
-     verb. Verbs need the session token in `X-Jig-Token`, which
-     `Client::with_token` sends, and run through
-     `DaemonShared::run_command`. The URL rides on `DaemonInfo.web`; `jig
-     web` opens it and `jig daemon status` prints it.
+   - **Local web view** — built (KRO-250: axum on its own thread, a typed
+     HTTP API, a Yew app) and removed on 2026-11-16 for the TUI.
 4. **Net** — the `Net` trait and `[fleet] net` config with `static` and
    `tailscale` backends; `jig health` checks; `jig fleet join`. Done: the
    trait and both backends live in `crates/jig-core/src/net/`, built from
@@ -281,36 +262,24 @@ devices; there is no public page and no login.
    peers in the unix socket's protocol over `Net` streams, a thread per
    connection. Reads (`Ping`, `GetStatus`) go to any trusted peer; verbs
    only when the receiving machine sets `net_commands = true`, and are
-   refused with its reason otherwise; `Shutdown` never. The web view's
-   `GET /api/v0/fleet` (`jig_api::FleetRequest`) returns this machine's
-   frame and every peer's (polled in parallel, 3s each; a peer that doesn't
-   answer is listed with its error), and each verb request takes an
-   optional `machine` (a peer's node id) that the serving daemon forwards
-   to that peer. So any machine's page shows and drives the whole fleet;
-   the browser only ever talks to `127.0.0.1`. A peer that stops answering
-   keeps its last frame, marked stale with when it was last seen. The page
-   is a sidebar of machines (up / stale / not answering, with a count of
-   what needs attention) beside the selected view; it lands on an overview
-   of every worker on every machine that needs a human, by
-   `ps::render::attention` (setup failed, agent blocked, waiting, stalled,
-   failed, a PR problem), carried as `Worker::attention`. `jig ps --fleet`
-   polls the peers directly (no daemon needed) and adds a `MACHINE`
-   column. Static peers dial from their own listen address, the one their
-   peers trust. Still to come: a peer's `setup.log` (the protocol has no
-   request for it); the web view served on the `Net` address for other
-   devices' browsers.
+   refused with its reason otherwise; `Shutdown` never. `Fleet::poll`
+   asks every peer for its frame in parallel (3s each); a peer that stops
+   answering keeps its last frame, marked stale with when it was last seen.
+   `jig ps --fleet` polls the peers directly (no daemon needed) and adds a
+   `MACHINE` column. `ps::render::attention` says why a worker needs a human
+   (setup failed, agent blocked, waiting, stalled, failed, a PR problem).
+   Static peers dial from their own listen address, the one their peers
+   trust. Still to come: a peer's `setup.log` (the protocol has no request
+   for it).
 5. **Queue across machines** — assigning queued issues to machines.
-   **Spawning from the web view** (KRO-285): issues are per machine (each
+   **Spawning on request** (KRO-285): issues are per machine (each
    repo's `jig.toml` names a tracker profile whose key lives in that
    machine's config), so each daemon lists its own. An `IssuesActor`
    (`daemon/actors/issues.rs`) caches every repo's planned and backlog
    issues, fetched on the poll and on an explicit refresh. IPC
    `GetIssues`/`RefreshIssues` are reads; `Spawn { repo, issue }` is a
    command (peers need `net_commands`), run by `commands::spawn_issue`
-   through the spawn actor's own `spawn_worker_for_issue`. The web view's
-   `issues/{get,refresh,spawn}` name a `machine` the serving daemon
-   forwards to, and each machine page has an Issues tab with a spawn
-   button. Still open: assigning issues to machines automatically; a
+   through the spawn actor's own `spawn_worker_for_issue`. Still open: assigning issues to machines automatically; a
    per-machine worker limit, if wanted, designed here (there is no
    per-repo cap to build on: `max_concurrent_workers` was removed); `jig
    spawn --machine <name>` from the CLI, routed like any command.

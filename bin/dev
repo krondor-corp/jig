@@ -6,9 +6,9 @@
 # from your real jig: its own XDG_CONFIG_HOME / XDG_RUNTIME_DIR (config,
 # socket, state, logs), its own tmux server (TMUX_TMPDIR), a throwaway
 # HOME for `jig init` (so ~/.claude is never rewritten), and a scratch repo
-# to spawn workers in. Every node serves the web view.
+# to spawn workers in.
 #
-# Nodes and ports come from confit.toml (`[dev.nodes]`, `[dev.net]`):
+# Nodes and ports come from confit.toml (`[dev.nodes]`):
 # confit gives each worktree its own slot, so several worktrees can run
 # their own dev fleets at once. Requires confit.
 #
@@ -18,7 +18,7 @@
 # 127.0.0.<11+i>. Linux routes all of 127/8; macOS needs aliases on lo0
 # (`./bin/dev net-setup`). Daemons that predate the Net trait ignore it.
 # Every node takes commands from its peers (`net_commands = true`), so
-# each node's web view shows and drives the whole fleet.
+# each node can drive the whole fleet.
 #
 # Usage: ./bin/dev help
 
@@ -56,9 +56,8 @@ dev_env="$(cd "$PROJECT_ROOT" && confit export --profile dev --format shell)" ||
     die "confit could not resolve confit.toml — \`[ports]\` needs confit >= 0.5 (confit update)"
 eval "$dev_env"
 unset dev_env
-WEB_PORTS="$(cd "$PROJECT_ROOT" && confit show dev.nodes)" || exit 1
-NET_PORTS="$(cd "$PROJECT_ROOT" && confit show dev.net)" || exit 1
-NODES=($(echo "$WEB_PORTS" | cut -d= -f1))
+NET_PORTS="$(cd "$PROJECT_ROOT" && confit show dev.nodes)" || exit 1
+NODES=($(echo "$NET_PORTS" | cut -d= -f1))
 
 # The port for node $2 in `name=port` lines $1.
 port_in() { echo "$1" | grep "^$2=" | cut -d= -f2; }
@@ -75,12 +74,11 @@ node_index() {
 }
 
 node_dir() { echo "$DEV_DIR/$1"; }
-web_port() { port_in "$WEB_PORTS" "$1"; }
 net_ip() { echo "127.0.0.$((11 + $(node_index "$1")))"; }
 net_port() {
     local port
     port=$(port_in "$NET_PORTS" "$1")
-    [[ -n "$port" ]] || die "$1 has no [dev.net] port in confit.toml"
+    [[ -n "$port" ]] || die "$1 has no [dev.nodes] port in confit.toml"
     echo "$port"
 }
 
@@ -125,9 +123,6 @@ stop_daemon() {
 # ── Setup ───────────────────────────────────────────────────────────
 
 build() {
-    info "Building the web view..."
-    (cd "$PROJECT_ROOT" && make -s build-web >"$DEV_DIR/build-web.log" 2>&1) ||
-        die "web view build failed — see $DEV_DIR/build-web.log"
     info "Building jig..."
     (cd "$PROJECT_ROOT" && cargo build -q -p jig-cli) || die "build failed"
 }
@@ -139,11 +134,9 @@ write_config() {
         echo "# Written by bin/dev on every \`up\` — edit bin/dev, not this."
         echo "[fleet]"
         echo "name = \"$node\""
-        echo "web = true"
-        echo "web_port = $(web_port "$node")"
         if [[ "$net" == 1 ]]; then
             echo 'net = "static"'
-            # The point of a dev mesh: drive any node from any node's page.
+            # The point of a dev mesh: drive any node from any node.
             echo 'net_commands = true'
             echo
             echo "[fleet.static]"
@@ -201,10 +194,7 @@ start_daemon() {
         sleep 0.1
     done
     daemon_up "$node" || die "$node: daemon did not start — see $dir/daemon.out"
-    if grep -q "web view not started" "$dir/daemon.out"; then
-        warn "$node: web view not started — $(grep "web view not started" "$dir/daemon.out" | tail -1)"
-    fi
-    ok "$node: daemon up  ${DIM}http://127.0.0.1:$(web_port "$node")/${NC}"
+    ok "$node: daemon up"
 }
 
 # ── Commands ────────────────────────────────────────────────────────
@@ -233,7 +223,7 @@ cmd_up() {
     done
     echo >&2
     info "Try: ./bin/dev jig ${NODES[0]} spawn hello -c \"say hi, then stop\""
-    info "     ./bin/dev web ${NODES[0]}    ./bin/dev attach ${NODES[0]}"
+    info "     ./bin/dev jig ${NODES[0]}    ./bin/dev attach ${NODES[0]}"
 }
 
 cmd_down() {
@@ -275,8 +265,8 @@ cmd_ports() {
     echo "worktree  $PROJECT_ROOT"
     echo "slot      $JIG_DEV_SLOT  (confit; slug $JIG_DEV_SLUG)"
     for node in "${NODES[@]}"; do
-        printf "%-8s  web http://127.0.0.1:%s/   net %s:%s   %s\n" \
-            "$node" "$(web_port "$node")" "$(net_ip "$node")" "$(net_port "$node")" "$(node_dir "$node")"
+        printf "%-8s  net %s:%s   %s\n" \
+            "$node" "$(net_ip "$node")" "$(net_port "$node")" "$(node_dir "$node")"
     done
 }
 
@@ -312,12 +302,6 @@ cmd_attach() {
     local node=${1:?usage: ./bin/dev attach <node>}
     node_index "$node" >/dev/null
     as_node "$node" tmux attach
-}
-
-cmd_web() {
-    local node=${1:?usage: ./bin/dev web <node>}
-    shift
-    jig_as "$node" web "$@"
 }
 
 cmd_logs() {
@@ -381,9 +365,9 @@ Commands:
   down | kill              Stop every daemon and its tmux server.
   clean                    down, then delete .dev/ (repos, state, logs).
   status                   Daemon status and \`jig ps\` for each node.
-  ports                    This worktree's slot, web ports, net addresses.
-  jig <node> <args...>     Run jig as that node, in its scratch repo.
-  web <node> [--no-open]   Open that node's web view.
+  ports                    This worktree's slot and net addresses.
+  jig <node> [args...]     Run jig as that node, in its scratch repo
+                           (no args: its TUI).
   attach <node>            Attach to that node's tmux server (workers).
   logs <node> [-f]         That node's daemon log.
   health                   \`jig health\` for each node (net checks, kro-251+).
@@ -412,7 +396,6 @@ main() {
     shell) cmd_shell ;;
     jig) cmd_jig "$@" ;;
     attach | a) cmd_attach "$@" ;;
-    web) cmd_web "$@" ;;
     logs) cmd_logs "$@" ;;
     health) cmd_health ;;
     net-setup) cmd_net_setup ;;

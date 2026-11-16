@@ -289,8 +289,6 @@ name = "devbox"                # defaults to the hostname
 
 Beside the name, jig mints a node id once into `~/.config/jig/node_id`. It survives restarts, renames and hostname changes. Delete the file to give the machine a new identity.
 
-The same section turns on the daemon's local web view (`web = true`, `web_port = 7477`); see [Monitoring](/docs/monitoring/#web-view).
-
 ## Iterating after init
 
 `jig init` is a first pass. Iterate on the generated docs — ask your agent to improve `docs/index.md`, or edit by hand. Consider adding:

@@ -1,19 +1,19 @@
-//! Two real daemons on one `static` mesh over loopback: each one's web view
-//! shows the other's frame, and a verb naming the other machine runs there.
+//! Two real daemons on one `static` mesh over loopback, spoken to the way a
+//! peer speaks to them: one newline-delimited JSON request per connection on
+//! the fleet port, as a caller the mesh trusts.
 //!
 //! Both listen on `127.0.0.1` (macOS has no other loopback address), so each
-//! trusts and dials the other by that address. That holds for two nodes; a
-//! third would need an address of its own (`./bin/dev net-setup`).
+//! trusts and dials the other by that address, and so does this test. That
+//! holds for two nodes; a third would need an address of its own
+//! (`./bin/dev net-setup`).
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::time::Duration;
 
-use jig_api::{
-    ApiError, Client, Fleet, FleetRequest, IssuesRequest, KillRequest, SessionRequest, SpawnRequest,
-};
+use predicates::prelude::*;
+use serde_json::{json, Value};
 
-use super::web::{web_url, with_client};
 use crate::common::{wait_for, Sandbox};
 
 /// A loopback port nothing is listening on right now.
@@ -32,8 +32,6 @@ fn node(name: &str, port: u16, peer: &str, peer_port: u16, commands: bool) -> Sa
     sandbox.write_global_config(&format!(
         r#"[fleet]
 name = "{name}"
-web = true
-web_port = 0
 net = "static"
 net_commands = {commands}
 
@@ -45,31 +43,8 @@ peers = [{{ name = "{peer}", addr = "127.0.0.1:{peer_port}" }}]
     sandbox
 }
 
-fn fleet(url: &str) -> Fleet {
-    with_client(url, async |base| {
-        Client::new(base).unwrap().call(FleetRequest).await
-    })
-    .expect("fleet")
-}
-
-/// Kill `worker` on `machine`, through the web view at `url`.
-fn kill_on(url: &str, machine: &str, worker: &str) -> Result<String, ApiError> {
-    with_client(url, async |base| {
-        let session = Client::new(base).unwrap().call(SessionRequest).await?;
-        let request = KillRequest {
-            worker: worker.into(),
-            machine: Some(machine.into()),
-        };
-        let outcome = Client::with_token(base, &session.token)
-            .unwrap()
-            .call(request)
-            .await?;
-        Ok(outcome.message)
-    })
-}
-
-/// alice and bob, meshed; `bob_commands`: whether bob takes verbs from peers.
-/// Returns once alice's page shows bob's frame.
+/// alice and bob, meshed; `bob_commands`: whether bob takes verbs from
+/// peers. Returns bob's fleet port.
 fn mesh(bob_commands: bool) -> (Sandbox, Sandbox, u16) {
     let (alice_port, bob_port) = (free_port(), free_port());
     let alice = node("alice", alice_port, "bob", bob_port, true);
@@ -77,121 +52,102 @@ fn mesh(bob_commands: bool) -> (Sandbox, Sandbox, u16) {
     (alice, bob, bob_port)
 }
 
-#[test]
-fn each_web_view_shows_the_whole_fleet() {
-    let (alice, bob, _) = mesh(false);
-    let _a = alice.start_daemon();
-    let _b = bob.start_daemon();
+/// One request to the fleet listener on `port`, and its answer.
+fn ask(port: u16, request: Value) -> Value {
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    writeln!(stream, "{request}").unwrap();
+    let mut reply = String::new();
+    BufReader::new(&stream).read_line(&mut reply).unwrap();
+    serde_json::from_str(&reply).unwrap_or_else(|e| panic!("{e}: {reply}"))
+}
 
-    for (sandbox, here, there) in [(&alice, "alice", "bob"), (&bob, "bob", "alice")] {
-        let url = web_url(sandbox);
-        wait_for(
-            || {
-                fleet(&url)
-                    .machines
-                    .iter()
-                    .any(|m| m.status.is_some() && !m.is_local())
-            },
-            &format!("{here}'s page to show {there}"),
-        );
-        let fleet = fleet(&url);
-        let names: Vec<_> = fleet.machines.iter().map(|m| m.name.as_str()).collect();
-        assert_eq!(names, [here, there], "{fleet:?}");
-        assert!(fleet.machines[0].is_local());
-        let peer = &fleet.machines[1];
-        assert_eq!(peer.node.as_deref(), Some("127.0.0.1"));
-        assert_eq!(
-            peer.status.as_ref().and_then(|s| s.machine.as_deref()),
-            Some(there),
-            "the frame is {there}'s own"
-        );
-    }
+/// Wait until the fleet listener on `port` answers.
+fn wait_for_listener(port: u16) {
+    wait_for(
+        || TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_ok(),
+        "the fleet listener",
+    );
+}
+
+/// The reason in an `Error` answer, or a panic naming what came instead.
+fn refusal(answer: &Value) -> &str {
+    assert_eq!(answer["response"], "error", "{answer}");
+    answer["body"].as_str().unwrap()
 }
 
 #[test]
-fn a_verb_for_another_machine_runs_there() {
-    let (alice, bob, _) = mesh(true);
-    let _a = alice.start_daemon();
+fn a_peer_reads_a_machine_s_own_frame() {
+    let (_alice, bob, bob_port) = mesh(false);
     let _b = bob.start_daemon();
-    let url = web_url(&alice);
-    wait_for(
-        || {
-            fleet(&url)
-                .machines
-                .iter()
-                .any(|m| m.status.is_some() && !m.is_local())
-        },
-        "alice's page to show bob",
-    );
+    wait_for_listener(bob_port);
+
+    // Reads need no `net_commands`.
+    let status = ask(bob_port, json!({ "request": "get_status" }));
+    assert_eq!(status["response"], "status", "{status}");
+    assert_eq!(status["body"]["info"]["machine"]["name"], "bob");
+
+    let issues = ask(bob_port, json!({ "request": "get_issues" }));
+    assert_eq!(issues["response"], "issues", "{issues}");
+}
+
+#[test]
+fn a_verb_from_a_peer_runs_on_the_machine_it_reaches() {
+    let (_alice, bob, bob_port) = mesh(true);
+    let _b = bob.start_daemon();
+    wait_for_listener(bob_port);
 
     // bob's executor answering is what its refusal proves.
-    match kill_on(&url, "127.0.0.1", "no-such-repo/x") {
-        Err(ApiError::Refused(code, reason)) => {
-            assert_eq!(code.as_u16(), 409);
-            assert!(
-                reason.contains("no tracked repo named 'no-such-repo'"),
-                "{reason}"
-            );
-        }
-        other => panic!("expected bob's refusal, got {other:?}"),
-    }
+    let kill = ask(
+        bob_port,
+        json!({ "request": "kill", "worker": "no-such-repo/x" }),
+    );
+    assert!(
+        refusal(&kill).contains("no tracked repo named 'no-such-repo'"),
+        "{kill}"
+    );
+    // So is a spawn's; no agent starts.
+    let spawn = ask(
+        bob_port,
+        json!({ "request": "spawn", "repo": "no-such-repo", "issue": "KRO-1" }),
+    );
+    assert!(
+        refusal(&spawn).contains("no tracked repo named 'no-such-repo'"),
+        "{spawn}"
+    );
 }
 
 #[test]
-fn a_machine_refuses_verbs_from_peers_unless_turned_on() {
-    let (alice, bob, _) = mesh(false);
-    let _a = alice.start_daemon();
+fn a_machine_refuses_verbs_and_spawns_from_peers_unless_turned_on() {
+    let (_alice, bob, bob_port) = mesh(false);
     let _b = bob.start_daemon();
-    let url = web_url(&alice);
-    wait_for(
-        || {
-            fleet(&url)
-                .machines
-                .iter()
-                .any(|m| m.status.is_some() && !m.is_local())
-        },
-        "alice's page to show bob",
-    );
+    wait_for_listener(bob_port);
 
-    match kill_on(&url, "127.0.0.1", "no-such-repo/x") {
-        Err(ApiError::Refused(code, reason)) => {
-            assert_eq!(code.as_u16(), 409);
-            assert!(
-                reason.contains("bob does not take commands over the network"),
-                "{reason}"
-            );
-        }
-        other => panic!("expected bob to refuse, got {other:?}"),
+    for request in [
+        json!({ "request": "kill", "worker": "no-such-repo/x" }),
+        json!({ "request": "spawn", "repo": "no-such-repo", "issue": "KRO-1" }),
+    ] {
+        let answer = ask(bob_port, request);
+        assert!(
+            refusal(&answer).contains("bob does not take commands over the network"),
+            "{answer}"
+        );
     }
 }
 
 #[test]
 fn a_peer_cannot_stop_a_daemon() {
-    let (alice, bob, bob_port) = mesh(true);
-    let _a = alice.start_daemon();
+    let (_alice, bob, bob_port) = mesh(true);
     let _b = bob.start_daemon();
-    let url = web_url(&alice);
-    wait_for(
-        || {
-            fleet(&url)
-                .machines
-                .iter()
-                .any(|m| m.status.is_some() && !m.is_local())
-        },
-        "bob's fleet listener",
+    wait_for_listener(bob_port);
+
+    let answer = ask(bob_port, json!({ "request": "shutdown" }));
+    assert!(
+        refusal(&answer).contains("only taken on the local socket"),
+        "{answer}"
     );
-
-    // Straight onto bob's fleet port, as a trusted peer would.
-    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, bob_port)).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    stream.write_all(b"{\"request\":\"shutdown\"}\n").unwrap();
-    let mut reply = String::new();
-    BufReader::new(&stream).read_line(&mut reply).unwrap();
-    assert!(reply.contains("\"error\""), "{reply}");
-    assert!(reply.contains("only taken on the local socket"), "{reply}");
-
     bob.jig().args(["daemon", "status"]).assert().success();
 }
 
@@ -207,7 +163,25 @@ fn ps_fleet_needs_a_fleet_network() {
 }
 
 #[test]
-fn ps_fleet_asks_every_peer_and_names_the_silent_ones() {
+fn ps_fleet_asks_every_peer() {
+    let (alice, bob, bob_port) = mesh(false);
+    let _a = alice.start_daemon();
+    let _b = bob.start_daemon();
+    wait_for_listener(bob_port);
+
+    alice
+        .jig()
+        .args(["ps", "--fleet"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "No spawned sessions on any machine",
+        ))
+        .stderr(predicates::str::contains("not answering").not());
+}
+
+#[test]
+fn ps_fleet_names_the_silent_peers() {
     let (alice, bob, _) = mesh(true);
     let _a = alice.start_daemon();
     // bob is configured but never started.
@@ -218,107 +192,5 @@ fn ps_fleet_asks_every_peer_and_names_the_silent_ones() {
         .args(["ps", "--fleet"])
         .assert()
         .success()
-        .stderr(predicates::str::contains(
-            "No spawned sessions on any machine",
-        ))
         .stderr(predicates::str::contains("bob not answering"));
-}
-
-/// Spawn `issue` in `repo` on `machine`, through the web view at `url`.
-fn spawn_on(url: &str, machine: &str, repo: &str, issue: &str) -> Result<String, ApiError> {
-    with_client(url, async |base| {
-        let session = Client::new(base).unwrap().call(SessionRequest).await?;
-        let request = SpawnRequest {
-            repo: repo.into(),
-            issue: issue.into(),
-            machine: Some(machine.into()),
-        };
-        let outcome = Client::with_token(base, &session.token)
-            .unwrap()
-            .call(request)
-            .await?;
-        Ok(outcome.message)
-    })
-}
-
-#[test]
-fn a_spawn_for_another_machine_runs_there() {
-    let (alice, bob, _) = mesh(true);
-    let _a = alice.start_daemon();
-    let _b = bob.start_daemon();
-    let url = web_url(&alice);
-    wait_for(
-        || {
-            fleet(&url)
-                .machines
-                .iter()
-                .any(|m| m.status.is_some() && !m.is_local())
-        },
-        "alice's page to show bob",
-    );
-
-    // bob's executor answering is what its refusal proves; no agent starts.
-    match spawn_on(&url, "127.0.0.1", "no-such-repo", "KRO-1") {
-        Err(ApiError::Refused(code, reason)) => {
-            assert_eq!(code.as_u16(), 409);
-            assert!(
-                reason.contains("no tracked repo named 'no-such-repo'"),
-                "{reason}"
-            );
-        }
-        other => panic!("expected bob's refusal, got {other:?}"),
-    }
-}
-
-#[test]
-fn a_machine_refuses_spawns_from_peers_unless_turned_on() {
-    let (alice, bob, _) = mesh(false);
-    let _a = alice.start_daemon();
-    let _b = bob.start_daemon();
-    let url = web_url(&alice);
-    wait_for(
-        || {
-            fleet(&url)
-                .machines
-                .iter()
-                .any(|m| m.status.is_some() && !m.is_local())
-        },
-        "alice's page to show bob",
-    );
-    match spawn_on(&url, "127.0.0.1", "no-such-repo", "KRO-1") {
-        Err(ApiError::Refused(_, reason)) => assert!(
-            reason.contains("bob does not take commands over the network"),
-            "{reason}"
-        ),
-        other => panic!("expected bob to refuse, got {other:?}"),
-    }
-}
-
-#[test]
-fn a_machine_s_issues_are_listed_by_that_machine() {
-    let (alice, bob, _) = mesh(false);
-    let _a = alice.start_daemon();
-    let _b = bob.start_daemon();
-    let url = web_url(&alice);
-    wait_for(
-        || {
-            fleet(&url)
-                .machines
-                .iter()
-                .any(|m| m.status.is_some() && !m.is_local())
-        },
-        "alice's page to show bob",
-    );
-    // Reads need no `net_commands`. bob tracks no repo with an issue
-    // tracker, so his list is empty, but it is his.
-    let issues = with_client(&url, async |base| {
-        Client::new(base)
-            .unwrap()
-            .call(IssuesRequest {
-                machine: Some("127.0.0.1".into()),
-            })
-            .await
-    })
-    .expect("bob's issues");
-    assert!(issues.repos.is_empty(), "{issues:?}");
 }

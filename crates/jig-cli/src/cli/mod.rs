@@ -65,7 +65,6 @@ crate::command_enum! {
     (Which, commands::Which),
     (Health, commands::Health),
     (Daemon, commands::Daemon),
-    (Web, commands::Web),
     (Fleet, commands::Fleet),
 
     #[command(visible_alias = "h")]

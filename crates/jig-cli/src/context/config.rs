@@ -83,10 +83,6 @@ pub struct FleetConfig {
     /// What the fleet calls this machine. Defaults to the hostname.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Serve the work view over HTTP on `127.0.0.1`. Off by default.
-    pub web: bool,
-    /// The port the web view listens on.
-    pub web_port: u16,
     /// The private network peers reach this machine over. Unset means no
     /// fleet networking at all.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -106,8 +102,6 @@ impl Default for FleetConfig {
     fn default() -> Self {
         Self {
             name: None,
-            web: false,
-            web_port: Self::DEFAULT_WEB_PORT,
             net: None,
             net_port: net::DEFAULT_PORT,
             net_commands: false,
@@ -117,8 +111,6 @@ impl Default for FleetConfig {
 }
 
 impl FleetConfig {
-    pub const DEFAULT_WEB_PORT: u16 = 7477;
-
     /// The configured network backend, or `None` when `net` is unset.
     ///
     /// Builds it only — no backend binds anything until it is asked to
@@ -233,8 +225,6 @@ timeout = 600                    # seconds a fetch or push may take, or "none"
 
 # [fleet]
 # name = "devbox"                # machine name in the fleet view (default: hostname)
-# web = true                     # serve the work view on http://127.0.0.1 (`jig web`)
-# web_port = 7477
 # net = "tailscale"              # private network for the fleet: "tailscale" | "static"
 # net_port = 7473                # jig's port on each tailnet node
 #
@@ -293,17 +283,12 @@ mod tests {
     }
 
     #[test]
-    fn the_web_view_is_off_by_default() {
-        let cfg: AppConfig = toml::from_str("[fleet]\nname = \"devbox\"\n").unwrap();
-        assert!(!cfg.fleet.web);
-        assert_eq!(cfg.fleet.web_port, FleetConfig::DEFAULT_WEB_PORT);
-    }
-
-    #[test]
-    fn the_web_view_can_be_turned_on_and_moved() {
-        let cfg: AppConfig = toml::from_str("[fleet]\nweb = true\nweb_port = 9000\n").unwrap();
-        assert!(cfg.fleet.web);
-        assert_eq!(cfg.fleet.web_port, 9000);
+    fn a_config_from_the_web_view_days_still_loads() {
+        // `web` and `web_port` were removed with the web view; a config
+        // that still has them must not stop jig from starting.
+        let cfg: AppConfig =
+            toml::from_str("[fleet]\nname = \"devbox\"\nweb = true\nweb_port = 9000\n").unwrap();
+        assert_eq!(cfg.fleet.name.as_deref(), Some("devbox"));
     }
 
     #[test]

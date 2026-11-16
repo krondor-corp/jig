@@ -12,7 +12,6 @@ pub mod events;
 pub mod fleet;
 pub mod ipc;
 pub mod pidfile;
-pub mod web;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -24,7 +23,6 @@ use crate::context::{
     AppConfig, AppCtx, AppPaths, ContextError, Ctx, Machine, RepoEntry, RepoRegistry,
 };
 use jig_core::mux;
-use jig_core::net::{NetError, NodeId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DaemonError {
@@ -56,8 +54,8 @@ use actors::sync::SyncActor;
 use actors::triage::TriageActor;
 use actors::{ActivityProbe, ActorHandle};
 use commands::{Command, InFlight, WorkerKey};
-use fleet::{Fleet, PeerStatus};
-use ipc::{Request, Response};
+use fleet::Fleet;
+use ipc::Response;
 
 pub use crate::worker::events::WorkerState;
 pub use actors::triage::TriageEntry;
@@ -88,8 +86,6 @@ pub struct DaemonShared {
     tick_interval: u64,
     log: Option<PathBuf>,
     machine: Machine,
-    /// The web view's address, once it is listening.
-    web: Option<String>,
     /// This machine on the fleet network, when `[fleet] net` is set.
     fleet: Option<Arc<Fleet>>,
     /// What control verbs run against.
@@ -102,23 +98,6 @@ impl DaemonShared {
     /// command's own thread, never the listener's or the tick loop's.
     pub fn run_command(&self, worker: WorkerKey, cmd: Command) -> Response {
         commands::serve(&self.app, &self.in_flight, worker, cmd)
-    }
-
-    /// Run a control verb on the peer `node`, which owns `worker`.
-    pub fn run_command_on(&self, node: &NodeId, worker: WorkerKey, cmd: Command) -> Response {
-        self.ask_peer(node, cmd.request(worker))
-    }
-
-    /// Send `request` to the peer `node`: how anything addressed to another
-    /// machine gets there.
-    pub fn ask_peer(&self, node: &NodeId, request: Request) -> Response {
-        match &self.fleet {
-            Some(fleet) => fleet.ask(node, request),
-            None => Response::Error(format!(
-                "{} has no fleet network to reach {node} over (set [fleet] net)",
-                self.machine.name
-            )),
-        }
     }
 
     /// The issues this machine's repos could spawn, as last fetched.
@@ -141,14 +120,6 @@ impl DaemonShared {
         response
     }
 
-    /// Every peer's frame. None without a fleet network.
-    pub fn peers(&self) -> Result<Vec<PeerStatus>, NetError> {
-        match &self.fleet {
-            Some(fleet) => fleet.poll(),
-            None => Ok(Vec::new()),
-        }
-    }
-
     /// This machine on the fleet network, for `daemon start` to serve.
     pub fn fleet(&self) -> Option<Arc<Fleet>> {
         self.fleet.clone()
@@ -165,7 +136,6 @@ impl DaemonShared {
             log: self.log.clone(),
             actors: self.probes.iter().map(ActivityProbe::activity).collect(),
             machine: Some(self.machine.clone()),
-            web: self.web.clone(),
         }
     }
 
@@ -260,7 +230,6 @@ impl Daemon {
             tick_interval: app.config.tick_interval,
             log: crate::context::log::session_log().map(|l| l.path().to_path_buf()),
             machine,
-            web: None,
             fleet,
             app: Arc::clone(&app),
             in_flight: InFlight::default(),
@@ -282,12 +251,6 @@ impl Daemon {
 
     pub fn config(&self) -> &AppConfig {
         &self.app.config
-    }
-
-    /// Advertise the web view at `url` in `Ping`/`Status`. Call before
-    /// handing out [`Self::shared`]: earlier handles keep the old value.
-    pub fn set_web_url(&mut self, url: String) {
-        self.shared.web = Some(url);
     }
 
     /// A handle the IPC listener can hold while the tick loop keeps running.
