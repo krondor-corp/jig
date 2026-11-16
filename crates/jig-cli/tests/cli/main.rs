@@ -5,6 +5,7 @@ mod common;
 
 mod attach;
 mod commit;
+mod health;
 mod hooks;
 mod init;
 mod multi_repo;

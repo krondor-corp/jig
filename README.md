@@ -93,7 +93,8 @@ eval "$(jig shell-init zsh)"
 | `jig config base <branch>` | Set base branch for current repo |
 | `jig config on-create <cmd>` | Set on-create hook for current repo |
 | `jig issues` | Browse and manage Linear issues |
-| `jig health` | Show dependency and agent status |
+| `jig health` | Show dependency, fleet network and agent status |
+| `jig fleet join <authkey>` | Join the tailnet as a jig peer (`tag:jig`) |
 | `jig hooks` | Manage git/agent hooks |
 | `jig shell-init <shell>` | Print shell integration script |
 | `jig shell-setup` | Auto-configure shell integration |

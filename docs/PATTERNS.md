@@ -59,6 +59,7 @@ impl Op for Create {
 - **jig-core modules**: One submodule directory per domain
   - `git/` — Git operations via git2: `Repo`, `Worktree`, `Branch`, `WorktreeRef`
   - `mux/` — `Mux` trait + backends (`TmuxMux`, `HerdrMux`)
+  - `net/` — `Net` trait + fleet network backends (`TailscaleNet`, `StaticNet`)
   - `issues/` — Issue provider trait + Linear implementation
   - `agents/` — Agent adapters (Claude Code)
   - `github/` — GitHub API client and queries
