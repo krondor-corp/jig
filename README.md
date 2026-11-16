@@ -28,6 +28,7 @@ Git worktree manager for orchestrating Agentic Coding Assistants in parallel. Sc
 - **Event-driven orchestration** - JSONL event logs track worker lifecycle, derive state, and trigger actions
 - **Daemon loop** - Background orchestrator monitors workers, nudges idle/stuck sessions, and sends notifications
 - **GitHub integration** - Detect CI failures, merge conflicts, and review comments via `gh` CLI
+- **Control hub** - plain `jig` opens a TUI over every worker on this machine and your fleet: what needs you, attach, nudge, kill, prune
 - **Live dashboard** - `jig ps --watch` shows real-time worker status with event-derived state
 
 ## Install
@@ -69,9 +70,11 @@ eval "$(jig shell-init zsh)"
 | `jig spawn --context <text>` | Provide task context for the agent |
 | `jig spawn --issue ENG-123` | Link a Linear issue to the worker |
 | `jig spawn --auto` | Auto-start the agent with full prompt |
+| `jig` | The TUI: every worker here and on the fleet, with attach and the control verbs (also `jig tui`) |
 | `jig ps` | Show status of spawned sessions |
 | `jig ps -w` | Live dashboard (updates every 2s) |
 | `jig ps -g` | Global mode — workers across all repos |
+| `jig ps --fleet` | Every machine on the fleet network, with a MACHINE column |
 | `jig attach [branch]` | Attach to tmux session |
 | `jig kill <branch>` | Kill a running tmux window |
 | `jig kill --all` | Kill all workers |

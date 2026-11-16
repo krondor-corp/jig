@@ -30,6 +30,7 @@ glob.workspace = true
 dirs.workspace = true
 git2.workspace = true
 crossterm.workspace = true
+ratatui.workspace = true
 chrono.workspace = true
 ctrlc.workspace = true
 service-manager.workspace = true

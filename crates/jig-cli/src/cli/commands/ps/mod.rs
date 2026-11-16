@@ -81,13 +81,14 @@ impl Op for Ps {
     }
 }
 
-/// One rendered view's worth of daemon state, whatever its source.
+/// One rendered view's worth of daemon state, whatever its source. The TUI
+/// reads this machine's workers through it too.
 #[derive(Default)]
-struct Frame {
-    workers: Vec<WorkerState>,
-    triages: Vec<TriageEntry>,
-    spawning: Vec<Branch>,
-    poll_remaining: u64,
+pub(crate) struct Frame {
+    pub(crate) workers: Vec<WorkerState>,
+    pub(crate) triages: Vec<TriageEntry>,
+    pub(crate) spawning: Vec<Branch>,
+    pub(crate) poll_remaining: u64,
 }
 
 impl Frame {
@@ -95,7 +96,7 @@ impl Frame {
     ///
     /// The daemon always watches every tracked repo, so a repo-scoped `ps`
     /// narrows the answer rather than asking a narrower question.
-    fn from_status(status: DaemonStatus, scope: Option<&Path>) -> Self {
+    pub(crate) fn from_status(status: DaemonStatus, scope: Option<&Path>) -> Self {
         let repo_name = scope
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy());
@@ -122,7 +123,7 @@ impl Frame {
     /// whether the window is still there — local reads, no side effects. PR
     /// data is whatever the last daemon run recorded, which is the honest
     /// answer when nothing has polled GitHub since.
-    fn from_disk(ctx: &Ctx, scope: Option<&Path>) -> Self {
+    pub(crate) fn from_disk(ctx: &Ctx, scope: Option<&Path>) -> Self {
         let mut workers = Vec::new();
 
         for repo_ctx in ctx.repos() {
@@ -197,7 +198,7 @@ impl Ps {
 /// A daemon that answers badly — one left from an older jig, say — is worth
 /// a log line but not a failed `ps`: the in-process fallback below still
 /// produces the right answer.
-fn daemon_frame(paths: &AppPaths, scope: Option<&Path>) -> Option<Frame> {
+pub(crate) fn daemon_frame(paths: &AppPaths, scope: Option<&Path>) -> Option<Frame> {
     match ipc::status(paths) {
         Ok(Some(status)) => Some(Frame::from_status(status, scope)),
         Ok(None) => None,

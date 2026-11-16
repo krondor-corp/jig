@@ -68,6 +68,7 @@ impl Op for Create {
   - `context/` — What a command runs against: `AppPaths`, `AppCtx`, `Ctx`, `RepoCtx`, config loading, `Logs`
   - `worker/` — Worker state, lifecycle, events
   - `daemon/` — Background daemon with actor threads; `daemon/fleet.rs` serves peers over `Net` and polls them
+  - `tui/` — The TUI plain `jig` opens (ratatui + crossterm, std threads, no async). `app` holds the state and turns keys into `Effect`s the loop in `mod.rs` carries out, so it is tested with keys alone; `source` runs the background work (polling this machine and the fleet, running verbs); a file per screen (`workers`). `theme` and `toast` are ported from octorus (ushironoko/octorus, MIT) and say so; port more of it the same way
   - `hooks/` — Git and agent hook management
   - `notify/` — Notification system
 
