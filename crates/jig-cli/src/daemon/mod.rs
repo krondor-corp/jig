@@ -9,9 +9,9 @@ pub mod actors;
 pub mod checks;
 pub mod commands;
 pub mod events;
+pub mod fleet;
 pub mod ipc;
 pub mod pidfile;
-pub mod web;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -46,6 +46,7 @@ pub struct TickContext {
 
 type Worker = crate::worker::Worker;
 
+use actors::issues::{IssueBoard, IssuesActor, IssuesRequest};
 use actors::monitor::MonitorActor;
 use actors::prune::PruneActor;
 use actors::spawn::SpawnActor;
@@ -53,6 +54,7 @@ use actors::sync::SyncActor;
 use actors::triage::TriageActor;
 use actors::{ActivityProbe, ActorHandle};
 use commands::{Command, InFlight, WorkerKey};
+use fleet::Fleet;
 use ipc::Response;
 
 pub use crate::worker::events::WorkerState;
@@ -72,6 +74,9 @@ pub struct DaemonShared {
     monitor: Arc<MonitorActor>,
     triage: Arc<TriageActor>,
     spawn: Arc<SpawnActor>,
+    issues: Arc<IssuesActor>,
+    /// Set to have the next tick fetch the issues, poll or no poll.
+    refresh_issues: Arc<AtomicBool>,
     probes: Arc<Vec<ActivityProbe>>,
     /// Unix timestamp of the last completed tick.
     ticked_at: Arc<AtomicI64>,
@@ -81,8 +86,8 @@ pub struct DaemonShared {
     tick_interval: u64,
     log: Option<PathBuf>,
     machine: Machine,
-    /// The web view's address, once it is listening.
-    web: Option<String>,
+    /// This machine on the fleet network, when `[fleet] net` is set.
+    fleet: Option<Arc<Fleet>>,
     /// What control verbs run against.
     app: Arc<AppCtx>,
     in_flight: InFlight,
@@ -93,6 +98,31 @@ impl DaemonShared {
     /// command's own thread, never the listener's or the tick loop's.
     pub fn run_command(&self, worker: WorkerKey, cmd: Command) -> Response {
         commands::serve(&self.app, &self.in_flight, worker, cmd)
+    }
+
+    /// The issues this machine's repos could spawn, as last fetched.
+    pub fn issues(&self) -> IssueBoard {
+        self.issues.board()
+    }
+
+    /// Have the next tick fetch the issues again. Answers at once; the board
+    /// changes when the fetch lands.
+    pub fn refresh_issues(&self) {
+        self.refresh_issues.store(true, Ordering::Relaxed);
+    }
+
+    /// Spawn a worker for `issue` in `repo` — the answer to `Spawn`. Called
+    /// on the request's own thread, like [`Self::run_command`].
+    pub fn spawn_issue(&self, repo: &str, issue: &str) -> Response {
+        let response = commands::spawn_issue(&self.app, &self.in_flight, repo, issue);
+        // Its row on the board now says it is spawned.
+        self.refresh_issues();
+        response
+    }
+
+    /// This machine on the fleet network, for `daemon start` to serve.
+    pub fn fleet(&self) -> Option<Arc<Fleet>> {
+        self.fleet.clone()
     }
 
     /// Identity and liveness — the answer to `Request::Ping`.
@@ -106,7 +136,6 @@ impl DaemonShared {
             log: self.log.clone(),
             actors: self.probes.iter().map(ActivityProbe::activity).collect(),
             machine: Some(self.machine.clone()),
-            web: self.web.clone(),
         }
     }
 
@@ -123,6 +152,20 @@ impl DaemonShared {
     }
 }
 
+/// This machine on the fleet network, when `[fleet] net` is set. A network
+/// that is misconfigured is worth a warning, not a daemon that won't start:
+/// `jig health` says what is wrong with it.
+fn fleet(config: &AppConfig, machine: &Machine) -> Option<Arc<Fleet>> {
+    let fleet = &config.fleet;
+    match fleet.net(&machine.name) {
+        Ok(net) => net.map(|net| Arc::new(Fleet::new(net, &machine.name, fleet.net_commands))),
+        Err(e) => {
+            tracing::warn!("fleet network off: {}", e);
+            None
+        }
+    }
+}
+
 /// The daemon — owns actors and drives the tick loop.
 pub struct Daemon {
     pub sync: ActorHandle<SyncActor>,
@@ -130,6 +173,7 @@ pub struct Daemon {
     pub prune: ActorHandle<PruneActor>,
     pub spawn: ActorHandle<SpawnActor>,
     pub triage: ActorHandle<TriageActor>,
+    pub issues: ActorHandle<IssuesActor>,
 
     app: Arc<AppCtx>,
     registry: RepoRegistry,
@@ -157,23 +201,28 @@ impl Daemon {
 
         let last_poll = Instant::now() - Duration::from_secs(app.config.poll_interval + 1);
         let started_at = chrono::Utc::now().timestamp();
+        let fleet = fleet(&app.config, &machine);
 
         let sync = ActorHandle::<SyncActor>::new();
         let monitor = ActorHandle::<MonitorActor>::new();
         let prune = ActorHandle::<PruneActor>::new();
         let spawn = ActorHandle::<SpawnActor>::new();
         let triage = ActorHandle::<TriageActor>::new();
+        let issues = ActorHandle::<IssuesActor>::new();
 
         let shared = DaemonShared {
             monitor: monitor.shared(),
             triage: triage.shared(),
             spawn: spawn.shared(),
+            issues: issues.shared(),
+            refresh_issues: Arc::new(AtomicBool::new(false)),
             probes: Arc::new(vec![
                 monitor.probe(),
                 sync.probe(),
                 prune.probe(),
                 spawn.probe(),
                 triage.probe(),
+                issues.probe(),
             ]),
             ticked_at: Arc::new(AtomicI64::new(started_at)),
             poll_deadline: Arc::new(AtomicI64::new(started_at)),
@@ -181,7 +230,7 @@ impl Daemon {
             tick_interval: app.config.tick_interval,
             log: crate::context::log::session_log().map(|l| l.path().to_path_buf()),
             machine,
-            web: None,
+            fleet,
             app: Arc::clone(&app),
             in_flight: InFlight::default(),
         };
@@ -192,6 +241,7 @@ impl Daemon {
             prune,
             spawn,
             triage,
+            issues,
             app,
             registry: cfg.registry,
             last_poll,
@@ -201,12 +251,6 @@ impl Daemon {
 
     pub fn config(&self) -> &AppConfig {
         &self.app.config
-    }
-
-    /// Advertise the web view at `url` in `Ping`/`Status`. Call before
-    /// handing out [`Self::shared`]: earlier handles keep the old value.
-    pub fn set_web_url(&mut self, url: String) {
-        self.shared.web = Some(url);
     }
 
     /// A handle the IPC listener can hold while the tick loop keeps running.
@@ -310,8 +354,11 @@ impl Daemon {
             });
         }
 
-        // Trigger background sync + spawn + triage if interval elapsed
-        if self.poll_is_due() {
+        // Trigger background sync + spawn + triage + issues if interval
+        // elapsed; issues also whenever someone asked for a refresh.
+        let polling = self.poll_is_due();
+        let refresh_issues = self.shared.refresh_issues.swap(false, Ordering::Relaxed);
+        if polling {
             self.sync
                 .send(actors::sync::SyncRequest { ctx: ctx.clone() });
             self.spawn
@@ -319,6 +366,14 @@ impl Daemon {
             self.triage
                 .send(actors::triage::TriageRequest { ctx: ctx.clone() });
             self.mark_polled();
+        }
+        if (polling || refresh_issues)
+            && !self.issues.send(IssuesRequest { ctx: ctx.clone() })
+            && refresh_issues
+        {
+            // A fetch is already running, and may have started before
+            // whatever the refresh is for (a spawn, say): ask again next tick.
+            self.shared.refresh_issues.store(true, Ordering::Relaxed);
         }
 
         // Published last, so a stale `ticked_at` over IPC means the tick

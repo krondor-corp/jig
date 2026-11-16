@@ -2,48 +2,38 @@
 
 Two ways to run real jig daemons on one machine without touching your own
 jig: a hermetic test suite with a pass/fail verdict, and an interactive
-fleet you can click through.
+fleet you can drive by hand.
 
 ## Hermetic: `make e2e`
 
 The integration tests in `crates/jig-cli/tests/{daemon,cli}` start real
 `jig daemon` processes through `common::Sandbox`: temp `XDG_CONFIG_HOME`
 and `XDG_RUNTIME_DIR`, temp git repos, free ports. They run in parallel
-and in CI. `tests/daemon/web.rs` covers the web view end to end: `[fleet]
-web` turns it on, `jig web` finds it, and its commands reach the daemon's
-executor.
+and in CI. `tests/daemon/fleet.rs` meshes two daemons over loopback and
+speaks the peer protocol to them the way a peer would.
 
 New daemon features get a test here first. Bind port 0 and ask the daemon
 where it landed, never a fixed port.
 
-## The web view
-
-| Part | Where |
-|------|-------|
-| API: an `ApiRequest` per endpoint, its wire types, and a typed `Client` | `crates/jig-api` (a file per request; compiles to wasm) |
-| Server: axum on its own `jig-web` thread and tokio runtime, a handler file per request | `crates/jig-cli/src/daemon/web/` (`api/` mirrors `jig-api`) |
-| App: Yew, built by Trunk into `web/dist/`, embedded in jig | `crates/jig-cli/web/` (its own workspace) |
-
-`make build-web` builds the app; it needs `trunk` and the `wasm32-unknown-unknown`
-target. A plain `cargo build` without it still works, and the page then says
-it isn't built. `./bin/dev up` builds both. A debug jig reads `web/dist/` from
-disk on every request, so after `make build-web` you only need to reload the
-page, not rebuild or restart jig.
-
-The server's unit tests (`daemon/web/tests.rs`) drive the router in-process
-with a stand-in daemon. They don't need the app built. Lint the app on its
-own: `cd crates/jig-cli/web && cargo clippy --target wasm32-unknown-unknown`.
-
-To see the failed-setups panel without starting an agent, give a node a
+To see a failed setup without starting an agent, give a node a
 failing `on_create` in its scratch repo's `jig.toml`, then spawn into it.
 Setup fails before `claude` would launch.
 
 ## Interactive: `bin/dev`
 
+From nothing to two meshed machines, and a TUI on one of them:
+
+```bash
+make fleet              # loopback aliases (sudo, only if missing), build, alice + bob meshed
+make tui                # alice's TUI; `make tui NODE=bob` for bob's
+```
+
+Piece by piece:
+
 ```bash
 ./bin/dev up                         # build; start alice + bob
 ./bin/dev jig alice spawn hello -c "say hi, then stop"
-./bin/dev web alice                  # the web view
+./bin/dev jig alice                  # alice's TUI
 ./bin/dev attach alice               # alice's tmux server (her workers)
 ./bin/dev status                     # daemon status + ps, every node
 ./bin/dev down                       # stop daemons and tmux servers
@@ -71,10 +61,11 @@ daemons so they pick up the new config and build.
 is required for `bin/dev`). confit gives each worktree a slot: 0 on `main`,
 otherwise the lowest free 1-9. Each port is band + lane + slot, so several
 worktrees can each run a fleet at once without collisions; `./bin/dev
-ports` prints this worktree's. To add a node, give it a web lane and a net
-lane under `[ports.services]`, then a line in `[dev.nodes]` and in `[dev.net]`.
+ports` prints this worktree's. To add a node, give it a net lane under
+`[ports.services]`, then a line in `[dev.nodes]`.
 
-Make targets: `make dev` (up), `make dev-kill` (stop daemons and tmux
+Make targets: `make fleet` (the meshed fleet, from nothing), `make tui`
+(a node's TUI), `make dev` (up, unmeshed), `make dev-kill` (stop daemons and tmux
 servers), `make dev-clean` (also delete `.dev/`), `make rust-clean`
 (`cargo clean`), `make clean` (both).
 
@@ -91,6 +82,15 @@ net = "static"
 listen = "127.0.0.11:<port>"
 peers = [{ name = "bob", addr = "127.0.0.12:<port>" }]
 ```
+
+(plus `net_commands = true` under `[fleet]`)
+
+With the mesh up, `./bin/dev jig alice ps --fleet` prints every node's
+workers. `--net` sets `net_commands = true` on every node, so any node can
+run verbs on another; a real machine leaves it off unless it wants peers to
+drive it. A node lists issues only for repos with `[issues.linear]` in
+their `jig.toml`, through a Linear profile in that node's own config, so
+the scratch repos have none until you give a node both.
 
 The static backend identifies a peer by source IP alone, so nodes on one
 machine need distinct addresses. Linux routes all of `127/8`. macOS only

@@ -58,6 +58,7 @@ crate::command_enum! {
     #[command(name = "retry-setup")]
     (RetrySetup, commands::RetrySetup),
 
+    (Tui, commands::Tui),
     (Nuke, commands::Nuke),
     (Init, commands::Init),
     (Update, commands::Update),
@@ -65,7 +66,7 @@ crate::command_enum! {
     (Which, commands::Which),
     (Health, commands::Health),
     (Daemon, commands::Daemon),
-    (Web, commands::Web),
+    (Fleet, commands::Fleet),
 
     #[command(visible_alias = "h")]
     (Home, commands::Home),

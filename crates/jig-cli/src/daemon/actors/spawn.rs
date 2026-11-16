@@ -3,7 +3,7 @@
 
 use std::sync::Mutex;
 
-use crate::context::RepoCtx;
+use crate::context::{AppConfig, RepoCtx};
 use crate::prompts::spawn_task;
 use jig_core::git::{Branch, Repo};
 use jig_core::issues::issue::{IssueFilter, IssueStatus};
@@ -111,7 +111,7 @@ impl Actor for SpawnActor {
                 spawning.push(branch.clone());
 
                 let mux = mux::for_repo(global.mux, &repo_name);
-                match spawn_worker_for_issue(&req.ctx, &issue, &cfg, &provider, &mux) {
+                match spawn_worker_for_issue(global, &issue, &cfg, &provider, &mux) {
                     Ok(_worker) => {
                         tracing::info!(worker = %branch, "auto-spawned worker");
                     }
@@ -127,8 +127,12 @@ impl Actor for SpawnActor {
     }
 }
 
-fn spawn_worker_for_issue(
-    ctx: &TickContext,
+/// Start a worker for `issue` and mark the issue in progress.
+///
+/// NOTE(canonical): auto-spawn and a spawn someone asked for (the daemon's
+/// `Spawn` request, `commands::spawn_issue`) both start issue workers here.
+pub(crate) fn spawn_worker_for_issue(
+    config: &AppConfig,
     issue: &Issue,
     cfg: &RepoCtx,
     provider: &IssueProvider,
@@ -143,7 +147,7 @@ fn spawn_worker_for_issue(
     let worker = Worker::spawn(
         cfg,
         branch,
-        &cfg.base_branch(&ctx.app.config),
+        &cfg.base_branch(config),
         spawn_task(issue, provider),
         true,
         Some(issue.id().clone()),

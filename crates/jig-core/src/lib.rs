@@ -8,6 +8,7 @@ pub mod git;
 pub mod github;
 pub mod issues;
 pub mod mux;
+pub mod net;
 pub mod prompt;
 
 pub use agents::Agent;
@@ -17,4 +18,5 @@ pub use github::GitHubClient;
 pub use issues::issue::IssueRef;
 pub use issues::{Issue, IssueFilter, IssuePriority, IssueProvider, IssueStatus, LinearProvider};
 pub use mux::{Mux, MuxError, TmuxMux};
+pub use net::{Net, NetError, NetKind};
 pub use prompt::Prompt;

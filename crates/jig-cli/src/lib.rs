@@ -10,6 +10,6 @@ pub mod daemon;
 pub mod hooks;
 pub mod notify;
 pub mod prompts;
-pub mod runtime;
 pub mod terminal;
+pub mod tui;
 pub mod worker;

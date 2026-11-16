@@ -16,7 +16,7 @@
 //!   thread per request, so a slow one never holds up the listener either.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -31,6 +31,7 @@ use jig_core::git::Branch;
 use jig_core::issues::issue::IssueRef;
 use jig_core::mux::AgentState;
 
+use super::actors::issues::IssueBoard;
 use super::actors::triage::TriageEntry;
 use super::actors::ActorActivity;
 use super::checks::PrHealth;
@@ -57,7 +58,7 @@ const SETUP_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// How long the server waits for a client that connected and went quiet, so
 /// one wedged client cannot stall the accept loop.
-const SERVER_TIMEOUT: Duration = Duration::from_secs(2);
+pub(super) const SERVER_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The longest the listener thread waits before re-checking `quit`.
 ///
@@ -91,6 +92,14 @@ pub enum Request {
     RetrySetup { worker: WorkerKey },
     /// Switch a worker's model.
     Model { worker: WorkerKey, model: String },
+
+    // ── Issues ──────────────────────────────────────────────────────
+    /// The issues this machine's repos could spawn, as last fetched.
+    GetIssues,
+    /// Fetch the issues again on the next tick.
+    RefreshIssues,
+    /// Start a worker for an issue in a tracked repo (its directory name).
+    Spawn { repo: String, issue: String },
 }
 
 impl Request {
@@ -103,15 +112,25 @@ impl Request {
             Self::Prune { worker } => Ok((worker, Command::Prune)),
             Self::RetrySetup { worker } => Ok((worker, Command::RetrySetup)),
             Self::Model { worker, model } => Ok((worker, Command::Model { model })),
-            other @ (Self::Ping | Self::GetStatus | Self::Shutdown) => Err(other),
+            other @ (Self::Ping
+            | Self::GetStatus
+            | Self::Shutdown
+            | Self::GetIssues
+            | Self::RefreshIssues
+            | Self::Spawn { .. }) => Err(other),
         }
     }
 
     /// How long a client waits for the answer.
-    fn client_timeout(&self) -> Duration {
+    pub(super) fn client_timeout(&self) -> Duration {
         match self {
-            Self::Ping | Self::GetStatus | Self::Shutdown => CLIENT_TIMEOUT,
-            Self::RetrySetup { .. } => SETUP_TIMEOUT,
+            Self::Ping
+            | Self::GetStatus
+            | Self::Shutdown
+            | Self::GetIssues
+            | Self::RefreshIssues => CLIENT_TIMEOUT,
+            // A spawn runs `on_create` before it answers.
+            Self::RetrySetup { .. } | Self::Spawn { .. } => SETUP_TIMEOUT,
             Self::Kill { .. } | Self::Nudge { .. } | Self::Prune { .. } | Self::Model { .. } => {
                 COMMAND_TIMEOUT
             }
@@ -129,6 +148,7 @@ pub enum Response {
     Pong(DaemonInfo),
     // Boxed: `Status` is orders of magnitude larger than the other variants.
     Status(Box<DaemonStatus>),
+    Issues(Box<IssueBoard>),
     Ok,
     Error(String),
 }
@@ -153,9 +173,6 @@ pub struct DaemonInfo {
     /// read an older daemon's reply.
     #[serde(default)]
     pub machine: Option<Machine>,
-    /// Where the web view is served, when `[fleet] web` turned it on.
-    #[serde(default)]
-    pub web: Option<String>,
 }
 
 /// What the daemon knows right now — the frame `jig ps` renders.
@@ -422,7 +439,8 @@ pub fn is_running(paths: &AppPaths) -> bool {
 
 // ── Framing ─────────────────────────────────────────────────────────
 
-fn write_message<T: Serialize>(mut stream: &UnixStream, msg: &T) -> Result<(), IpcError> {
+/// Write one message. Any stream: the unix socket, or a `Net` connection.
+pub(super) fn write_message<T: Serialize>(mut stream: impl Write, msg: &T) -> Result<(), IpcError> {
     let mut line = serde_json::to_vec(msg).map_err(|e| IpcError::Protocol(e.to_string()))?;
     line.push(b'\n');
     stream.write_all(&line)?;
@@ -430,7 +448,7 @@ fn write_message<T: Serialize>(mut stream: &UnixStream, msg: &T) -> Result<(), I
     Ok(())
 }
 
-fn read_message<T: for<'de> Deserialize<'de>>(stream: &UnixStream) -> Result<T, IpcError> {
+pub(super) fn read_message<T: for<'de> Deserialize<'de>>(stream: impl Read) -> Result<T, IpcError> {
     let mut line = String::new();
     let read = BufReader::new(stream).read_line(&mut line)?;
     if read == 0 {
@@ -572,6 +590,18 @@ fn handle_connection(
     stream.set_write_timeout(Some(SERVER_TIMEOUT))?;
 
     let req: Request = read_message(&stream)?;
+    if let Request::Spawn { repo, issue } = req {
+        let shared = shared.clone();
+        std::thread::Builder::new()
+            .name("jig-spawn".into())
+            .spawn(move || {
+                let response = guarded(|| shared.spawn_issue(&repo, &issue));
+                if let Err(e) = write_message(&stream, &response) {
+                    tracing::warn!("ipc spawn reply failed: {}", e);
+                }
+            })?;
+        return Ok(());
+    }
     match req.into_command() {
         Ok((worker, cmd)) => {
             let shared = shared.clone();
@@ -594,7 +624,7 @@ fn handle_connection(
 
 /// A panic while answering must not take the listener down with it — the
 /// daemon would go mute but keep ticking.
-fn guarded(answer: impl FnOnce() -> Response) -> Response {
+pub(super) fn guarded(answer: impl FnOnce() -> Response) -> Response {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(answer))
         .unwrap_or_else(|_| Response::Error("daemon panicked while answering".into()))
 }
@@ -603,6 +633,11 @@ fn dispatch(req: Request, shared: &DaemonShared, quit: &AtomicBool) -> Response 
     match req {
         Request::Ping => Response::Pong(shared.info()),
         Request::GetStatus => Response::Status(Box::new(shared.status())),
+        Request::GetIssues => Response::Issues(Box::new(shared.issues())),
+        Request::RefreshIssues => {
+            shared.refresh_issues();
+            Response::Ok
+        }
         Request::Shutdown => {
             tracing::info!("shutdown requested over ipc");
             quit.store(true, Ordering::Relaxed);
@@ -628,7 +663,6 @@ mod tests {
             log: None,
             actors,
             machine: Some(machine()),
-            web: None,
         }
     }
 

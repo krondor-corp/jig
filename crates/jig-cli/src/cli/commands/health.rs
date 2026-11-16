@@ -1,9 +1,10 @@
 //! Health command - validate system dependencies and repo setup
 
 use clap::Args;
+use jig_core::net::Check;
 
 use crate::context::AppCtx;
-use crate::context::{ContextError, RepoConfig};
+use crate::context::{ContextError, Machine, RepoConfig};
 use crate::terminal::check_dep;
 
 use crate::cli::op::{NoOutput, Op};
@@ -91,6 +92,36 @@ impl Op for Health {
         } else {
             check_fail("gh", Some("install from https://cli.github.com"));
             all_passed = false;
+        }
+
+        // Fleet network — only when this machine has opted in.
+        eprintln!();
+        match app.config.fleet.net(&Machine::name(&app.config)) {
+            Ok(None) => {
+                ui::header("Net");
+                check_ok("off", Some("(set [fleet] net to join a fleet)"));
+            }
+            Ok(Some(net)) => {
+                ui::header(&format!("Net: {}", net.kind()));
+                let health = net.health();
+                for (name, check) in [
+                    ("installed", &health.installed),
+                    ("connected", &health.connected),
+                    ("enrolled", &health.enrolled),
+                ] {
+                    match check {
+                        Check::Ok(d) => check_ok(name, Some(d)),
+                        Check::Warn(d) => check_warn(name, Some(d)),
+                        Check::Fail(d) => check_fail(name, Some(d)),
+                    }
+                }
+                all_passed &= health.ok();
+            }
+            Err(e) => {
+                ui::header("Net");
+                check_fail("config", Some(&e.to_string()));
+                all_passed = false;
+            }
         }
 
         // Section 2: Repository

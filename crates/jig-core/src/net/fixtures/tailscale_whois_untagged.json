@@ -1,0 +1,21 @@
+{
+  "Node": {
+    "ID": 1234567890,
+    "StableID": "nPHONE3CNTRL",
+    "Name": "phone.tail1234.ts.net.",
+    "User": 123,
+    "Key": "nodekey:3333",
+    "Addresses": ["100.101.1.3/32"],
+    "AllowedIPs": ["100.101.1.3/32"],
+    "Hostinfo": {"OS": "iOS", "Hostname": "phone"},
+    "ComputedName": "phone",
+    "ComputedNameWithHost": "phone"
+  },
+  "UserProfile": {
+    "ID": 123,
+    "LoginName": "operator@example.com",
+    "DisplayName": "Operator",
+    "ProfilePicURL": ""
+  },
+  "CapMap": null
+}

@@ -1,4 +1,5 @@
-//! Control verbs — `kill`, `nudge`, `prune`, `retry-setup`, `model`.
+//! Control verbs — `kill`, `nudge`, `prune`, `retry-setup`, `model` — and
+//! `spawn`, which starts a worker for an issue rather than acting on one.
 //!
 //! NOTE(canonical): this is the one code path that executes a control verb
 //! against a worker. The daemon runs it for an IPC [`Request`]; the CLI runs
@@ -23,6 +24,7 @@ use jig_core::mux::{self, Mux, MuxError};
 use jig_core::prompt::Prompt;
 
 use super::actors::prune::{prune_single, PruneTarget};
+use super::actors::spawn::spawn_worker_for_issue;
 use super::ipc::{self, IpcError, Request, Response};
 use crate::context::{AppConfig, AppCtx, AppPaths, ContextError, RepoCtx, RepoRegistry};
 use crate::prompts::{spawn_task, spawn_task_raw};
@@ -193,6 +195,12 @@ pub enum CommandError {
     Ctx(#[from] ContextError),
     #[error(transparent)]
     Ipc(IpcError),
+    #[error("{0}")]
+    Issues(String),
+    #[error("no issue {0} in {1}'s tracker")]
+    UnknownIssue(String, String),
+    #[error("{0} is already spawned (its branch has a worktree)")]
+    AlreadySpawned(WorkerKey),
 }
 
 // ── Execution ───────────────────────────────────────────────────────
@@ -234,31 +242,82 @@ pub fn execute(app: &AppCtx, key: &WorkerKey, cmd: &Command) -> Result<(), Comma
 }
 
 /// Find `key`'s worker among the tracked repos.
-///
-/// Read fresh each time: a repo first used after the daemon started is in
-/// the registry but not in the daemon's startup copy of it.
 fn resolve(app: &AppCtx, key: &WorkerKey) -> Result<(RepoCtx, Worker), CommandError> {
-    let registry = RepoRegistry::load(&app.paths)?;
-    let mut named = false;
-    for entry in registry.repos() {
-        if entry.path.file_name().is_none_or(|n| *n != *key.repo) {
-            continue;
-        }
-        named = true;
-        let Ok(repo) = app.repo_at(&entry.path) else {
-            continue;
-        };
+    for repo in repos_named(app, &key.repo)? {
         match Worker::open(&repo, &key.branch) {
             Ok(worker) => return Ok((repo, worker)),
             Err(WorkerError::NotFound(_)) => continue,
             Err(e) => return Err(e.into()),
         }
     }
-    if named {
-        Err(WorkerError::NotFound(key.to_string()).into())
-    } else {
-        Err(CommandError::UnknownRepo(key.repo.clone()))
+    Err(WorkerError::NotFound(key.to_string()).into())
+}
+
+/// Every tracked repo whose directory is called `name` (usually one).
+///
+/// Read fresh each time: a repo first used after the daemon started is in
+/// the registry but not in the daemon's startup copy of it.
+fn repos_named(app: &AppCtx, name: &str) -> Result<Vec<RepoCtx>, CommandError> {
+    let registry = RepoRegistry::load(&app.paths)?;
+    let named: Vec<_> = registry
+        .repos()
+        .iter()
+        .filter(|entry| entry.path.file_name().is_some_and(|n| *n == *name))
+        .collect();
+    if named.is_empty() {
+        return Err(CommandError::UnknownRepo(name.to_string()));
     }
+    Ok(named
+        .into_iter()
+        .filter_map(|entry| app.repo_at(&entry.path).ok())
+        .collect())
+}
+
+/// Spawn a worker for `issue` in the tracked repo `repo` — the answer to a
+/// `Spawn` request. Starts it through the same code auto-spawn uses, and
+/// refuses one whose branch is already being worked on.
+pub fn spawn_issue(app: &AppCtx, in_flight: &InFlight, repo: &str, issue: &str) -> Response {
+    tracing::info!(%repo, %issue, "spawn over ipc");
+    match try_spawn_issue(app, in_flight, repo, issue) {
+        Ok(key) => {
+            tracing::info!(worker = %key, %issue, "spawned on request");
+            Response::Ok
+        }
+        Err(e) => {
+            tracing::warn!(%repo, %issue, "spawn failed: {}", e);
+            Response::Error(e.to_string())
+        }
+    }
+}
+
+fn try_spawn_issue(
+    app: &AppCtx,
+    in_flight: &InFlight,
+    repo: &str,
+    issue: &str,
+) -> Result<WorkerKey, CommandError> {
+    let cfg = repos_named(app, repo)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| CommandError::UnknownRepo(repo.to_string()))?;
+    let provider = cfg.issue_provider(&app.config)?;
+    let found = provider
+        .get(issue)
+        .map_err(|e| CommandError::Issues(e.to_string()))?
+        .ok_or_else(|| CommandError::UnknownIssue(issue.to_string(), repo.to_string()))?;
+
+    let key = WorkerKey::new(cfg.name(), found.branch().clone());
+    // Two clicks, or a click racing auto-spawn's own pass, start one worker.
+    let Some(_claim) = in_flight.claim(&key) else {
+        return Err(CommandError::Busy(key));
+    };
+    if Worker::open(&cfg, found.branch()).is_ok() {
+        return Err(CommandError::AlreadySpawned(key));
+    }
+    let mux = mux::for_repo(app.config.mux, &cfg.name());
+    spawn_worker_for_issue(&app.config, &found, &cfg, &provider, &mux)
+        .map_err(CommandError::Daemon)?;
+    Ok(key)
 }
 
 /// Run `cmd` on a worker already in hand. The mux is a parameter so tests

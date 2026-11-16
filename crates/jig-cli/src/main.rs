@@ -1,11 +1,13 @@
 //! The `jig` binary — argument parsing, logging setup, and dispatch. The
 //! work lives in the `jig_cli` library beside it.
 
+use std::io::{self, IsTerminal};
+
 use clap::{CommandFactory, Parser};
 
 use jig_cli::cli::op::{LogSink, Op};
 use jig_cli::cli::ui;
-use jig_cli::cli::Cli;
+use jig_cli::cli::{Cli, Command};
 use jig_cli::context;
 
 fn main() {
@@ -55,7 +57,12 @@ fn init_tracing(sink: LogSink, paths: &context::AppPaths) {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    // Plain `jig` in a terminal opens the TUI; piped or scripted, it prints
+    // the help, as it always has.
+    if cli.command.is_none() && io::stdin().is_terminal() && io::stdout().is_terminal() {
+        cli.command = Some(Command::Tui(Default::default()));
+    }
 
     // The one place jig reads XDG variables; everything below gets `paths`.
     let paths = context::AppPaths::from_env()?;
