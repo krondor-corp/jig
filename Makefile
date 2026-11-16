@@ -1,4 +1,4 @@
-.PHONY: check install wiki wiki-build e2e dev dev-kill dev-clean rust-clean clean-rust clean
+.PHONY: check install wiki wiki-build e2e fleet tui dev dev-kill dev-clean rust-clean clean-rust clean
 
 # Run build, test, clippy, and format check
 check:
@@ -27,6 +27,16 @@ e2e:
 # worktree from confit.toml (needs confit). `./bin/dev ports` shows them.
 dev:
 	./bin/dev up
+
+# A local two-machine fleet, set up from nothing: loopback aliases (asks for
+# sudo only when they're missing), build, alice and bob up and meshed.
+fleet:
+	./bin/dev fleet
+
+# A dev node's TUI: `make tui`, or `make tui NODE=bob`.
+NODE ?= alice
+tui:
+	./bin/dev jig $(NODE)
 
 # Stop this worktree's fleet: its daemons and their tmux servers
 dev-kill:

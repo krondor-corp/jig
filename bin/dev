@@ -337,6 +337,16 @@ check_net() {
     warn "run ./bin/dev net-setup (sudo), then ./bin/dev up --net again"
 }
 
+# Everything a local fleet needs, from nothing: loopback aliases (sudo, only
+# when missing), a build, every node up and meshed.
+cmd_fleet() {
+    cmd_net_setup
+    cmd_up --net
+    echo >&2
+    info "Open a node's TUI:  make tui            (alice)"
+    info "                    make tui NODE=bob"
+}
+
 cmd_net_setup() {
     local ip missing
     missing=$(missing_ips)
@@ -360,6 +370,8 @@ Usage: ./bin/dev <command> [args...]
 Nodes: ${NODES[*]}  (from confit.toml [dev.nodes])
 
 Commands:
+  fleet                    The whole local fleet in one go: net-setup if
+                           needed (sudo), build, up --net.
   up [--net] [--no-build]  Build, then set up and start every node.
                            --net writes a [fleet.static] mesh of the nodes.
   down | kill              Stop every daemon and its tmux server.
@@ -387,6 +399,7 @@ main() {
     local cmd=${1:-help}
     [[ $# -gt 0 ]] && shift
     case "$cmd" in
+    fleet) cmd_fleet ;;
     up) cmd_up "$@" ;;
     down | kill) cmd_down ;;
     clean) cmd_clean ;;

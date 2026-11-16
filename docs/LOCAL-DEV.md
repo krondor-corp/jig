@@ -21,6 +21,15 @@ Setup fails before `claude` would launch.
 
 ## Interactive: `bin/dev`
 
+From nothing to two meshed machines, and a TUI on one of them:
+
+```bash
+make fleet              # loopback aliases (sudo, only if missing), build, alice + bob meshed
+make tui                # alice's TUI; `make tui NODE=bob` for bob's
+```
+
+Piece by piece:
+
 ```bash
 ./bin/dev up                         # build; start alice + bob
 ./bin/dev jig alice spawn hello -c "say hi, then stop"
@@ -55,7 +64,8 @@ worktrees can each run a fleet at once without collisions; `./bin/dev
 ports` prints this worktree's. To add a node, give it a net lane under
 `[ports.services]`, then a line in `[dev.nodes]`.
 
-Make targets: `make dev` (up), `make dev-kill` (stop daemons and tmux
+Make targets: `make fleet` (the meshed fleet, from nothing), `make tui`
+(a node's TUI), `make dev` (up, unmeshed), `make dev-kill` (stop daemons and tmux
 servers), `make dev-clean` (also delete `.dev/`), `make rust-clean`
 (`cargo clean`), `make clean` (both).
 
